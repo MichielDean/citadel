@@ -110,11 +110,18 @@ func (c *Client) Add(repo, title, description string, priority int) (*WorkItem, 
 	}, nil
 }
 
-// GetReady returns the next open work item for a repo, ordered by priority
-// (lower number = higher priority) then FIFO within the same priority.
-// Returns nil if no work is available.
+// GetReady atomically selects the next open work item for a repo and marks it
+// in-progress within a single transaction. Ordered by priority (lower number =
+// higher priority) then FIFO within the same priority. Returns nil if no work
+// is available.
 func (c *Client) GetReady(repo string) (*WorkItem, error) {
-	row := c.db.QueryRow(
+	tx, err := c.db.Begin()
+	if err != nil {
+		return nil, fmt.Errorf("queue: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	row := tx.QueryRow(
 		`SELECT id, repo, title, description, priority, status, assignee, current_step, attempt_count, created_at, updated_at
 		 FROM work_items
 		 WHERE repo = ? AND status = 'open'
@@ -122,24 +129,62 @@ func (c *Client) GetReady(repo string) (*WorkItem, error) {
 		 LIMIT 1`,
 		repo,
 	)
-	return scanWorkItem(row)
+
+	var item WorkItem
+	err = row.Scan(
+		&item.ID, &item.Repo, &item.Title, &item.Description,
+		&item.Priority, &item.Status, &item.Assignee, &item.CurrentStep,
+		&item.AttemptCount, &item.CreatedAt, &item.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("queue: scan ready item: %w", err)
+	}
+
+	now := time.Now().UTC()
+	if _, err := tx.Exec(
+		`UPDATE work_items SET status = 'in_progress', updated_at = ? WHERE id = ?`,
+		now, item.ID,
+	); err != nil {
+		return nil, fmt.Errorf("queue: mark in_progress %s: %w", item.ID, err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("queue: commit: %w", err)
+	}
+
+	item.Status = "in_progress"
+	item.UpdatedAt = now
+	return &item, nil
 }
 
-// Assign marks a work item as in-progress with the given worker and step.
-// If worker is empty, the item is set back to "open" (used when advancing
-// to the next step without a specific worker assignment).
+// Assign records the worker and step on a work item. When worker is non-empty
+// it only updates the assignee and step (status is already in-progress from
+// GetReady). When worker is empty the item is set back to "open" (used when
+// advancing to the next step without a specific worker assignment).
 func (c *Client) Assign(id, worker, step string) error {
-	status := "in_progress"
+	now := time.Now().UTC()
+	var res sql.Result
+	var err error
 	if worker == "" {
-		status = "open"
+		res, err = c.db.Exec(
+			`UPDATE work_items SET assignee = ?, current_step = ?, status = 'open',
+			 attempt_count = CASE WHEN current_step != ? THEN 0 ELSE attempt_count END,
+			 updated_at = ?
+			 WHERE id = ?`,
+			worker, step, step, now, id,
+		)
+	} else {
+		res, err = c.db.Exec(
+			`UPDATE work_items SET assignee = ?, current_step = ?,
+			 attempt_count = CASE WHEN current_step != ? THEN 0 ELSE attempt_count END,
+			 updated_at = ?
+			 WHERE id = ?`,
+			worker, step, step, now, id,
+		)
 	}
-	res, err := c.db.Exec(
-		`UPDATE work_items SET assignee = ?, current_step = ?, status = ?,
-		 attempt_count = CASE WHEN current_step != ? THEN 0 ELSE attempt_count END,
-		 updated_at = ?
-		 WHERE id = ?`,
-		worker, step, status, step, time.Now().UTC(), id,
-	)
 	if err != nil {
 		return fmt.Errorf("queue: assign %s: %w", id, err)
 	}

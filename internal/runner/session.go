@@ -110,7 +110,7 @@ func (s *Session) spawn() error {
 	}
 	claudeArgs = append(claudeArgs, "-p", s.buildPrompt())
 
-	claudeCmd := "claude " + strings.Join(claudeArgs, " ")
+	claudeCmd := claudePath() + " " + strings.Join(claudeArgs, " ")
 
 	cmd := exec.Command("tmux", "new-session", "-d", "-s", s.ID, "-c", s.WorkDir, claudeCmd)
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -159,6 +159,17 @@ func (s *Session) checkOutcome() (*Outcome, error) {
 func (s *Session) checkHandoff() bool {
 	_, err := os.Stat(filepath.Join(s.WorkDir, handoffFile))
 	return err == nil
+}
+
+// claudePath returns the absolute path to the claude binary.
+func claudePath() string {
+	if p := os.Getenv("CLAUDE_PATH"); p != "" {
+		return p
+	}
+	if p, err := exec.LookPath("claude"); err == nil {
+		return p
+	}
+	return os.ExpandEnv("$HOME/.local/bin/claude")
 }
 
 // prependHandoffToContext reads handoff.md and prepends its content

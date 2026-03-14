@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -85,7 +86,11 @@ var farmStartCmd = &cobra.Command{
 		fmt.Println("farm: scheduler running (ctrl-c to stop)")
 		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer cancel()
-		return sched.Run(ctx)
+		if err := sched.Run(ctx); errors.Is(err, context.Canceled) {
+			return nil
+		} else {
+			return err
+		}
 	},
 }
 

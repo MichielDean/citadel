@@ -124,10 +124,19 @@ func TestGetReady_RepoFilter(t *testing.T) {
 
 func TestGetReady_OnlyOpen(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("myrepo", "Task", "", 1)
-	c.Assign(item.ID, "worker1", "implement")
+	c.Add("myrepo", "Task", "", 1)
 
+	// First GetReady atomically claims the item.
 	got, err := c.GetReady("myrepo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil {
+		t.Fatal("expected item from first GetReady")
+	}
+
+	// Second GetReady returns nil — item is already in-progress.
+	got, err = c.GetReady("myrepo")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,6 +160,9 @@ func TestAssign(t *testing.T) {
 	c := testClient(t)
 	item, _ := c.Add("myrepo", "Task", "", 1)
 
+	// Claim the item via GetReady (atomically sets in_progress).
+	c.GetReady("myrepo")
+
 	if err := c.Assign(item.ID, "alice", "implement"); err != nil {
 		t.Fatal(err)
 	}
@@ -170,6 +182,7 @@ func TestAssign(t *testing.T) {
 func TestAssign_EmptyWorker_SetsOpen(t *testing.T) {
 	c := testClient(t)
 	item, _ := c.Add("myrepo", "Task", "", 1)
+	c.GetReady("myrepo") // claim item (sets in_progress)
 	c.Assign(item.ID, "alice", "implement")
 
 	// Advance to next step with empty worker.
