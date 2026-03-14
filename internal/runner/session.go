@@ -145,15 +145,30 @@ func (s *Session) spawn() error {
 func (s *Session) buildPrompt() string {
 	roleInstr := ""
 	if s.Role != "" {
-		roleInstr = "Read roles/" + s.Role + "/CLAUDE.md for your detailed instructions and protocol. "
+		// Check ~/.citadel/roles/<role>/CLAUDE.md first, fall back to sandbox roles/.
+		rolePath := s.resolveRolePath()
+		roleInstr = "Read " + rolePath + " for your detailed instructions and protocol. "
 	}
-	return "You are a Bullet Farm agent. " +
+	return "You are a Citadel agent. " +
 		"Read CONTEXT.md in this directory — it contains your assignment. " +
 		roleInstr +
 		"Complete the work described in your assignment fully before writing outcome.json. " +
 		"Do NOT write outcome.json until the work is actually finished. " +
 		"If you are running low on context window, write handoff.md summarizing " +
 		"your progress and remaining work, then stop — do not write outcome.json."
+}
+
+// resolveRolePath returns the path to the role's CLAUDE.md file.
+// Checks ~/.citadel/roles/<role>/CLAUDE.md first, then roles/<role>/CLAUDE.md in the sandbox.
+func (s *Session) resolveRolePath() string {
+	home, err := os.UserHomeDir()
+	if err == nil {
+		citadelPath := filepath.Join(home, ".citadel", "roles", s.Role, "CLAUDE.md")
+		if _, err := os.Stat(citadelPath); err == nil {
+			return citadelPath
+		}
+	}
+	return "roles/" + s.Role + "/CLAUDE.md"
 }
 
 // kill terminates the tmux session if it exists.

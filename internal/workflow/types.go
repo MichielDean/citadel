@@ -34,10 +34,18 @@ type WorkflowStep struct {
 	OnEscalate     string       `yaml:"on_escalate,omitempty"`
 }
 
+// RoleDefinition defines an agent role in YAML.
+type RoleDefinition struct {
+	Name         string `yaml:"name"`
+	Description  string `yaml:"description"`
+	Instructions string `yaml:"instructions"`
+}
+
 // Workflow is a named sequence of steps parsed from a YAML file.
 type Workflow struct {
-	Name  string         `yaml:"name"`
-	Steps []WorkflowStep `yaml:"steps"`
+	Name  string                    `yaml:"name"`
+	Steps []WorkflowStep            `yaml:"steps"`
+	Roles map[string]RoleDefinition `yaml:"roles,omitempty"`
 }
 
 // RepoConfig defines a repository managed by the farm.
@@ -50,7 +58,7 @@ type RepoConfig struct {
 	Prefix       string   `yaml:"prefix"`
 }
 
-// FarmConfig is the top-level configuration for a bullet farm instance.
+// FarmConfig is the top-level configuration for a Citadel instance.
 type FarmConfig struct {
 	Repos                 []RepoConfig `yaml:"repos"`
 	MaxTotalWorkers       int          `yaml:"max_total_workers"`
