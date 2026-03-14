@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -12,7 +13,13 @@ import (
 // The working tree is NOT reset — callers should call PrepareBranch to position
 // the sandbox on the correct branch for the item being worked on.
 func EnsureSandbox(dir, repoURL string) error {
-	if _, err := os.Stat(dir); os.IsNotExist(err) {
+	gitDir := filepath.Join(dir, ".git")
+	if _, err := os.Stat(gitDir); os.IsNotExist(err) {
+		// Either dir doesn't exist, or it exists but isn't a git repo.
+		// Remove whatever is there and clone fresh.
+		if err := os.RemoveAll(dir); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove stale sandbox: %w", err)
+		}
 		return cloneSandbox(dir, repoURL)
 	}
 	return fetchSandbox(dir)

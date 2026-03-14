@@ -105,8 +105,25 @@ func (e *Executor) RunStep(ctx context.Context, stepName string, bc BeadContext)
 	switch stepName {
 	case "noop":
 		return e.Noop(ctx, bc)
+	case "pr-create":
+		out, err := e.PRCreate(ctx, bc)
+		if err != nil {
+			return &StepOutcome{Result: ResultFail, Notes: fmt.Sprintf("pr-create error: %s", err)}
+		}
+		return out
+	case "ci-gate":
+		out, err := e.CIGate(ctx, bc, 0)
+		if err != nil {
+			return &StepOutcome{Result: ResultFail, Notes: fmt.Sprintf("ci-gate error: %s", err)}
+		}
+		return out
+	case "merge":
+		out, err := e.Merge(ctx, bc)
+		if err != nil {
+			return &StepOutcome{Result: ResultFail, Notes: fmt.Sprintf("merge error: %s", err)}
+		}
+		return out
 	default:
-		// Automated steps with no explicit handler pass through.
 		return e.Noop(ctx, bc)
 	}
 }

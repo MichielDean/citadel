@@ -21,6 +21,9 @@ type Outcome struct {
 	Result      Result       `json:"result"`
 	Notes       string       `json:"notes"`
 	Annotations []Annotation `json:"annotations,omitempty"`
+	// MetaNotes are key-value pairs persisted as step notes (e.g., "meta:pr_url=...").
+	// They allow automated steps to pass data to subsequent steps.
+	MetaNotes []string `json:"-"`
 }
 
 // Annotation is a file-level comment from a step outcome.

@@ -367,6 +367,13 @@ func (s *Scheduler) runStep(
 		}
 	}
 
+	// Persist metadata notes (e.g., pr_url from pr-create) for downstream steps.
+	for _, mn := range outcome.MetaNotes {
+		if err := client.AddNote(item.ID, step.Name, mn); err != nil {
+			s.logger.Error("add meta note failed", "item", item.ID, "error", err)
+		}
+	}
+
 	// Route to next step.
 	next := route(step, outcome.Result)
 	if next == "" {

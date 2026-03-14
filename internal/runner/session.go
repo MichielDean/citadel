@@ -116,7 +116,18 @@ func (s *Session) spawn() error {
 
 	claudeCmd := claudePath() + " " + strings.Join(claudeArgs, " ")
 
-	cmd := exec.Command("tmux", "new-session", "-d", "-s", s.ID, "-c", s.WorkDir, claudeCmd)
+	args := []string{"new-session", "-d", "-s", s.ID, "-c", s.WorkDir}
+	if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
+		args = append(args, "-e", "ANTHROPIC_API_KEY="+key)
+	}
+	if path := os.Getenv("PATH"); path != "" {
+		args = append(args, "-e", "PATH="+path)
+	}
+	if tok := os.Getenv("GH_TOKEN"); tok != "" {
+		args = append(args, "-e", "GH_TOKEN="+tok)
+	}
+	args = append(args, claudeCmd)
+	cmd := exec.Command("tmux", args...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("tmux new-session %s: %w: %s", s.ID, err, out)
 	}

@@ -44,6 +44,7 @@ func newExecutor(r *recorder) *Executor {
 func TestPRCreate_Success(t *testing.T) {
 	rec := &recorder{responses: []response{
 		{out: []byte("feature-branch\n")},                              // git branch
+		{out: []byte("ok\n")},                                          // git push
 		{out: []byte("https://github.com/org/repo/pull/42\n")},         // gh pr create
 	}}
 
@@ -70,7 +71,7 @@ func TestPRCreate_Success(t *testing.T) {
 	}
 
 	// Verify gh pr create was called with correct args.
-	ghCall := rec.calls[1]
+	ghCall := rec.calls[2]
 	if ghCall.name != "gh" {
 		t.Errorf("want gh command, got %q", ghCall.name)
 	}
@@ -87,6 +88,7 @@ func TestPRCreate_Success(t *testing.T) {
 
 func TestPRCreate_BranchProvided(t *testing.T) {
 	rec := &recorder{responses: []response{
+		{out: []byte("ok\n")},                                  // git push
 		{out: []byte("https://github.com/org/repo/pull/7\n")}, // gh pr create (no git branch call)
 	}}
 
@@ -105,18 +107,22 @@ func TestPRCreate_BranchProvided(t *testing.T) {
 	if out.Result != ResultPass {
 		t.Fatalf("want pass, got %s: %s", out.Result, out.Notes)
 	}
-	// Should have called gh directly (no git branch --show-current).
-	if len(rec.calls) != 1 {
-		t.Fatalf("want 1 call (gh only), got %d", len(rec.calls))
+	// Should have called git push + gh (no git branch --show-current).
+	if len(rec.calls) != 2 {
+		t.Fatalf("want 2 calls (push + gh), got %d", len(rec.calls))
 	}
-	if rec.calls[0].name != "gh" {
-		t.Errorf("want gh, got %q", rec.calls[0].name)
+	if rec.calls[0].name != "git" {
+		t.Errorf("want git (push), got %q", rec.calls[0].name)
+	}
+	if rec.calls[1].name != "gh" {
+		t.Errorf("want gh, got %q", rec.calls[1].name)
 	}
 }
 
 func TestPRCreate_GhFails(t *testing.T) {
 	rec := &recorder{responses: []response{
-		{out: []byte("feature\n")},                                    // git branch
+		{out: []byte("feature\n")},                                              // git branch
+		{out: []byte("ok\n")},                                                   // git push
 		{out: []byte("pull request already exists"), err: errors.New("exit 1")}, // gh pr create
 	}}
 
@@ -158,7 +164,8 @@ func TestPRCreate_NoBranch(t *testing.T) {
 
 func TestPRCreate_DefaultTitle(t *testing.T) {
 	rec := &recorder{responses: []response{
-		{out: []byte("https://github.com/org/repo/pull/1\n")},
+		{out: []byte("ok\n")},                                  // git push
+		{out: []byte("https://github.com/org/repo/pull/1\n")},  // gh pr create
 	}}
 
 	e := newExecutor(rec)
@@ -176,7 +183,7 @@ func TestPRCreate_DefaultTitle(t *testing.T) {
 		t.Fatalf("want pass, got %s: %s", out.Result, out.Notes)
 	}
 
-	ghCall := rec.calls[0]
+	ghCall := rec.calls[1]
 	// Title should be "bead bf-xyz".
 	for i, a := range ghCall.args {
 		if a == "--title" && i+1 < len(ghCall.args) {

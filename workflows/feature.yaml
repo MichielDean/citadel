@@ -28,6 +28,19 @@ steps:
     model: haiku
     context: full_codebase
     timeout_minutes: 20
+    on_pass: pr-create
+    on_fail: implement
+    on_escalate: human
+
+  - name: pr-create
+    type: automated
+    timeout_minutes: 5
+    on_pass: ci-gate
+    on_fail: human
+
+  - name: ci-gate
+    type: automated
+    timeout_minutes: 30
     on_pass: merge
     on_fail: implement
     on_escalate: human

@@ -3,6 +3,8 @@ package runner
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"github.com/MichielDean/bullet-farm/internal/automated"
 	"github.com/MichielDean/bullet-farm/internal/queue"
@@ -82,16 +84,46 @@ func (a *Adapter) Run(ctx context.Context, req scheduler.StepRequest) (*schedule
 
 // runAutomated dispatches an automated step through the automated executor.
 func (a *Adapter) runAutomated(ctx context.Context, req scheduler.StepRequest) *scheduler.Outcome {
+	home, _ := os.UserHomeDir()
+	sandboxDir := filepath.Join(home, ".bullet-farm", "sandboxes", req.RepoConfig.Name, req.WorkerName)
+	branch := "feat/" + req.Item.ID
+
+	// Build metadata from prior annotations stored as step notes with "meta:" prefix.
+	metadata := make(map[string]any)
+	for _, n := range req.Notes {
+		if len(n.Content) > 5 && n.Content[:5] == "meta:" {
+			// Format: "meta:key=value"
+			kv := n.Content[5:]
+			for i := 0; i < len(kv); i++ {
+				if kv[i] == '=' {
+					metadata[kv[:i]] = kv[i+1:]
+					break
+				}
+			}
+		}
+	}
+
 	bc := automated.BeadContext{
 		ID:          req.Item.ID,
 		Title:       req.Item.Title,
 		Description: req.Item.Description,
+		WorkDir:     sandboxDir,
+		Branch:      branch,
+		BaseBranch:  "main",
+		Metadata:    metadata,
 	}
 	result := a.executor.RunStep(ctx, req.Step.Name, bc)
-	return &scheduler.Outcome{
+	out := &scheduler.Outcome{
 		Result: scheduler.Result(result.Result),
 		Notes:  result.Notes,
 	}
+	// Convert annotations to metadata notes for persistence across steps.
+	if len(result.Annotations) > 0 {
+		for k, v := range result.Annotations {
+			out.MetaNotes = append(out.MetaNotes, fmt.Sprintf("meta:%s=%s", k, v))
+		}
+	}
+	return out
 }
 
 // convertOutcome maps a runner.Outcome to a scheduler.Outcome.

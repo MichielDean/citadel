@@ -71,6 +71,11 @@ func (e *Executor) CIGate(ctx context.Context, bc BeadContext, pollInterval time
 func (e *Executor) fetchChecks(ctx context.Context, dir, prURL string) ([]checkRun, error) {
 	out, err := e.ExecFn(ctx, dir, "gh", "pr", "checks", prURL, "--json", "name,bucket")
 	if err != nil {
+		// gh pr checks returns exit code 1 when no checks exist; treat as empty.
+		outStr := string(out)
+		if len(outStr) == 0 || outStr == "[]\n" || outStr == "[]" {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("%w: %s", err, out)
 	}
 

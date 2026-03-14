@@ -43,6 +43,15 @@ func (e *Executor) PRCreate(ctx context.Context, bc BeadContext) (*StepOutcome, 
 		body = fmt.Sprintf("Automated PR for bead %s", bc.ID)
 	}
 
+	// Push the feature branch before creating the PR.
+	pushOut, pushErr := e.ExecFn(ctx, bc.WorkDir, "git", "push", "-u", "origin", branch)
+	if pushErr != nil {
+		return &StepOutcome{
+			Result: ResultFail,
+			Notes:  fmt.Sprintf("git push failed: %s: %s", pushErr, pushOut),
+		}, nil
+	}
+
 	out, err := e.ExecFn(ctx, bc.WorkDir, "gh",
 		"pr", "create",
 		"--title", title,
