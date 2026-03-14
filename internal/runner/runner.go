@@ -154,9 +154,19 @@ func (r *Runner) IdleCount() int {
 func (r *Runner) RunStep(w *Worker, item *queue.WorkItem, step *workflow.WorkflowStep) (*Outcome, error) {
 	log.Printf("runner: %s/%s: step %q for item %s", r.repo.Name, w.Name, step.Name, item.ID)
 
-	// 1. Ensure sandbox is ready (clone or pull).
+	// 1. Ensure sandbox is ready (clone or fetch).
 	if err := EnsureSandbox(w.SandboxDir, r.repo.URL); err != nil {
 		return nil, fmt.Errorf("sandbox: %w", err)
+	}
+
+	// For full_codebase agent steps (implement), position the sandbox on the
+	// item's persistent feature branch so revision cycles are incremental.
+	if step.Context == workflow.ContextFullCodebase || step.Context == "" {
+		if step.Type == workflow.StepTypeAgent {
+			if err := PrepareBranch(w.SandboxDir, item.ID); err != nil {
+				return nil, fmt.Errorf("sandbox branch: %w", err)
+			}
+		}
 	}
 
 	// 2. Prepare context directory and CONTEXT.md.
