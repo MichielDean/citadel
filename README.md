@@ -19,7 +19,9 @@ Citadel is a Mad Max-themed agentic workflow orchestrator. Raw code enters the c
 | **Poisoned** | A drop that can't flow without human intervention. |
 ||
 
-<img src="Citadel.png" alt="Citadel" style="display:block; margin:50px 0;" />
+<p>&nbsp;</p>
+<p>&nbsp;</p>
+![Citadel](Citadel.png)
 
 ## Quick Start
 
