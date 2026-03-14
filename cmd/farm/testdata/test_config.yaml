@@ -1,0 +1,9 @@
+repos:
+  - name: myrepo
+    url: https://github.com/example/myrepo
+    workflow_path: workflow.yaml
+    workers: 2
+    bd_prefix: mr-
+
+max_total_workers: 4
+handoff_token_threshold: 100000

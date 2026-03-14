@@ -1,0 +1,13 @@
+name: feature
+steps:
+  - name: implement
+    type: agent
+    role: implementer
+    on_pass: review
+    on_fail: blocked
+
+  - name: review
+    type: agent
+    role: reviewer
+    on_pass: done
+    on_revision: implement
