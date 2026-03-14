@@ -18,6 +18,7 @@ steps:
     context: diff_only
     timeout_minutes: 15
     on_pass: qa
+    on_fail: implement
     on_revision: implement
     on_escalate: human
 

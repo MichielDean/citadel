@@ -120,7 +120,7 @@ implementer sees the reviewer's notes when the work comes back).
 ```
 bullet-farm/
   cmd/
-    bt/                 # bt CLI — queue management and farm control
+    bf/                 # bf CLI — queue management and farm control
     farm/               # farm binary — scheduler + CLI
   internal/
     scheduler/          # step scheduling, state machine
@@ -162,20 +162,20 @@ The item's `current_step` field always reflects which step it's at. The
 
 ## CLI
 
-The `bt` command manages the work queue and farm:
+The `bf` command manages the work queue and farm:
 
 ```
-bt queue add --title "..." --description "..." --priority 1 --repo github.com/Org/Repo
-bt queue list [--repo <repo>] [--status open|in_progress|closed|escalated]
-bt queue show <id>
-bt queue note <id> "content"
-bt queue close <id>
-bt queue reopen <id>
-bt queue escalate <id> --reason "stuck"
-bt farm start [--config config.yaml]
-bt farm status
-bt farm config validate <path>
-bt version
+bf queue add --title "..." --description "..." --priority 1 --repo github.com/Org/Repo
+bf queue list [--repo <repo>] [--status open|in_progress|closed|escalated]
+bf queue show <id>
+bf queue note <id> "content"
+bf queue close <id>
+bf queue reopen <id>
+bf queue escalate <id> --reason "stuck"
+bf farm start [--config config.yaml]
+bf farm status
+bf farm config validate <path>
+bf version
 ```
 
 ## Key Design Decisions

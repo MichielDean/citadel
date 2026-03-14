@@ -211,7 +211,7 @@ func resolveConfigPath() string {
 	if configPath != "" {
 		return configPath
 	}
-	if env := os.Getenv("BT_CONFIG"); env != "" {
+	if env := os.Getenv("BF_CONFIG"); env != "" {
 		return env
 	}
 	return "config.yaml"

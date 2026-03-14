@@ -29,6 +29,7 @@ type QueueClient interface {
 	GetNotes(id string) ([]queue.StepNote, error)
 	Escalate(id, reason string) error
 	CloseItem(id string) error
+	List(repo, status string) ([]*queue.WorkItem, error)
 }
 
 // StepRunner executes a single workflow step.
@@ -58,6 +59,7 @@ type Scheduler struct {
 	runner       StepRunner
 	logger       *slog.Logger
 	pollInterval time.Duration
+	sandboxRoot  string
 }
 
 // Option configures a Scheduler.
@@ -71,6 +73,11 @@ func WithLogger(l *slog.Logger) Option {
 // WithPollInterval sets how often the scheduler polls for work.
 func WithPollInterval(d time.Duration) Option {
 	return func(s *Scheduler) { s.pollInterval = d }
+}
+
+// WithSandboxRoot sets the root directory for worker sandboxes.
+func WithSandboxRoot(root string) Option {
+	return func(s *Scheduler) { s.sandboxRoot = root }
 }
 
 // New creates a Scheduler from a FarmConfig.
@@ -88,6 +95,14 @@ func New(config workflow.FarmConfig, dbPath string, runner StepRunner, opts ...O
 	}
 	for _, o := range opts {
 		o(s)
+	}
+
+	if s.sandboxRoot == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, fmt.Errorf("scheduler: home dir: %w", err)
+		}
+		s.sandboxRoot = filepath.Join(home, ".bullet-farm", "sandboxes")
 	}
 
 	for _, repo := range config.Repos {
@@ -162,6 +177,8 @@ func (s *Scheduler) Run(ctx context.Context) error {
 		"repos", len(s.config.Repos),
 		"max_total_workers", s.config.MaxTotalWorkers,
 	)
+
+	s.recoverInProgress()
 
 	ticker := time.NewTicker(s.pollInterval)
 	defer ticker.Stop()
@@ -409,6 +426,83 @@ func (s *Scheduler) handleTerminal(client QueueClient, itemID, terminal, fromSte
 		reason := fmt.Sprintf("reached terminal %q from step %q", terminal, fromStep)
 		if err := client.Escalate(itemID, reason); err != nil {
 			s.logger.Error("escalate at terminal failed", "item", itemID, "error", err)
+		}
+	}
+}
+
+// recoverInProgress recovers items left in_progress after a restart.
+// For each in_progress item, it checks for an outcome.json in the worker
+// sandbox directory. If found, the outcome is processed and the item is
+// advanced. If not found, the item is reset to open at its current step.
+func (s *Scheduler) recoverInProgress() {
+	for _, repo := range s.config.Repos {
+		client := s.clients[repo.Name]
+		wf := s.workflows[repo.Name]
+
+		items, err := client.List(repo.Name, "in_progress")
+		if err != nil {
+			s.logger.Error("recovery: list in_progress failed", "repo", repo.Name, "error", err)
+			continue
+		}
+
+		for _, item := range items {
+			step := currentStep(item, wf)
+			if step == nil {
+				s.logger.Warn("recovery: no step found", "repo", repo.Name, "item", item.ID, "step", item.CurrentStep)
+				continue
+			}
+
+			// Check for outcome.json in the worker's sandbox directory.
+			sandboxDir := filepath.Join(s.sandboxRoot, repo.Name, item.Assignee)
+			outcomePath := filepath.Join(sandboxDir, "outcome.json")
+
+			outcome, err := ReadOutcome(outcomePath)
+			if err != nil {
+				// No outcome found — reset item to open at current step for retry.
+				s.logger.Info("recovery: resetting to open",
+					"repo", repo.Name,
+					"item", item.ID,
+					"step", item.CurrentStep,
+				)
+				if err := client.Assign(item.ID, "", item.CurrentStep); err != nil {
+					s.logger.Error("recovery: reset failed", "item", item.ID, "error", err)
+				}
+				continue
+			}
+
+			s.logger.Info("recovery: processing leftover outcome",
+				"repo", repo.Name,
+				"item", item.ID,
+				"step", item.CurrentStep,
+				"result", outcome.Result,
+			)
+
+			// Attach notes from the recovered outcome.
+			if outcome.Notes != "" {
+				if err := client.AddNote(item.ID, step.Name, outcome.Notes); err != nil {
+					s.logger.Error("recovery: add note failed", "item", item.ID, "error", err)
+				}
+			}
+
+			// Route to next step.
+			next := route(*step, outcome.Result)
+			if next == "" {
+				reason := fmt.Sprintf("recovery: no route from step %q for result %q", step.Name, outcome.Result)
+				s.logger.Warn("recovery: no route", "item", item.ID)
+				if err := client.Escalate(item.ID, reason); err != nil {
+					s.logger.Error("recovery: escalate failed", "item", item.ID, "error", err)
+				}
+				continue
+			}
+
+			if isTerminal(next) {
+				s.handleTerminal(client, item.ID, next, step.Name)
+				continue
+			}
+
+			if err := client.Assign(item.ID, "", next); err != nil {
+				s.logger.Error("recovery: advance failed", "item", item.ID, "next", next, "error", err)
+			}
 		}
 	}
 }

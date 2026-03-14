@@ -150,6 +150,12 @@ func (c *pipelineClient) CloseItem(id string) error {
 	return nil
 }
 
+func (c *pipelineClient) List(repo, status string) ([]*queue.WorkItem, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return nil, nil
+}
+
 // stepSequenceRunner returns outcomes from a per-step queue, supporting
 // multiple calls to the same step (e.g., revision loops).
 type stepSequenceRunner struct {

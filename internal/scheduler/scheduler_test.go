@@ -101,6 +101,12 @@ func (m *mockClient) CloseItem(id string) error {
 	return nil
 }
 
+func (m *mockClient) List(repo, status string) ([]*queue.WorkItem, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return nil, nil
+}
+
 type mockRunner struct {
 	mu       sync.Mutex
 	outcomes map[string]*Outcome

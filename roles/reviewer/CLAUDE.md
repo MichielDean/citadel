@@ -77,6 +77,10 @@ When finished, write `outcome.json` to the working directory:
 - `"revision"` — one or more blocking or required issues found, code must return
   to the implementer
 
+Your result must be pass or revision only. Never write fail. A reviewer finding
+issues is normal — that is revision, not failure. The result `"fail"` is not a
+valid reviewer outcome.
+
 **The rule is simple:** if ANY annotation has severity `blocking` or `required`,
 the result MUST be `"revision"`. No exceptions. No judgment calls. This is
 mechanical.

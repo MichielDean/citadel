@@ -11,7 +11,7 @@ import (
 var dbPath string
 
 var rootCmd = &cobra.Command{
-	Use:   "bt",
+	Use:   "bf",
 	Short: "Bullet Farm CLI — work queue and farm management",
 }
 
@@ -23,7 +23,7 @@ func resolveDBPath() string {
 	if dbPath != "" {
 		return dbPath
 	}
-	if env := os.Getenv("BT_DB"); env != "" {
+	if env := os.Getenv("BF_DB"); env != "" {
 		return env
 	}
 	home, err := os.UserHomeDir()

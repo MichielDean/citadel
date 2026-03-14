@@ -52,21 +52,21 @@ check_go() {
   info "Go ${go_version} found"
 }
 
-# --- install_bt: install via go install ---
-install_bt() {
-  info "Installing bt..."
-  CGO_ENABLED=1 go install "${REPO}/cmd/bt@latest"
+# --- install_bf: install via go install ---
+install_bf() {
+  info "Installing bf..."
+  CGO_ENABLED=1 go install "${REPO}/cmd/bf@latest"
 
   # Verify the binary is on PATH.
-  if command -v bt &>/dev/null; then
-    info "bt installed at $(command -v bt)"
+  if command -v bf &>/dev/null; then
+    info "bf installed at $(command -v bf)"
   else
     local gobin
     gobin="$(go env GOBIN)"
     if [ -z "${gobin}" ]; then
       gobin="$(go env GOPATH)/bin"
     fi
-    warn "bt installed to ${gobin}/bt but it's not on your PATH."
+    warn "bf installed to ${gobin}/bf but it's not on your PATH."
     warn "Add this to your shell profile:  export PATH=\"\${PATH}:${gobin}\""
   fi
 }
@@ -86,24 +86,24 @@ add_shell_completion() {
     bash)
       local comp_dir="${HOME}/.local/share/bash-completion/completions"
       mkdir -p "${comp_dir}"
-      if command -v bt &>/dev/null; then
-        bt completion bash > "${comp_dir}/bt" 2>/dev/null || true
-        info "Bash completion installed to ${comp_dir}/bt"
+      if command -v bf &>/dev/null; then
+        bf completion bash > "${comp_dir}/bf" 2>/dev/null || true
+        info "Bash completion installed to ${comp_dir}/bf"
       fi
       ;;
     zsh)
       local comp_dir="${HOME}/.zsh/completions"
       mkdir -p "${comp_dir}"
-      if command -v bt &>/dev/null; then
-        bt completion zsh > "${comp_dir}/_bt" 2>/dev/null || true
-        info "Zsh completion installed to ${comp_dir}/_bt"
+      if command -v bf &>/dev/null; then
+        bf completion zsh > "${comp_dir}/_bf" 2>/dev/null || true
+        info "Zsh completion installed to ${comp_dir}/_bf"
         if ! grep -q 'fpath.*\.zsh/completions' "${HOME}/.zshrc" 2>/dev/null; then
           warn "Add to your .zshrc:  fpath=(~/.zsh/completions \$fpath)"
         fi
       fi
       ;;
     *)
-      warn "Shell completion not configured for ${shell_name}. Run: bt completion --help"
+      warn "Shell completion not configured for ${shell_name}. Run: bf completion --help"
       ;;
   esac
 }
@@ -114,8 +114,8 @@ print_success() {
   info "${BOLD}Bullet Farm installed.${NC}"
   printf "\n"
   printf "Quick start:\n"
-  printf "  bt queue add --title \"My first task\" --repo github.com/you/yourrepo\n"
-  printf "  bt farm start\n"
+  printf "  bf queue add --title \"My first task\" --repo github.com/you/yourrepo\n"
+  printf "  bf farm start\n"
   printf "\n"
   printf "Configuration:\n"
   printf "  Queue DB:   %s/queue.db\n" "${BT_DIR}"
@@ -127,7 +127,7 @@ print_success() {
 main() {
   printf "${BOLD}Bullet Farm Installer${NC}\n\n"
   check_go
-  install_bt
+  install_bf
   setup_dirs
   add_shell_completion
   print_success
