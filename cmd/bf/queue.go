@@ -3,7 +3,10 @@ package main
 import (
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/MichielDean/bullet-farm/internal/queue"
 	"github.com/spf13/cobra"
@@ -225,6 +228,56 @@ var queueEscalateCmd = &cobra.Command{
 	},
 }
 
+// --- queue purge ---
+
+var (
+	purgeOlderThan string
+	purgeDryRun    bool
+)
+
+var queuePurgeCmd = &cobra.Command{
+	Use:   "purge",
+	Short: "Delete closed/escalated items older than a threshold",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if purgeOlderThan == "" {
+			return fmt.Errorf("--older-than is required")
+		}
+		d, err := parseDuration(purgeOlderThan)
+		if err != nil {
+			return fmt.Errorf("invalid --older-than value: %w", err)
+		}
+		c, err := queue.New(resolveDBPath(), "")
+		if err != nil {
+			return err
+		}
+		defer c.Close()
+
+		n, err := c.Purge(d, purgeDryRun)
+		if err != nil {
+			return err
+		}
+		if purgeDryRun {
+			fmt.Printf("dry-run: would purge %d item(s)\n", n)
+		} else {
+			fmt.Printf("purged %d item(s)\n", n)
+		}
+		return nil
+	},
+}
+
+// parseDuration parses a duration string, supporting 'd' suffix for days
+// in addition to standard Go duration units (e.g., "30d", "24h", "1h30m").
+func parseDuration(s string) (time.Duration, error) {
+	if strings.HasSuffix(s, "d") {
+		days, err := strconv.Atoi(strings.TrimSuffix(s, "d"))
+		if err != nil {
+			return 0, fmt.Errorf("invalid days value: %q", s)
+		}
+		return time.Duration(days) * 24 * time.Hour, nil
+	}
+	return time.ParseDuration(s)
+}
+
 func init() {
 	queueAddCmd.Flags().StringVar(&addTitle, "title", "", "work item title (required)")
 	queueAddCmd.Flags().StringVar(&addDescription, "description", "", "work item description")
@@ -236,8 +289,11 @@ func init() {
 
 	queueEscalateCmd.Flags().StringVar(&escalateReason, "reason", "", "escalation reason (required)")
 
+	queuePurgeCmd.Flags().StringVar(&purgeOlderThan, "older-than", "", "delete items older than this duration (e.g. 30d, 24h) (required)")
+	queuePurgeCmd.Flags().BoolVar(&purgeDryRun, "dry-run", false, "show what would be deleted without deleting")
+
 	queueCmd.AddCommand(queueAddCmd, queueListCmd, queueShowCmd, queueNoteCmd,
-		queueCloseCmd, queueReopenCmd, queueEscalateCmd)
+		queueCloseCmd, queueReopenCmd, queueEscalateCmd, queuePurgeCmd)
 	rootCmd.AddCommand(queueCmd)
 }
 

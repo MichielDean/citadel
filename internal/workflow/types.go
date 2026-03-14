@@ -52,7 +52,9 @@ type RepoConfig struct {
 
 // FarmConfig is the top-level configuration for a bullet farm instance.
 type FarmConfig struct {
-	Repos                  []RepoConfig `yaml:"repos"`
-	MaxTotalWorkers        int          `yaml:"max_total_workers"`
-	HandoffTokenThreshold  int          `yaml:"handoff_token_threshold"`
+	Repos                 []RepoConfig `yaml:"repos"`
+	MaxTotalWorkers       int          `yaml:"max_total_workers"`
+	HandoffTokenThreshold int          `yaml:"handoff_token_threshold"`
+	RetentionDays         int          `yaml:"retention_days"`
+	CleanupInterval       string       `yaml:"cleanup_interval"`
 }

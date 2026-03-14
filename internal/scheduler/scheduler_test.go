@@ -107,6 +107,10 @@ func (m *mockClient) List(repo, status string) ([]*queue.WorkItem, error) {
 	return nil, nil
 }
 
+func (m *mockClient) Purge(olderThan time.Duration, dryRun bool) (int, error) {
+	return 0, nil
+}
+
 type mockRunner struct {
 	mu       sync.Mutex
 	outcomes map[string]*Outcome

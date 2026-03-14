@@ -30,6 +30,7 @@ type QueueClient interface {
 	Escalate(id, reason string) error
 	CloseItem(id string) error
 	List(repo, status string) ([]*queue.WorkItem, error)
+	Purge(olderThan time.Duration, dryRun bool) (int, error)
 }
 
 // StepRunner executes a single workflow step.
@@ -52,14 +53,15 @@ type StepRequest struct {
 // Scheduler is the core loop that polls for work, assigns it to workers,
 // and routes outcomes through workflow steps.
 type Scheduler struct {
-	config       workflow.FarmConfig
-	workflows    map[string]*workflow.Workflow
-	clients      map[string]QueueClient
-	pools        map[string]*WorkerPool
-	runner       StepRunner
-	logger       *slog.Logger
-	pollInterval time.Duration
-	sandboxRoot  string
+	config          workflow.FarmConfig
+	workflows       map[string]*workflow.Workflow
+	clients         map[string]QueueClient
+	pools           map[string]*WorkerPool
+	runner          StepRunner
+	logger          *slog.Logger
+	pollInterval    time.Duration
+	sandboxRoot     string
+	cleanupInterval time.Duration
 }
 
 // Option configures a Scheduler.
@@ -103,6 +105,16 @@ func New(config workflow.FarmConfig, dbPath string, runner StepRunner, opts ...O
 			return nil, fmt.Errorf("scheduler: home dir: %w", err)
 		}
 		s.sandboxRoot = filepath.Join(home, ".bullet-farm", "sandboxes")
+	}
+
+	if config.CleanupInterval != "" {
+		d, err := time.ParseDuration(config.CleanupInterval)
+		if err != nil {
+			return nil, fmt.Errorf("scheduler: invalid cleanup_interval %q: %w", config.CleanupInterval, err)
+		}
+		s.cleanupInterval = d
+	} else {
+		s.cleanupInterval = 24 * time.Hour
 	}
 
 	for _, repo := range config.Repos {
@@ -180,6 +192,21 @@ func (s *Scheduler) Run(ctx context.Context) error {
 
 	s.recoverInProgress()
 
+	if s.cleanupInterval > 0 {
+		go func() {
+			ticker := time.NewTicker(s.cleanupInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					s.purgeOldItems()
+				}
+			}
+		}()
+	}
+
 	ticker := time.NewTicker(s.pollInterval)
 	defer ticker.Stop()
 
@@ -192,6 +219,30 @@ func (s *Scheduler) Run(ctx context.Context) error {
 			s.tick(ctx)
 		}
 	}
+}
+
+// purgeOldItems deletes closed/escalated items older than retention_days across all repos.
+func (s *Scheduler) purgeOldItems() {
+	retentionDays := s.config.RetentionDays
+	if retentionDays <= 0 {
+		retentionDays = 90
+	}
+	olderThan := time.Duration(retentionDays) * 24 * time.Hour
+
+	total := 0
+	for _, repo := range s.config.Repos {
+		client := s.clients[repo.Name]
+		n, err := client.Purge(olderThan, false)
+		if err != nil {
+			s.logger.Error("purge failed", "repo", repo.Name, "error", err)
+			continue
+		}
+		if n > 0 {
+			s.logger.Info("purged items", "repo", repo.Name, "count", n)
+		}
+		total += n
+	}
+	s.logger.Info("purge complete", "total", total)
 }
 
 // Tick runs a single poll cycle across all repos. Exported for testing.

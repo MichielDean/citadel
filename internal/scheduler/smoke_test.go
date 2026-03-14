@@ -156,6 +156,10 @@ func (c *pipelineClient) List(repo, status string) ([]*queue.WorkItem, error) {
 	return nil, nil
 }
 
+func (c *pipelineClient) Purge(olderThan time.Duration, dryRun bool) (int, error) {
+	return 0, nil
+}
+
 // stepSequenceRunner returns outcomes from a per-step queue, supporting
 // multiple calls to the same step (e.g., revision loops).
 type stepSequenceRunner struct {

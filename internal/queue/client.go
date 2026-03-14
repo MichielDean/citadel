@@ -372,6 +372,64 @@ func scanWorkItem(row *sql.Row) (*WorkItem, error) {
 	return &item, nil
 }
 
+// Purge deletes closed/escalated items older than olderThan, cascading to
+// step_notes and events. Returns the count of items deleted (or that would be
+// deleted in dry-run mode).
+func (c *Client) Purge(olderThan time.Duration, dryRun bool) (int, error) {
+	cutoff := time.Now().UTC().Add(-olderThan)
+
+	if dryRun {
+		var count int
+		err := c.db.QueryRow(
+			`SELECT COUNT(*) FROM work_items WHERE status IN ('closed', 'escalated') AND updated_at < ?`,
+			cutoff,
+		).Scan(&count)
+		if err != nil {
+			return 0, fmt.Errorf("queue: purge dry-run: %w", err)
+		}
+		return count, nil
+	}
+
+	tx, err := c.db.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("queue: purge begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(
+		`DELETE FROM step_notes WHERE item_id IN (
+			SELECT id FROM work_items WHERE status IN ('closed', 'escalated') AND updated_at < ?
+		)`, cutoff,
+	); err != nil {
+		return 0, fmt.Errorf("queue: purge step_notes: %w", err)
+	}
+
+	if _, err := tx.Exec(
+		`DELETE FROM events WHERE item_id IN (
+			SELECT id FROM work_items WHERE status IN ('closed', 'escalated') AND updated_at < ?
+		)`, cutoff,
+	); err != nil {
+		return 0, fmt.Errorf("queue: purge events: %w", err)
+	}
+
+	res, err := tx.Exec(
+		`DELETE FROM work_items WHERE status IN ('closed', 'escalated') AND updated_at < ?`,
+		cutoff,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("queue: purge delete: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("queue: purge rows affected: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("queue: purge commit: %w", err)
+	}
+	return int(n), nil
+}
+
 func checkRowsAffected(res sql.Result, id string) error {
 	n, err := res.RowsAffected()
 	if err != nil {
