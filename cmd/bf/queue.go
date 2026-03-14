@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"text/tabwriter"
@@ -53,12 +54,16 @@ var queueAddCmd = &cobra.Command{
 var (
 	listRepo   string
 	listStatus string
+	listOutput string
 )
 
 var queueListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List work items",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if listOutput != "table" && listOutput != "json" {
+			return fmt.Errorf("--output must be table or json")
+		}
 		c, err := queue.New(resolveDBPath(), "")
 		if err != nil {
 			return err
@@ -69,6 +74,19 @@ var queueListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+
+		if listOutput == "json" {
+			if items == nil {
+				items = []*queue.WorkItem{}
+			}
+			out, err := json.MarshalIndent(items, "", "  ")
+			if err != nil {
+				return err
+			}
+			fmt.Println(string(out))
+			return nil
+		}
+
 		if len(items) == 0 {
 			fmt.Println("no items found")
 			return nil
@@ -233,6 +251,7 @@ func init() {
 
 	queueListCmd.Flags().StringVar(&listRepo, "repo", "", "filter by repo")
 	queueListCmd.Flags().StringVar(&listStatus, "status", "", "filter by status (open|in_progress|closed|escalated)")
+	queueListCmd.Flags().StringVar(&listOutput, "output", "table", "output format: table or json")
 
 	queueEscalateCmd.Flags().StringVar(&escalateReason, "reason", "", "escalation reason (required)")
 
