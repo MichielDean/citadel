@@ -317,6 +317,51 @@ func TestRenderDashboard_AqueductsClosedWhenNoChannels(t *testing.T) {
 	}
 }
 
+func TestRenderDashboardHTML_ContainsEasterEggHoverText(t *testing.T) {
+	dropID := "ct-ab123"
+	valve := "implement"
+	elapsed := 42
+	snapshot := inspectOutput{
+		Channels: []channelInfo{
+			{Name: "furiosa", DropID: &dropID, Valve: &valve, ElapsedSeconds: &elapsed},
+		},
+		Cistern: cisternInfo{Flowing: 1, Queued: 0, Closed: 0},
+	}
+
+	out := renderDashboardHTML(snapshot)
+
+	if !strings.Contains(out, "id=\"easter-egg\"") {
+		t.Error("html dashboard should include subtle easter egg icon")
+	}
+	if !strings.Contains(out, "Four letters guard the gate you seek") {
+		t.Error("html dashboard should include easter egg hover text")
+	}
+	if !strings.Contains(out, "CT Dashboard") {
+		t.Error("html dashboard should include title")
+	}
+}
+
+func TestDashboardListenAddr_UsesProvidedPort(t *testing.T) {
+	got := dashboardListenAddr(defaultDashboardHTMLPort)
+	if got != ":5737" {
+		t.Errorf("dashboardListenAddr(defaultDashboardHTMLPort) = %q, want %q", got, ":5737")
+	}
+}
+
+func TestRenderDashboardHTML_ShowsEscalatedDropFromInspectSnapshot(t *testing.T) {
+	snapshot := inspectOutput{
+		Drops: []dropInfo{{ID: "ct-poisn1", Status: "escalated", Valve: "qa", UpdatedAt: time.Now()}},
+	}
+
+	out := renderDashboardHTML(snapshot)
+	if !strings.Contains(out, "ct-poisn1") {
+		t.Error("html dashboard should render drop id from inspect snapshot")
+	}
+	if !strings.Contains(out, displayStatus("escalated")) {
+		t.Error("html dashboard should render escalated display status from inspect snapshot")
+	}
+}
+
 // --- TestProgressBar ---
 
 func TestProgressBar_FilledAndEmpty(t *testing.T) {

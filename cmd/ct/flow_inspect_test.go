@@ -197,3 +197,40 @@ func TestTmuxSessionAlive(t *testing.T) {
 		t.Error("expected non-existent tmux session to return false")
 	}
 }
+
+func TestBuildInspectOutput_UsesProvidedPathsAndIncludesPoisoned(t *testing.T) {
+	dir := t.TempDir()
+	db := filepath.Join(dir, "test.db")
+	cfgPath := tempCfg(t)
+
+	c, err := queue.New(db, "mr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, err := c.Add("myrepo", "poisoned item", "", 2, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Escalate(item.ID, "test reason"); err != nil {
+		t.Fatal(err)
+	}
+	c.Close()
+
+	out, err := buildInspectOutput(cfgPath, db)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if out.Citadel.Config != cfgPath {
+		t.Errorf("config: got %q, want %q", out.Citadel.Config, cfgPath)
+	}
+	if out.Cistern.Poisoned != 1 {
+		t.Errorf("poisoned: got %d, want 1", out.Cistern.Poisoned)
+	}
+	if len(out.Drops) != 1 {
+		t.Fatalf("drops: got %d, want 1", len(out.Drops))
+	}
+	if out.Drops[0].Status != "escalated" {
+		t.Errorf("drop status: got %q, want escalated", out.Drops[0].Status)
+	}
+}

@@ -69,131 +69,9 @@ var flowInspectCmd = &cobra.Command{
 	Use:   "inspect",
 	Short: "Output a JSON snapshot of current Citadel state",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfgPath := resolveConfigPath()
-
-		// Farm running: check for lock file.
-		home, _ := os.UserHomeDir()
-		lockFile := filepath.Join(home, ".citadel", "citadel.lock")
-		_, lockErr := os.Stat(lockFile)
-
-		out := inspectOutput{
-			Citadel: citadelInfo{
-				Config:      cfgPath,
-				FarmRunning: lockErr == nil,
-			},
-			Channels:     []channelInfo{},
-			Drops:        []dropInfo{},
-			RecentEvents: []recentEvent{},
-		}
-
-		// Load config best-effort — may not exist in test environments.
-		cfg, err := workflow.ParseFarmConfig(cfgPath)
+		out, err := buildInspectOutput(resolveConfigPath(), resolveDBPath())
 		if err != nil {
-			cfg = &workflow.FarmConfig{}
-		}
-
-		// Open queue.
-		dbPath := resolveDBPath()
-		c, err := queue.New(dbPath, "")
-		if err != nil {
-			return fmt.Errorf("queue: %w", err)
-		}
-		defer c.Close()
-
-		// List all items.
-		allItems, err := c.List("", "")
-		if err != nil {
-			return fmt.Errorf("list items: %w", err)
-		}
-
-		// Build assignee lookup and cistern counts.
-		type assignInfo struct {
-			id, title, valve string
-			updatedAt        time.Time
-		}
-		assigneeMap := map[string]assignInfo{}
-
-		cistern := cisternInfo{}
-		for _, item := range allItems {
-			switch item.Status {
-			case "in_progress":
-				cistern.Flowing++
-				cistern.Total++
-			case "open":
-				cistern.Queued++
-				cistern.Total++
-			case "escalated":
-				cistern.Poisoned++
-				cistern.Total++
-			case "closed":
-				cistern.Closed++
-			}
-			if item.Assignee != "" {
-				assigneeMap[item.Assignee] = assignInfo{
-					id:        item.ID,
-					title:     item.Title,
-					valve:     item.CurrentStep,
-					updatedAt: item.UpdatedAt,
-				}
-			}
-		}
-		out.Cistern = cistern
-
-		// Build channels from config workers.
-		for _, repo := range cfg.Repos {
-			for _, name := range repoWorkerNames(repo) {
-				ch := channelInfo{
-					Name: name,
-					Repo: repo.Name,
-				}
-				if info, ok := assigneeMap[name]; ok {
-					session := name + "-" + info.id
-					alive := tmuxSessionAlive(session)
-					elapsed := int(time.Since(info.updatedAt).Seconds())
-					ch.Session = &session
-					ch.SessionAlive = alive
-					ch.DropID = &info.id
-					ch.DropTitle = &info.title
-					ch.Valve = &info.valve
-					ch.ElapsedSeconds = &elapsed
-				}
-				out.Channels = append(out.Channels, ch)
-			}
-		}
-		if out.Channels == nil {
-			out.Channels = []channelInfo{}
-		}
-
-		// Build drops (exclude closed).
-		for _, item := range allItems {
-			if item.Status == "closed" {
-				continue
-			}
-			out.Drops = append(out.Drops, dropInfo{
-				ID:             item.ID,
-				Title:          item.Title,
-				Complexity:     item.Complexity,
-				ComplexityName: complexityName(item.Complexity),
-				Status:         item.Status,
-				Valve:          item.CurrentStep,
-				Assignee:       item.Assignee,
-				UpdatedAt:      item.UpdatedAt,
-			})
-		}
-		if out.Drops == nil {
-			out.Drops = []dropInfo{}
-		}
-
-		// Recent events.
-		events, err := c.ListRecentEvents(20)
-		if err == nil && len(events) > 0 {
-			for _, e := range events {
-				out.RecentEvents = append(out.RecentEvents, recentEvent{
-					Time:  e.Time,
-					Drop:  e.Drop,
-					Event: e.Event,
-				})
-			}
+			return err
 		}
 
 		if inspectTable {
@@ -204,6 +82,134 @@ var flowInspectCmd = &cobra.Command{
 		enc.SetIndent("", "  ")
 		return enc.Encode(out)
 	},
+}
+
+func buildInspectOutput(cfgPath, dbPath string) (inspectOutput, error) {
+	// Farm running: check for lock file.
+	home, _ := os.UserHomeDir()
+	lockFile := filepath.Join(home, ".citadel", "citadel.lock")
+	_, lockErr := os.Stat(lockFile)
+
+	out := inspectOutput{
+		Citadel: citadelInfo{
+			Config:      cfgPath,
+			FarmRunning: lockErr == nil,
+		},
+		Channels:     []channelInfo{},
+		Drops:        []dropInfo{},
+		RecentEvents: []recentEvent{},
+	}
+
+	// Load config best-effort — may not exist in test environments.
+	cfg, err := workflow.ParseFarmConfig(cfgPath)
+	if err != nil {
+		cfg = &workflow.FarmConfig{}
+	}
+
+	// Open queue.
+	c, err := queue.New(dbPath, "")
+	if err != nil {
+		return out, fmt.Errorf("queue: %w", err)
+	}
+	defer c.Close()
+
+	// List all items.
+	allItems, err := c.List("", "")
+	if err != nil {
+		return out, fmt.Errorf("list items: %w", err)
+	}
+
+	// Build assignee lookup and cistern counts.
+	type assignInfo struct {
+		id, title, valve string
+		updatedAt        time.Time
+	}
+	assigneeMap := map[string]assignInfo{}
+
+	cistern := cisternInfo{}
+	for _, item := range allItems {
+		switch item.Status {
+		case "in_progress":
+			cistern.Flowing++
+			cistern.Total++
+		case "open":
+			cistern.Queued++
+			cistern.Total++
+		case "escalated":
+			cistern.Poisoned++
+			cistern.Total++
+		case "closed":
+			cistern.Closed++
+		}
+		if item.Assignee != "" {
+			assigneeMap[item.Assignee] = assignInfo{
+				id:        item.ID,
+				title:     item.Title,
+				valve:     item.CurrentStep,
+				updatedAt: item.UpdatedAt,
+			}
+		}
+	}
+	out.Cistern = cistern
+
+	// Build channels from config workers.
+	for _, repo := range cfg.Repos {
+		for _, name := range repoWorkerNames(repo) {
+			ch := channelInfo{
+				Name: name,
+				Repo: repo.Name,
+			}
+			if info, ok := assigneeMap[name]; ok {
+				session := name + "-" + info.id
+				alive := tmuxSessionAlive(session)
+				elapsed := int(time.Since(info.updatedAt).Seconds())
+				ch.Session = &session
+				ch.SessionAlive = alive
+				ch.DropID = &info.id
+				ch.DropTitle = &info.title
+				ch.Valve = &info.valve
+				ch.ElapsedSeconds = &elapsed
+			}
+			out.Channels = append(out.Channels, ch)
+		}
+	}
+	if out.Channels == nil {
+		out.Channels = []channelInfo{}
+	}
+
+	// Build drops (exclude closed).
+	for _, item := range allItems {
+		if item.Status == "closed" {
+			continue
+		}
+		out.Drops = append(out.Drops, dropInfo{
+			ID:             item.ID,
+			Title:          item.Title,
+			Complexity:     item.Complexity,
+			ComplexityName: complexityName(item.Complexity),
+			Status:         item.Status,
+			Valve:          item.CurrentStep,
+			Assignee:       item.Assignee,
+			UpdatedAt:      item.UpdatedAt,
+		})
+	}
+	if out.Drops == nil {
+		out.Drops = []dropInfo{}
+	}
+
+	// Recent events.
+	events, err := c.ListRecentEvents(20)
+	if err == nil && len(events) > 0 {
+		for _, e := range events {
+			out.RecentEvents = append(out.RecentEvents, recentEvent{
+				Time:  e.Time,
+				Drop:  e.Drop,
+				Event: e.Event,
+			})
+		}
+	}
+
+	return out, nil
 }
 
 func tmuxSessionAlive(name string) bool {
