@@ -108,13 +108,17 @@ func (s *Session) spawn() error {
 	// Kill any stale session with the same name.
 	s.kill()
 
-	claudeArgs := []string{"--dangerously-skip-permissions"}
-	if s.Model != "" {
-		claudeArgs = append(claudeArgs, "--model", s.Model)
-	}
-	claudeArgs = append(claudeArgs, "-p", s.buildPrompt())
+	// Build the claude command string. The prompt must be single-quoted so that
+	// tmux/sh doesn't word-split it — unquoted spaces would cause only the first
+	// word to be passed to -p. Single-quote the prompt and escape any literal
+	// single quotes inside it using the 'x'\''y' idiom.
+	prompt := strings.ReplaceAll(s.buildPrompt(), "'", `'\''`)
 
-	claudeCmd := claudePath() + " " + strings.Join(claudeArgs, " ")
+	var flagsStr string
+	if s.Model != "" {
+		flagsStr = "--model " + s.Model + " "
+	}
+	claudeCmd := fmt.Sprintf("%s --dangerously-skip-permissions %s-p '%s'", claudePath(), flagsStr, prompt)
 
 	args := []string{"new-session", "-d", "-s", s.ID, "-c", s.WorkDir}
 	if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
