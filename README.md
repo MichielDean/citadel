@@ -20,6 +20,10 @@ Cistern is an agentic workflow orchestrator built around a water metaphor. Dropl
 | **Stagnant** | A droplet that can't flow without human intervention. |
 ||
 
+Cistern
+
+![Cistern](Cistern.png)
+
 ## Quick Start
 
 ```bash
