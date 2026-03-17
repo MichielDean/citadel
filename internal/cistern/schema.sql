@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS droplets (
     status TEXT DEFAULT 'open',
     assignee TEXT DEFAULT '',
     current_cataracta TEXT DEFAULT '',
+    outcome TEXT DEFAULT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );

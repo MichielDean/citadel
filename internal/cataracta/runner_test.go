@@ -299,7 +299,7 @@ func TestWriteContextFile(t *testing.T) {
 		"implementer",
 		"From: review",
 		"Looks good but needs tests",
-		"outcome.json",
+		"ct droplet pass",
 	}
 	for _, want := range checks {
 		if !contains(content, want) {
@@ -407,42 +407,6 @@ func TestOutcomeJSON(t *testing.T) {
 	}
 }
 
-func TestHandoffPrepend(t *testing.T) {
-	dir := t.TempDir()
-
-	// Write initial CONTEXT.md.
-	ctxPath := filepath.Join(dir, "CONTEXT.md")
-	if err := os.WriteFile(ctxPath, []byte("# Original Context\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Write handoff.md.
-	handoffPath := filepath.Join(dir, "handoff.md")
-	if err := os.WriteFile(handoffPath, []byte("## Progress\nDid step A, need step B.\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	sess := &Session{ID: "test-sess", WorkDir: dir}
-	if err := sess.prependHandoffToContext(); err != nil {
-		t.Fatalf("prependHandoffToContext: %v", err)
-	}
-
-	data, err := os.ReadFile(ctxPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	content := string(data)
-	if !contains(content, "Handoff from Previous Session") {
-		t.Error("missing handoff header")
-	}
-	if !contains(content, "Did step A") {
-		t.Error("missing handoff content")
-	}
-	if !contains(content, "# Original Context") {
-		t.Error("missing original context")
-	}
-}
 
 func TestWorkerSandboxPaths(t *testing.T) {
 	sandboxRoot := "/tmp/test-sandboxes"

@@ -83,43 +83,27 @@ Do **not** flag:
 - Performance concerns (unless they constitute a DoS vector)
 - Missing features or business logic correctness
 
-## Outcome
+## Signaling Outcome
 
-When finished, write `outcome.json` to the working directory:
+Use the `ct` CLI (the item ID is in CONTEXT.md):
 
-```json
-{
-  "result": "pass",
-  "notes": "No security issues found. Diff adds internal utility with no user-facing input surface.",
-  "annotations": []
-}
+**Pass (no blocking or required security issues found):**
+```
+ct droplet pass <id> --notes "No security issues found. Diff adds internal utility with no user-facing input surface."
 ```
 
-On finding issues:
-
-```json
-{
-  "result": "revision",
-  "notes": "1 blocking issue: SQL injection via unsanitized user input in query builder.",
-  "annotations": [
-    {
-      "file": "internal/db/query.go",
-      "line": 58,
-      "severity": "blocking",
-      "comment": "User-supplied 'sortBy' parameter is interpolated directly into SQL ORDER BY clause. Use a whitelist of allowed column names instead of string concatenation."
-    }
-  ]
-}
+**Recirculate (one or more blocking or required issues — code returns to implementer):**
+```
+ct droplet recirculate <id> --notes "1 blocking issue: SQL injection via unsanitized user input in query builder. File: internal/db/query.go:58 — User-supplied 'sortBy' interpolated directly into ORDER BY. Use a whitelist."
 ```
 
-**result** must be one of:
-- `"pass"` — no blocking or required security issues found
-- `"revision"` — one or more blocking or required issues found, code must
-  return to the implementer for remediation
+Before signaling, add detailed findings via:
+```
+ct droplet note <id> "<file>:<line> [severity] — <vulnerability, attack vector, remediation>"
+```
 
-**The rule is mechanical:** if ANY annotation has severity `blocking` or
-`required`, the result MUST be `"revision"`.
+**The rule is mechanical:** if ANY finding has severity `blocking` or `required`,
+the result MUST be `recirculate`.
 
-**annotations** must include `file`, `line`, `severity`, and `comment` for
-every finding. Comments must be specific: state the vulnerability, the attack
-vector, and the remediation.
+Every finding note must include file, line, severity, the vulnerability class,
+the attack vector, and the specific remediation.

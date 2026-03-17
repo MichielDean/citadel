@@ -20,16 +20,16 @@ Read `CONTEXT.md` first.
 2. **Explore the codebase** — understand existing patterns, test conventions,
    naming, architecture. Look at how existing tests are structured before writing any
 3. **Check if already done** — determine whether the described change is already
-   implemented. If the fix is in place and no changes are needed, write:
-   `{"result": "pass", "notes": "Fix already in place — no changes required."}`
+   implemented. If the fix is in place and no changes are needed, run:
+   `ct droplet pass <id> --notes "Fix already in place — no changes required."`
    and stop. Do NOT commit a no-op.
 4. **Write tests first (TDD)** — define the expected behaviour with failing tests
    before writing implementation code
 5. **Implement** — write the minimal code to make the tests pass
 6. **Refactor** — clean up without changing behaviour; keep tests green
-7. **Self-verify** — run the test suite. Do not write outcome.json until tests pass
-8. **Commit** — REQUIRED before writing outcome.json
-9. **Write outcome.json**
+7. **Self-verify** — run the test suite. Do not signal pass until tests pass
+8. **Commit** — REQUIRED before signaling outcome
+9. **Signal outcome**
 
 ## TDD/BDD Standards
 
@@ -71,7 +71,7 @@ If this is a revision (CONTEXT.md contains prior review notes):
 
 ## Running Tests
 
-Before writing outcome.json, verify your implementation:
+Before signaling outcome, verify your implementation:
 
 | Project type | Command |
 |---|---|
@@ -80,11 +80,11 @@ Before writing outcome.json, verify your implementation:
 | Python | `pytest` |
 | Makefile | `make test` |
 
-If tests fail — **fix them**. Do not write `"pass"` with failing tests.
+If tests fail — **fix them**. Do not signal `pass` with failing tests.
 
 ## Committing — MANDATORY
 
-Before writing outcome.json you MUST commit:
+Before signaling outcome you MUST commit:
 
 ```bash
 git add -A
@@ -97,18 +97,18 @@ Do NOT push to origin. Local commit only.
 
 The reviewer receives a diff of your committed changes. No commit = empty diff = review fails.
 
-## Outcome
+## Signaling Outcome
 
-```json
-{
-  "result": "pass",
-  "notes": "Implemented X using TDD. Added N tests covering happy path, edge cases, and error paths. All tests pass."
-}
+Use the `ct` CLI (the item ID is in CONTEXT.md):
+
+**Pass (implementation complete, tests written and passing):**
+```
+ct droplet pass <id> --notes "Implemented X using TDD. Added N tests covering happy path, edge cases, and error paths. All tests pass."
 ```
 
-**result** values:
-- `"pass"` — implementation complete, tests written and passing, ready for review
-- `"fail"` — genuinely blocked (missing dependency, fundamentally unclear requirements)
+**Block (genuinely blocked — missing dependency or fundamentally unclear requirements):**
+```
+ct droplet block <id> --notes "Blocked: <specific reason>"
+```
 
-Do **not** write `"revision"` — that belongs to reviewers.
-If you are blocked, explain specifically what you need in `notes`.
+Do **not** use `block` for ordinary revision cycles — that is for genuine blockers only.

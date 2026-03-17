@@ -101,7 +101,7 @@ var dropletListCmd = &cobra.Command{
 		}
 
 		tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-		fmt.Fprintln(tw, "ID\tCOMPLEXITY\tTITLE\tSTATUS\tSLUICE")
+		fmt.Fprintln(tw, "ID\tCOMPLEXITY\tTITLE\tSTATUS\tCATARACTA")
 		for _, item := range items {
 			cataracta := item.CurrentCataracta
 			if cataracta == "" {
@@ -318,6 +318,75 @@ func parseDuration(s string) (time.Duration, error) {
 	return time.ParseDuration(s)
 }
 
+// --- cistern pass ---
+
+var dropletPassCmd = &cobra.Command{
+	Use:   "pass <id>",
+	Short: "Signal pass outcome — work complete, move to next step",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		c, err := cistern.New(resolveDBPath(), "")
+		if err != nil {
+			return err
+		}
+		defer c.Close()
+
+		if err := c.SetOutcome(args[0], "pass"); err != nil {
+			return err
+		}
+		fmt.Printf("droplet %s: outcome=pass\n", args[0])
+		return nil
+	},
+}
+
+// --- cistern recirculate ---
+
+var recirculateTo string
+
+var dropletRecirculateCmd = &cobra.Command{
+	Use:   "recirculate <id>",
+	Short: "Signal recirculate outcome — needs rework, send back upstream",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		c, err := cistern.New(resolveDBPath(), "")
+		if err != nil {
+			return err
+		}
+		defer c.Close()
+
+		outcome := "recirculate"
+		if recirculateTo != "" {
+			outcome = "recirculate:" + recirculateTo
+		}
+		if err := c.SetOutcome(args[0], outcome); err != nil {
+			return err
+		}
+		fmt.Printf("droplet %s: outcome=%s\n", args[0], outcome)
+		return nil
+	},
+}
+
+// --- cistern block ---
+
+var dropletBlockCmd = &cobra.Command{
+	Use:   "block <id>",
+	Short: "Signal block outcome — genuinely blocked, cannot proceed",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		c, err := cistern.New(resolveDBPath(), "")
+		if err != nil {
+			return err
+		}
+		defer c.Close()
+
+		if err := c.SetOutcome(args[0], "block"); err != nil {
+			return err
+		}
+		fmt.Printf("droplet %s: outcome=block\n", args[0])
+		return nil
+	},
+}
+
 func init() {
 	dropletAddCmd.Flags().StringVar(&addTitle, "title", "", "droplet title (required)")
 	dropletAddCmd.Flags().StringVar(&addDescription, "description", "", "droplet description")
@@ -334,8 +403,11 @@ func init() {
 	dropletPurgeCmd.Flags().StringVar(&purgeOlderThan, "older-than", "", "delete droplets older than this duration (e.g. 30d, 24h) (required)")
 	dropletPurgeCmd.Flags().BoolVar(&purgeDryRun, "dry-run", false, "show what would be deleted without deleting")
 
+	dropletRecirculateCmd.Flags().StringVar(&recirculateTo, "to", "", "named step to recirculate to (e.g. --to implement)")
+
 	dropletCmd.AddCommand(dropletAddCmd, dropletListCmd, dropletShowCmd, dropletNoteCmd,
-		dropletCloseCmd, dropletReopenCmd, dropletEscalateCmd, dropletPurgeCmd)
+		dropletCloseCmd, dropletReopenCmd, dropletEscalateCmd, dropletPurgeCmd,
+		dropletPassCmd, dropletRecirculateCmd, dropletBlockCmd)
 	rootCmd.AddCommand(dropletCmd)
 }
 

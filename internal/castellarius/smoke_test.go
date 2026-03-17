@@ -61,7 +61,7 @@ func featureWorkflow() *aqueduct.Workflow {
 type pipelineClient struct {
 	mu        sync.Mutex
 	item      cistern.Droplet
-	stepLog   []string       // every Assign/CloseItem call in order
+	stepLog   []string       // every Assign call in order
 	attached  []attachedNote // notes attached by steps
 	notes     []cistern.CataractaNote
 	escalated string
@@ -70,19 +70,22 @@ type pipelineClient struct {
 }
 
 func newPipelineClient(item cistern.Droplet) *pipelineClient {
+	if item.Status == "" {
+		item.Status = "open"
+	}
 	return &pipelineClient{
 		item:     item,
 		attempts: make(map[string]int),
 	}
 }
 
+// GetReady returns the item only when it is open and awaiting dispatch.
 func (c *pipelineClient) GetReady(repo string) (*cistern.Droplet, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.terminal {
+	if c.terminal || c.item.Status != "open" {
 		return nil, nil
 	}
-	// Return a copy with current state.
 	item := c.item
 	return &item, nil
 }
@@ -90,12 +93,9 @@ func (c *pipelineClient) GetReady(repo string) (*cistern.Droplet, error) {
 func (c *pipelineClient) Assign(id, worker, step string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	// Reset attempts when step changes (matches real queue behavior).
-	if c.item.CurrentCataracta != step {
-		c.attempts[id] = 0
-	}
 	c.stepLog = append(c.stepLog, step)
 	c.item.CurrentCataracta = step
+	c.item.Outcome = "" // always clear outcome on (re)assign
 	if worker != "" {
 		c.item.Status = "in_progress"
 		c.item.Assignee = worker
@@ -103,6 +103,15 @@ func (c *pipelineClient) Assign(id, worker, step string) error {
 		c.item.Status = "open"
 		c.item.Assignee = ""
 	}
+	return nil
+}
+
+// SetOutcome is called by the mock runner to signal step completion.
+// The observe phase reads this on the next Tick to route the item.
+func (c *pipelineClient) SetOutcome(id, outcome string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.item.Outcome = outcome
 	return nil
 }
 
@@ -118,9 +127,9 @@ func (c *pipelineClient) AddNote(id, fromStep, notes string) error {
 	defer c.mu.Unlock()
 	c.attached = append(c.attached, attachedNote{id, fromStep, notes})
 	c.notes = append(c.notes, cistern.CataractaNote{
-		DropletID:  id,
+		DropletID:     id,
 		CataractaName: fromStep,
-		Content:  notes,
+		Content:       notes,
 	})
 	return nil
 }
@@ -149,46 +158,76 @@ func (c *pipelineClient) CloseItem(id string) error {
 	return nil
 }
 
+// List returns the item when its status matches — used by observeRepo to find
+// in_progress items with outcomes ready for routing.
 func (c *pipelineClient) List(repo, status string) ([]*cistern.Droplet, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return nil, nil
+	if c.terminal || c.item.Status != status {
+		return nil, nil
+	}
+	item := c.item
+	return []*cistern.Droplet{&item}, nil
 }
 
 func (c *pipelineClient) Purge(olderThan time.Duration, dryRun bool) (int, error) {
 	return 0, nil
 }
 
+// resultToOutcome converts an Outcome Result to the DB outcome string
+// written by `ct droplet` commands.
+func resultToOutcome(r Result) string {
+	switch r {
+	case ResultPass:
+		return "pass"
+	case ResultRecirculate:
+		return "recirculate"
+	case ResultEscalate:
+		return "escalate"
+	default: // ResultFail and anything unknown
+		return "block"
+	}
+}
+
 // stepSequenceRunner returns outcomes from a per-step queue, supporting
-// multiple calls to the same step (e.g., revision loops).
+// multiple calls to the same step (e.g., revision loops). Spawn is non-blocking:
+// it writes notes and outcome to the client then signals done.
 type stepSequenceRunner struct {
 	mu       sync.Mutex
 	outcomes map[string][]*Outcome
 	calls    []CataractaRequest
 	done     chan struct{}
+	client   *pipelineClient
 }
 
-func newStepSequenceRunner(outcomes map[string][]*Outcome) *stepSequenceRunner {
+func newStepSequenceRunner(client *pipelineClient, outcomes map[string][]*Outcome) *stepSequenceRunner {
 	return &stepSequenceRunner{
 		outcomes: outcomes,
 		done:     make(chan struct{}, 32),
+		client:   client,
 	}
 }
 
-func (r *stepSequenceRunner) Run(_ context.Context, req CataractaRequest) (*Outcome, error) {
+func (r *stepSequenceRunner) Spawn(_ context.Context, req CataractaRequest) error {
 	r.mu.Lock()
-	defer func() {
-		r.mu.Unlock()
-		r.done <- struct{}{}
-	}()
-	r.calls = append(r.calls, req)
 	seq := r.outcomes[req.Step.Name]
+	var o *Outcome
 	if len(seq) == 0 {
-		return &Outcome{Result: ResultPass}, nil
+		o = &Outcome{Result: ResultPass}
+	} else {
+		o = seq[0]
+		r.outcomes[req.Step.Name] = seq[1:]
 	}
-	o := seq[0]
-	r.outcomes[req.Step.Name] = seq[1:]
-	return o, nil
+	r.calls = append(r.calls, req)
+	r.mu.Unlock()
+
+	// Simulate agent writing notes, then signaling outcome via `ct droplet`.
+	if o.Notes != "" {
+		r.client.AddNote(req.Item.ID, req.Step.Name, o.Notes)
+	}
+	r.client.SetOutcome(req.Item.ID, resultToOutcome(o.Result))
+	r.done <- struct{}{}
+	return nil
 }
 
 func (r *stepSequenceRunner) waitStep(t *testing.T) {
@@ -206,10 +245,10 @@ func smokeConfig() aqueduct.AqueductConfig {
 	return aqueduct.AqueductConfig{
 		Repos: []aqueduct.RepoConfig{
 			{
-				Name:    "cistern",
+				Name:       "cistern",
 				Cataractae: 1,
-				Names:   []string{"smoker"},
-				Prefix:  "ct",
+				Names:      []string{"smoker"},
+				Prefix:     "ct",
 			},
 		},
 		MaxCataractae: 1,
@@ -223,8 +262,12 @@ func smokeScheduler(client CisternClient, runner CataractaRunner) *Castellarius 
 	return NewFromParts(config, workflows, clients, runner)
 }
 
-// advanceStep runs one scheduler tick, waits for the step to execute,
-// and waits for post-execution routing to complete.
+// advanceStep runs one scheduler tick (observe previous outcome + dispatch current
+// step), waits for the step's Spawn to complete (which writes the outcome to the
+// DB), then sleeps to let goroutines settle.
+//
+// After the last advanceStep call, callers must run one additional Tick to let
+// the observe phase route the final step's outcome to its terminal state.
 func advanceStep(t *testing.T, sched *Castellarius, runner *stepSequenceRunner) {
 	t.Helper()
 	sched.Tick(context.Background())
@@ -244,7 +287,7 @@ func TestSmoke_FeatureWorkflow_HappyPath(t *testing.T) {
 		Description: "Add a test comment to verify the pipeline end-to-end",
 	})
 
-	runner := newStepSequenceRunner(map[string][]*Outcome{
+	runner := newStepSequenceRunner(client, map[string][]*Outcome{
 		"implement": {{Result: ResultPass, Notes: "added comment in main.go"}},
 		"review":    {{Result: ResultPass, Notes: "diff clean, no issues found"}},
 		"qa":        {{Result: ResultPass, Notes: "all tests pass (go test ./...)"}},
@@ -252,9 +295,13 @@ func TestSmoke_FeatureWorkflow_HappyPath(t *testing.T) {
 	})
 
 	sched := smokeScheduler(client, runner)
+
+	// 4 dispatch ticks (one per step), then one final observe tick.
 	for i := 0; i < 4; i++ {
 		advanceStep(t, sched, runner)
 	}
+	sched.Tick(context.Background()) // observe merge → done
+	time.Sleep(50 * time.Millisecond)
 
 	// --- verify final state ---
 
@@ -265,9 +312,8 @@ func TestSmoke_FeatureWorkflow_HappyPath(t *testing.T) {
 		t.Fatal("item should have reached terminal state")
 	}
 
-	// Each step calls Assign twice: once to set current (with worker), once to advance (empty worker).
-	// Plus CloseItem appends "done".
-	// implement→review, review→qa, qa→merge, merge→done
+	// Each step: Assign(id, worker, step) + Assign(id, "", next).
+	// CloseItem appends "done". Pattern: dispatch, route-to-next, dispatch-next, ...
 	wantLog := []string{
 		"implement", "review",
 		"review", "qa",
@@ -315,7 +361,7 @@ func TestSmoke_FeatureWorkflow_HappyPath(t *testing.T) {
 		}
 	}
 
-	// Notes from each step should be attached.
+	// Notes from each step should be attached (written by Spawn).
 	if len(client.attached) != 4 {
 		t.Fatalf("expected 4 attached notes, got %d", len(client.attached))
 	}
@@ -341,7 +387,7 @@ func TestSmoke_FeatureWorkflow_RecirculateLoop(t *testing.T) {
 		Title: "Smoke test: revision loop",
 	})
 
-	runner := newStepSequenceRunner(map[string][]*Outcome{
+	runner := newStepSequenceRunner(client, map[string][]*Outcome{
 		"implement": {
 			{Result: ResultPass, Notes: "first implementation"},
 			{Result: ResultPass, Notes: "addressed review feedback"},
@@ -356,10 +402,12 @@ func TestSmoke_FeatureWorkflow_RecirculateLoop(t *testing.T) {
 
 	sched := smokeScheduler(client, runner)
 
-	// 6 steps: implement, review(revision), implement, review(pass), qa, merge
+	// 6 dispatches: implement, review(revision), implement, review(pass), qa, merge
 	for i := 0; i < 6; i++ {
 		advanceStep(t, sched, runner)
 	}
+	sched.Tick(context.Background()) // observe merge → done
+	time.Sleep(50 * time.Millisecond)
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
@@ -370,12 +418,12 @@ func TestSmoke_FeatureWorkflow_RecirculateLoop(t *testing.T) {
 
 	// Step log for the revision loop.
 	wantLog := []string{
-		"implement", "review", // 1st implement → review
-		"review", "implement", // review(revision) → implement
-		"implement", "review", // 2nd implement → review
-		"review", "qa", // review(pass) → qa
-		"qa", "merge", // qa → merge
-		"merge", "done", // merge → done
+		"implement", "review",    // 1st implement → review
+		"review", "implement",    // review(recirculate) → implement
+		"implement", "review",    // 2nd implement → review
+		"review", "qa",           // review(pass) → qa
+		"qa", "merge",            // qa → merge
+		"merge", "done",          // merge → done
 	}
 	if len(client.stepLog) != len(wantLog) {
 		t.Fatalf("step log = %v (len %d), want len %d",
@@ -411,7 +459,7 @@ func TestSmoke_NotesForwarding(t *testing.T) {
 		Title: "Smoke test: notes forwarding",
 	})
 
-	runner := newStepSequenceRunner(map[string][]*Outcome{
+	runner := newStepSequenceRunner(client, map[string][]*Outcome{
 		"implement": {{Result: ResultPass, Notes: "impl: wrote the feature"}},
 		"review":    {{Result: ResultPass, Notes: "review: code is clean"}},
 		"qa":        {{Result: ResultPass, Notes: "qa: 42 tests pass"}},
@@ -422,6 +470,8 @@ func TestSmoke_NotesForwarding(t *testing.T) {
 	for i := 0; i < 4; i++ {
 		advanceStep(t, sched, runner)
 	}
+	sched.Tick(context.Background()) // observe merge → done
+	time.Sleep(50 * time.Millisecond)
 
 	runner.mu.Lock()
 	defer runner.mu.Unlock()
@@ -458,7 +508,7 @@ func TestSmoke_QAFailReturnsToImplement(t *testing.T) {
 		Title: "Smoke test: QA failure loop",
 	})
 
-	runner := newStepSequenceRunner(map[string][]*Outcome{
+	runner := newStepSequenceRunner(client, map[string][]*Outcome{
 		"implement": {
 			{Result: ResultPass, Notes: "first impl"},
 			{Result: ResultPass, Notes: "fixed failing tests"},
@@ -476,11 +526,13 @@ func TestSmoke_QAFailReturnsToImplement(t *testing.T) {
 
 	sched := smokeScheduler(client, runner)
 
-	// implement → review → qa(fail) → implement → review → qa(pass) → merge → done
-	// That's 7 ticks of work.
+	// implement → review → qa(fail) → implement → review → qa(pass) → merge
+	// That's 7 dispatches.
 	for i := 0; i < 7; i++ {
 		advanceStep(t, sched, runner)
 	}
+	sched.Tick(context.Background()) // observe merge → done
+	time.Sleep(50 * time.Millisecond)
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
@@ -491,13 +543,13 @@ func TestSmoke_QAFailReturnsToImplement(t *testing.T) {
 
 	// Verify qa failure routed back to implement (not blocked).
 	wantLog := []string{
-		"implement", "review", // 1st implement → review
-		"review", "qa", // 1st review → qa
-		"qa", "implement", // qa(fail) → implement
-		"implement", "review", // 2nd implement → review
-		"review", "qa", // 2nd review → qa
-		"qa", "merge", // qa(pass) → merge
-		"merge", "done", // merge → done
+		"implement", "review",    // 1st implement → review
+		"review", "qa",           // 1st review → qa
+		"qa", "implement",        // qa(fail) → implement
+		"implement", "review",    // 2nd implement → review
+		"review", "qa",           // 2nd review → qa
+		"qa", "merge",            // qa(pass) → merge
+		"merge", "done",          // merge → done
 	}
 	if len(client.stepLog) != len(wantLog) {
 		t.Fatalf("step log = %v (len %d), want len %d",

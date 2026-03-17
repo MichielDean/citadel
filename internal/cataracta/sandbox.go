@@ -175,10 +175,10 @@ func ParkWorktree(dir string) {
 	_ = cmd.Run() // best-effort; failure just means the next checkout may conflict
 }
 
-// cleanArtifacts removes runner-written files (CONTEXT.md, outcome.json) from
-// the working tree so they don't appear in diffs or confuse the agent.
+// cleanArtifacts removes runner-written files from the working tree so they
+// don't appear in diffs or confuse the agent.
 func cleanArtifacts(dir string) {
-	for _, f := range []string{"CONTEXT.md", "outcome.json", "handoff.md"} {
+	for _, f := range []string{"CONTEXT.md", "handoff.md"} {
 		_ = os.Remove(dir + "/" + f)
 	}
 }

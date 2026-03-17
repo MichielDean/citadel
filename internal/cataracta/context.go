@@ -148,21 +148,24 @@ func writeContextFile(path string, p ContextParams) error {
 		}
 	}
 
-	b.WriteString("## Output\n\n")
-	b.WriteString("Write your result to `outcome.json` in this directory when done.\n\n")
-	b.WriteString("```json\n")
-	b.WriteString("{\n")
-	b.WriteString("  \"result\": \"pass|fail|recirculate|escalate\",\n")
-	b.WriteString("  \"notes\": \"explanation of what you did or found\",\n")
-	b.WriteString("  \"annotations\": {}\n")
-	b.WriteString("}\n")
-	b.WriteString("```\n")
+	b.WriteString("## Signaling Completion\n\n")
+	b.WriteString("When your work is done, signal your outcome using the `ct` CLI:\n\n")
+	b.WriteString("**Pass (work complete, move to next step):**\n")
+	b.WriteString(fmt.Sprintf("    ct droplet pass %s\n\n", p.Item.ID))
+	b.WriteString("**Recirculate (needs rework — send back upstream):**\n")
+	b.WriteString(fmt.Sprintf("    ct droplet recirculate %s\n", p.Item.ID))
+	b.WriteString(fmt.Sprintf("    ct droplet recirculate %s --to implement\n\n", p.Item.ID))
+	b.WriteString("**Block (genuinely blocked, cannot proceed):**\n")
+	b.WriteString(fmt.Sprintf("    ct droplet block %s\n\n", p.Item.ID))
+	b.WriteString("Add notes before signaling:\n")
+	b.WriteString(fmt.Sprintf("    ct droplet note %s \"What you did / found\"\n\n", p.Item.ID))
+	b.WriteString("The `ct` binary is on your PATH.\n")
 
 	return os.WriteFile(path, []byte(b.String()), 0644)
 }
 
 // generateDiff captures all committed changes on the item's feature branch vs
-// origin/main. The implementer is required to commit before writing outcome.json,
+// origin/main. The implementer is required to commit before signaling pass,
 // so this will always produce a non-empty diff for a completed implementation.
 func generateDiff(sandboxDir string) ([]byte, error) {
 	cmd := exec.Command("git", "diff", "origin/main...HEAD")

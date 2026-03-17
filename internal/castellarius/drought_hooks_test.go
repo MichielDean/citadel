@@ -43,8 +43,8 @@ func TestDroughtHook_FiresOnDroughtTransition(t *testing.T) {
 	client := newMockClient()
 	client.readyItems = []*cistern.Droplet{{ID: "b1"}}
 
-	cataracta := newMockRunner()
-	cataracta.outcomes["implement"] = &Outcome{Result: ResultPass}
+	cataracta := newMockRunner(client)
+	cataracta.outcomes["implement"] = "pass"
 
 	sched := testScheduler(client, cataracta)
 
@@ -82,7 +82,7 @@ func TestDroughtHook_FiresOnDroughtTransition(t *testing.T) {
 func TestDroughtHook_DoesNotFireWhenAlreadyDrought(t *testing.T) {
 	// When scheduler is already drought (wasDrought true→true), hooks should NOT fire again.
 	client := newMockClient()
-	cataracta := newMockRunner()
+	cataracta := newMockRunner(client)
 
 	sched := testScheduler(client, cataracta)
 

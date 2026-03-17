@@ -21,7 +21,8 @@ type mockClient struct {
 	mu         sync.Mutex
 	readyItems []*cistern.Droplet
 	readyCalls int
-	steps      map[string]string
+	steps      map[string]string              // id → current step (for assertions)
+	items      map[string]*cistern.Droplet    // id → item (for List/SetOutcome)
 	notes      map[string][]cistern.CataractaNote
 	escalated  map[string]string
 	attached   []attachedNote
@@ -35,6 +36,7 @@ type attachedNote struct {
 func newMockClient() *mockClient {
 	return &mockClient{
 		steps:     make(map[string]string),
+		items:     make(map[string]*cistern.Droplet),
 		notes:     make(map[string][]cistern.CataractaNote),
 		escalated: make(map[string]string),
 		closed:    make(map[string]bool),
@@ -50,6 +52,9 @@ func (m *mockClient) GetReady(repo string) (*cistern.Droplet, error) {
 	}
 	b := m.readyItems[0]
 	m.readyItems = m.readyItems[1:]
+	b.Status = "in_progress"
+	cp := *b
+	m.items[b.ID] = &cp
 	return b, nil
 }
 
@@ -57,6 +62,25 @@ func (m *mockClient) Assign(id, worker, step string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.steps[id] = step
+	if item, ok := m.items[id]; ok {
+		item.CurrentCataracta = step
+		item.Assignee = worker
+		item.Outcome = "" // clear outcome on advance
+		if worker == "" {
+			item.Status = "open"
+		} else {
+			item.Status = "in_progress"
+		}
+	}
+	return nil
+}
+
+func (m *mockClient) SetOutcome(id, outcome string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if item, ok := m.items[id]; ok {
+		item.Outcome = outcome
+	}
 	return nil
 }
 
@@ -91,29 +115,40 @@ func (m *mockClient) CloseItem(id string) error {
 func (m *mockClient) List(repo, status string) ([]*cistern.Droplet, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return nil, nil
+	var result []*cistern.Droplet
+	for _, item := range m.items {
+		if status == "" || item.Status == status {
+			cp := *item
+			result = append(result, &cp)
+		}
+	}
+	return result, nil
 }
 
 func (m *mockClient) Purge(olderThan time.Duration, dryRun bool) (int, error) {
 	return 0, nil
 }
 
+// mockRunner records Spawn calls and writes outcomes to the mockClient.
+// Set client to enable routing assertions; nil disables outcome writing.
 type mockRunner struct {
 	mu       sync.Mutex
-	outcomes map[string]*Outcome
+	outcomes map[string]string // step name → outcome string ("pass", "recirculate", etc.)
 	calls    []CataractaRequest
 	err      error
-	done     chan struct{} // closed after each Run call
+	done     chan struct{} // receives after each Spawn call
+	client   *mockClient
 }
 
-func newMockRunner() *mockRunner {
+func newMockRunner(client *mockClient) *mockRunner {
 	return &mockRunner{
-		outcomes: make(map[string]*Outcome),
+		outcomes: make(map[string]string),
 		done:     make(chan struct{}, 16),
+		client:   client,
 	}
 }
 
-func (r *mockRunner) Run(_ context.Context, req CataractaRequest) (*Outcome, error) {
+func (r *mockRunner) Spawn(_ context.Context, req CataractaRequest) error {
 	r.mu.Lock()
 	defer func() {
 		r.mu.Unlock()
@@ -121,12 +156,16 @@ func (r *mockRunner) Run(_ context.Context, req CataractaRequest) (*Outcome, err
 	}()
 	r.calls = append(r.calls, req)
 	if r.err != nil {
-		return nil, r.err
+		return r.err
 	}
+	outcome := "pass"
 	if o, ok := r.outcomes[req.Step.Name]; ok {
-		return o, nil
+		outcome = o
 	}
-	return &Outcome{Result: ResultPass}, nil
+	if r.client != nil {
+		r.client.SetOutcome(req.Item.ID, outcome)
+	}
+	return nil
 }
 
 func (r *mockRunner) waitCalls(n int, timeout time.Duration) bool {
@@ -141,6 +180,8 @@ func (r *mockRunner) waitCalls(n int, timeout time.Duration) bool {
 	return true
 }
 
+// blockingRunner blocks in Spawn until ch is closed (simulates long-running agent).
+// It does not write outcomes, so workers stay busy indefinitely.
 type blockingRunner struct {
 	ch   chan struct{}
 	done chan struct{}
@@ -153,13 +194,13 @@ func newBlockingRunner() *blockingRunner {
 	}
 }
 
-func (r *blockingRunner) Run(ctx context.Context, _ CataractaRequest) (*Outcome, error) {
+func (r *blockingRunner) Spawn(ctx context.Context, _ CataractaRequest) error {
 	r.done <- struct{}{}
 	select {
 	case <-r.ch:
-		return &Outcome{Result: ResultPass}, nil
+		return nil
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return nil
 	}
 }
 
@@ -176,10 +217,10 @@ func testWorkflow() *aqueduct.Workflow {
 				OnFail: "blocked",
 			},
 			{
-				Name:       "review",
-				Type:       aqueduct.CataractaTypeAgent,
-				OnPass:     "done",
-				OnFail:     "implement",
+				Name:          "review",
+				Type:          aqueduct.CataractaTypeAgent,
+				OnPass:        "done",
+				OnFail:        "implement",
 				OnRecirculate: "implement",
 			},
 		},
@@ -190,10 +231,10 @@ func testConfig() aqueduct.AqueductConfig {
 	return aqueduct.AqueductConfig{
 		Repos: []aqueduct.RepoConfig{
 			{
-				Name:    "test-repo",
+				Name:       "test-repo",
 				Cataractae: 2,
-				Names:   []string{"alpha", "beta"},
-				Prefix:  "test",
+				Names:      []string{"alpha", "beta"},
+				Prefix:     "test",
 			},
 		},
 		MaxCataractae: 4,
@@ -211,10 +252,10 @@ func testScheduler(client CisternClient, runner CataractaRunner) *Castellarius {
 
 func TestRoute(t *testing.T) {
 	step := aqueduct.WorkflowCataracta{
-		OnPass:     "review",
-		OnFail:     "blocked",
+		OnPass:        "review",
+		OnFail:        "blocked",
 		OnRecirculate: "implement",
-		OnEscalate: "human",
+		OnEscalate:    "human",
 	}
 
 	tests := []struct {
@@ -262,7 +303,7 @@ func TestCurrentStep_FirstStep(t *testing.T) {
 func TestCurrentStep_FromCurrentStep(t *testing.T) {
 	wf := testWorkflow()
 	item := &cistern.Droplet{
-		ID:          "b1",
+		ID:               "b1",
 		CurrentCataracta: "review",
 	}
 
@@ -275,7 +316,7 @@ func TestCurrentStep_FromCurrentStep(t *testing.T) {
 func TestCurrentStep_UnknownStep(t *testing.T) {
 	wf := testWorkflow()
 	item := &cistern.Droplet{
-		ID:          "b1",
+		ID:               "b1",
 		CurrentCataracta: "nonexistent",
 	}
 
@@ -289,8 +330,7 @@ func TestTick_AssignsWork(t *testing.T) {
 	client := newMockClient()
 	client.readyItems = []*cistern.Droplet{{ID: "b1", Title: "test item"}}
 
-	cataracta := newMockRunner()
-	cataracta.outcomes["implement"] = &Outcome{Result: ResultPass, Notes: "done"}
+	cataracta := newMockRunner(client)
 
 	sched := testScheduler(client, cataracta)
 	sched.Tick(context.Background())
@@ -316,17 +356,18 @@ func TestTick_RoutesToNextStep(t *testing.T) {
 	client := newMockClient()
 	client.readyItems = []*cistern.Droplet{{ID: "b1", Title: "test"}}
 
-	cataracta := newMockRunner()
-	cataracta.outcomes["implement"] = &Outcome{Result: ResultPass, Notes: "impl done"}
+	cataracta := newMockRunner(client)
+	// default outcome is "pass"
 
 	sched := testScheduler(client, cataracta)
+	// Dispatch tick.
 	sched.Tick(context.Background())
-
 	if !cataracta.waitCalls(1, time.Second) {
-		t.Fatal("timed out")
+		t.Fatal("timed out waiting for spawn")
 	}
-	// Small sleep to let post-Run routing complete.
-	time.Sleep(50 * time.Millisecond)
+	// Observe tick: routes based on outcome written to DB.
+	sched.Tick(context.Background())
+	time.Sleep(10 * time.Millisecond)
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
@@ -341,16 +382,16 @@ func TestTick_TerminalDone(t *testing.T) {
 		{ID: "b1", CurrentCataracta: "review"},
 	}
 
-	cataracta := newMockRunner()
-	cataracta.outcomes["review"] = &Outcome{Result: ResultPass}
+	cataracta := newMockRunner(client)
+	// default outcome is "pass"; review.OnPass = "done"
 
 	sched := testScheduler(client, cataracta)
 	sched.Tick(context.Background())
-
 	if !cataracta.waitCalls(1, time.Second) {
 		t.Fatal("timed out")
 	}
-	time.Sleep(50 * time.Millisecond)
+	sched.Tick(context.Background())
+	time.Sleep(10 * time.Millisecond)
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
@@ -365,16 +406,16 @@ func TestTick_TerminalBlocked(t *testing.T) {
 		{ID: "b1", CurrentCataracta: "implement"},
 	}
 
-	cataracta := newMockRunner()
-	cataracta.outcomes["implement"] = &Outcome{Result: ResultFail}
+	cataracta := newMockRunner(client)
+	cataracta.outcomes["implement"] = "block" // block → ResultFail → OnFail = "blocked"
 
 	sched := testScheduler(client, cataracta)
 	sched.Tick(context.Background())
-
 	if !cataracta.waitCalls(1, time.Second) {
 		t.Fatal("timed out")
 	}
-	time.Sleep(50 * time.Millisecond)
+	sched.Tick(context.Background())
+	time.Sleep(10 * time.Millisecond)
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
@@ -421,7 +462,7 @@ func TestTick_CrashRequeue(t *testing.T) {
 	client := newMockClient()
 	client.readyItems = []*cistern.Droplet{{ID: "b1"}}
 
-	cataracta := newMockRunner()
+	cataracta := newMockRunner(client)
 	cataracta.err = fmt.Errorf("agent crashed")
 
 	sched := testScheduler(client, cataracta)
@@ -450,8 +491,8 @@ func TestTick_NotesForwarding(t *testing.T) {
 		{ID: 1, DropletID: "b1", CataractaName: "refine", Content: "specs clarified"},
 	}
 
-	cataracta := newMockRunner()
-	cataracta.outcomes["implement"] = &Outcome{Result: ResultPass, Notes: "code written"}
+	cataracta := newMockRunner(client)
+	// default outcome "pass"
 
 	sched := testScheduler(client, cataracta)
 	sched.Tick(context.Background())
@@ -459,7 +500,6 @@ func TestTick_NotesForwarding(t *testing.T) {
 	if !cataracta.waitCalls(1, time.Second) {
 		t.Fatal("timed out")
 	}
-	time.Sleep(50 * time.Millisecond)
 
 	cataracta.mu.Lock()
 	req := cataracta.calls[0]
@@ -468,20 +508,14 @@ func TestTick_NotesForwarding(t *testing.T) {
 	if len(req.Notes) != 1 || req.Notes[0].CataractaName != "refine" {
 		t.Errorf("expected prior notes forwarded, got %v", req.Notes)
 	}
-
-	client.mu.Lock()
-	defer client.mu.Unlock()
-	if len(client.attached) != 1 || client.attached[0].fromStep != "implement" {
-		t.Errorf("expected notes attached from 'implement', got %v", client.attached)
-	}
 }
 
 func TestTick_NoRoute(t *testing.T) {
 	client := newMockClient()
 	client.readyItems = []*cistern.Droplet{{ID: "b1"}}
 
-	cataracta := newMockRunner()
-	cataracta.outcomes["implement"] = &Outcome{Result: ResultRecirculate} // no OnRecirculate set
+	cataracta := newMockRunner(client)
+	cataracta.outcomes["implement"] = "recirculate" // implement has no OnRecirculate
 
 	sched := testScheduler(client, cataracta)
 	sched.Tick(context.Background())
@@ -489,7 +523,9 @@ func TestTick_NoRoute(t *testing.T) {
 	if !cataracta.waitCalls(1, time.Second) {
 		t.Fatal("timed out")
 	}
-	time.Sleep(50 * time.Millisecond)
+	// Observe tick.
+	sched.Tick(context.Background())
+	time.Sleep(10 * time.Millisecond)
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
@@ -501,7 +537,7 @@ func TestTick_NoRoute(t *testing.T) {
 
 func TestTick_NoWorkAvailable(t *testing.T) {
 	client := newMockClient()
-	cataracta := newMockRunner()
+	cataracta := newMockRunner(client)
 
 	sched := testScheduler(client, cataracta)
 	sched.Tick(context.Background())
@@ -547,7 +583,7 @@ func TestMultiRepo_ItemsGoToCorrectWorkers(t *testing.T) {
 		{ID: "bf-1", Title: "cistern item 1"},
 	}
 
-	cataracta := newMockRunner()
+	cataracta := newMockRunner(nil) // no routing assertions needed
 	clients := map[string]CisternClient{
 		"ScaledTest": stClient,
 		"cistern":    bfClient,
@@ -635,7 +671,7 @@ func TestMultiRepo_WorkersNeverCrossRepoBoundaries(t *testing.T) {
 	bfClient := newMockClient()
 	bfClient.readyItems = []*cistern.Droplet{{ID: "bf-1"}}
 
-	cataracta := newMockRunner()
+	cataracta := newMockRunner(nil)
 	clients := map[string]CisternClient{
 		"ScaledTest": stClient,
 		"cistern":    bfClient,
@@ -670,7 +706,7 @@ func TestMultiRepo_RoundRobinPolling(t *testing.T) {
 	stClient := newMockClient()
 	bfClient := newMockClient()
 
-	cataracta := newMockRunner()
+	cataracta := newMockRunner(nil)
 	clients := map[string]CisternClient{
 		"ScaledTest": stClient,
 		"cistern":    bfClient,
@@ -701,7 +737,7 @@ func TestMultiRepo_OneRepoEmptyOtherHasWork(t *testing.T) {
 	bfClient := newMockClient()
 	bfClient.readyItems = []*cistern.Droplet{{ID: "bf-1"}}
 
-	cataracta := newMockRunner()
+	cataracta := newMockRunner(nil)
 	clients := map[string]CisternClient{
 		"ScaledTest": stClient,
 		"cistern":    bfClient,
@@ -761,7 +797,7 @@ func TestTick_PerRepoIsolation(t *testing.T) {
 	client2 := newMockClient()
 	client2.readyItems = []*cistern.Droplet{{ID: "r2-b1"}}
 
-	cataracta := newMockRunner()
+	cataracta := newMockRunner(nil)
 
 	config := aqueduct.AqueductConfig{
 		Repos: []aqueduct.RepoConfig{
@@ -798,7 +834,7 @@ func TestTick_PerRepoIsolation(t *testing.T) {
 
 func TestRun_CancelledContext(t *testing.T) {
 	client := newMockClient()
-	cataracta := newMockRunner()
+	cataracta := newMockRunner(nil)
 	sched := testScheduler(client, cataracta)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1027,8 +1063,8 @@ func TestComplexity_CriticalHumanGateBeforeMerge(t *testing.T) {
 		{ID: "crit-1", CurrentCataracta: "ci-gate", Complexity: 4},
 	}
 
-	cataracta := newMockRunner()
-	cataracta.outcomes["ci-gate"] = &Outcome{Result: ResultPass}
+	cataracta := newMockRunner(client)
+	// default outcome "pass"; ci-gate.OnPass = "merge" → critical → "human" → escalate
 
 	config := aqueduct.AqueductConfig{
 		Repos: []aqueduct.RepoConfig{
@@ -1044,7 +1080,8 @@ func TestComplexity_CriticalHumanGateBeforeMerge(t *testing.T) {
 	if !cataracta.waitCalls(1, time.Second) {
 		t.Fatal("timed out")
 	}
-	time.Sleep(50 * time.Millisecond)
+	sched.Tick(context.Background())
+	time.Sleep(10 * time.Millisecond)
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
@@ -1061,8 +1098,9 @@ func TestTick_TrivialDropSkipsReviewAndQA(t *testing.T) {
 		{ID: "triv-1", Complexity: 1},
 	}
 
-	cataracta := newMockRunner()
-	cataracta.outcomes["implement"] = &Outcome{Result: ResultPass, Notes: "done"}
+	cataracta := newMockRunner(client)
+	// default outcome "pass"; implement.OnPass = "adversarial-review"
+	// trivial skips adversarial-review and qa → goes to pr-create
 
 	config := aqueduct.AqueductConfig{
 		Repos: []aqueduct.RepoConfig{
@@ -1078,12 +1116,36 @@ func TestTick_TrivialDropSkipsReviewAndQA(t *testing.T) {
 	if !cataracta.waitCalls(1, time.Second) {
 		t.Fatal("timed out")
 	}
-	time.Sleep(50 * time.Millisecond)
+	sched.Tick(context.Background())
+	time.Sleep(10 * time.Millisecond)
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
 	// implement passes → adversarial-review skipped → qa skipped → should go to pr-create.
 	if client.steps["triv-1"] != "pr-create" {
 		t.Errorf("expected trivial droplet at pr-create, got %q", client.steps["triv-1"])
+	}
+}
+
+func TestParseOutcome(t *testing.T) {
+	tests := []struct {
+		outcome         string
+		wantResult      Result
+		wantRecircTo    string
+	}{
+		{"pass", ResultPass, ""},
+		{"recirculate", ResultRecirculate, ""},
+		{"recirculate:implement", ResultRecirculate, "implement"},
+		{"block", ResultFail, ""},
+		{"unknown", ResultFail, ""},
+	}
+	for _, tt := range tests {
+		r, to := parseOutcome(tt.outcome)
+		if r != tt.wantResult {
+			t.Errorf("parseOutcome(%q).result = %q, want %q", tt.outcome, r, tt.wantResult)
+		}
+		if to != tt.wantRecircTo {
+			t.Errorf("parseOutcome(%q).recirculateTo = %q, want %q", tt.outcome, to, tt.wantRecircTo)
+		}
 	}
 }

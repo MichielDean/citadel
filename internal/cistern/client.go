@@ -22,15 +22,18 @@ const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
 
 // Droplet represents a unit of work flowing through the cistern.
 type Droplet struct {
-	ID           string `json:"id"`
-	Repo         string `json:"repo"`
-	Title        string `json:"title"`
-	Description  string `json:"description"`
-	Priority     int    `json:"priority"`
-	Complexity   int    `json:"complexity"`
-	Status       string `json:"status"`
-	Assignee     string `json:"assignee"` // empty string when unassigned
+	ID               string `json:"id"`
+	Repo             string `json:"repo"`
+	Title            string `json:"title"`
+	Description      string `json:"description"`
+	Priority         int    `json:"priority"`
+	Complexity       int    `json:"complexity"`
+	Status           string `json:"status"`
+	Assignee         string `json:"assignee"` // empty string when unassigned
 	CurrentCataracta string `json:"current_cataracta"`
+	// Outcome is set by agents via `ct droplet pass/recirculate/block`.
+	// Empty string means no outcome yet (NULL in DB).
+	Outcome string `json:"outcome,omitempty"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -70,6 +73,7 @@ func New(dbPath, prefix string) (*Client, error) {
 	db.Exec(`ALTER TABLE events RENAME COLUMN drop_id TO droplet_id`)
 	db.Exec(`ALTER TABLE droplets RENAME COLUMN current_step TO current_cataracta`)
 	db.Exec(`ALTER TABLE droplets ADD COLUMN complexity INTEGER DEFAULT 3`)
+	db.Exec(`ALTER TABLE droplets ADD COLUMN outcome TEXT DEFAULT NULL`)
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("cistern: schema: %w", err)
@@ -139,7 +143,7 @@ func (c *Client) GetReady(repo string) (*Droplet, error) {
 	defer tx.Rollback()
 
 	row := tx.QueryRow(
-		`SELECT id, repo, title, description, priority, complexity, status, assignee, current_cataracta, created_at, updated_at
+		`SELECT id, repo, title, description, priority, complexity, status, assignee, current_cataracta, outcome, created_at, updated_at
 		 FROM droplets
 		 WHERE repo = ? AND status = 'open'
 		 ORDER BY priority ASC, created_at ASC
@@ -148,10 +152,10 @@ func (c *Client) GetReady(repo string) (*Droplet, error) {
 	)
 
 	var droplet Droplet
-	var assignee, currentCataracta sql.NullString
+	var assignee, currentCataracta, outcome sql.NullString
 	err = row.Scan(
 		&droplet.ID, &droplet.Repo, &droplet.Title, &droplet.Description,
-		&droplet.Priority, &droplet.Complexity, &droplet.Status, &assignee, &currentCataracta,
+		&droplet.Priority, &droplet.Complexity, &droplet.Status, &assignee, &currentCataracta, &outcome,
 		&droplet.CreatedAt, &droplet.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -162,6 +166,7 @@ func (c *Client) GetReady(repo string) (*Droplet, error) {
 	}
 	droplet.Assignee = assignee.String
 	droplet.CurrentCataracta = currentCataracta.String
+	droplet.Outcome = outcome.String
 
 	now := time.Now().UTC()
 	if _, err := tx.Exec(
@@ -190,13 +195,13 @@ func (c *Client) Assign(id, worker, step string) error {
 	var err error
 	if worker == "" {
 		res, err = c.db.Exec(
-			`UPDATE droplets SET assignee = ?, current_cataracta = ?, status = 'open',
+			`UPDATE droplets SET assignee = ?, current_cataracta = ?, outcome = NULL, status = 'open',
 			 updated_at = ? WHERE id = ?`,
 			worker, step, now, id,
 		)
 	} else {
 		res, err = c.db.Exec(
-			`UPDATE droplets SET assignee = ?, current_cataracta = ?,
+			`UPDATE droplets SET assignee = ?, current_cataracta = ?, outcome = NULL,
 			 updated_at = ? WHERE id = ?`,
 			worker, step, now, id,
 		)
@@ -291,10 +296,33 @@ func (c *Client) CloseItem(id string) error {
 	return checkRowsAffected(res, id)
 }
 
+// SetOutcome records the agent outcome on a droplet. Pass empty string to clear
+// (sets the column to NULL). Agents call this via `ct droplet pass/recirculate/block`.
+func (c *Client) SetOutcome(id, outcome string) error {
+	var err error
+	var res sql.Result
+	now := time.Now().UTC()
+	if outcome == "" {
+		res, err = c.db.Exec(
+			`UPDATE droplets SET outcome = NULL, updated_at = ? WHERE id = ?`,
+			now, id,
+		)
+	} else {
+		res, err = c.db.Exec(
+			`UPDATE droplets SET outcome = ?, updated_at = ? WHERE id = ?`,
+			outcome, now, id,
+		)
+	}
+	if err != nil {
+		return fmt.Errorf("cistern: set outcome %s: %w", id, err)
+	}
+	return checkRowsAffected(res, id)
+}
+
 // Get retrieves a single droplet by ID. Returns an error if not found.
 func (c *Client) Get(id string) (*Droplet, error) {
 	row := c.db.QueryRow(
-		`SELECT id, repo, title, description, priority, complexity, status, assignee, current_cataracta, created_at, updated_at
+		`SELECT id, repo, title, description, priority, complexity, status, assignee, current_cataracta, outcome, created_at, updated_at
 		 FROM droplets WHERE id = ?`,
 		id,
 	)
@@ -310,7 +338,7 @@ func (c *Client) Get(id string) (*Droplet, error) {
 
 // List returns droplets filtered by repo and/or status. Empty strings mean no filter.
 func (c *Client) List(repo, status string) ([]*Droplet, error) {
-	query := `SELECT id, repo, title, description, priority, complexity, status, assignee, current_cataracta, created_at, updated_at
+	query := `SELECT id, repo, title, description, priority, complexity, status, assignee, current_cataracta, outcome, created_at, updated_at
 		 FROM droplets WHERE 1=1`
 	var args []any
 	if repo != "" {
@@ -332,16 +360,17 @@ func (c *Client) List(repo, status string) ([]*Droplet, error) {
 	var droplets []*Droplet
 	for rows.Next() {
 		var droplet Droplet
-		var assignee, currentCataracta sql.NullString
+		var assignee, currentCataracta, outcome sql.NullString
 		if err := rows.Scan(
 			&droplet.ID, &droplet.Repo, &droplet.Title, &droplet.Description,
-			&droplet.Priority, &droplet.Complexity, &droplet.Status, &assignee, &currentCataracta,
+			&droplet.Priority, &droplet.Complexity, &droplet.Status, &assignee, &currentCataracta, &outcome,
 			&droplet.CreatedAt, &droplet.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("cistern: scan droplet: %w", err)
 		}
 		droplet.Assignee = assignee.String
 		droplet.CurrentCataracta = currentCataracta.String
+		droplet.Outcome = outcome.String
 		droplets = append(droplets, &droplet)
 	}
 	return droplets, rows.Err()
@@ -350,10 +379,10 @@ func (c *Client) List(repo, status string) ([]*Droplet, error) {
 // scanDroplet scans a single row into a Droplet. Returns nil, nil for sql.ErrNoRows.
 func scanDroplet(row *sql.Row) (*Droplet, error) {
 	var droplet Droplet
-	var assignee, currentCataracta sql.NullString
+	var assignee, currentCataracta, outcome sql.NullString
 	err := row.Scan(
 		&droplet.ID, &droplet.Repo, &droplet.Title, &droplet.Description,
-		&droplet.Priority, &droplet.Complexity, &droplet.Status, &assignee, &currentCataracta,
+		&droplet.Priority, &droplet.Complexity, &droplet.Status, &assignee, &currentCataracta, &outcome,
 		&droplet.CreatedAt, &droplet.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -364,6 +393,7 @@ func scanDroplet(row *sql.Row) (*Droplet, error) {
 	}
 	droplet.Assignee = assignee.String
 	droplet.CurrentCataracta = currentCataracta.String
+	droplet.Outcome = outcome.String
 	return &droplet, nil
 }
 

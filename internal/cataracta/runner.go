@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sync"
+	"time"
 
-	"github.com/MichielDean/cistern/internal/cistern"
 	"github.com/MichielDean/cistern/internal/aqueduct"
+	"github.com/MichielDean/cistern/internal/cistern"
 )
 
 // Worker is a named execution slot with a git worktree.
@@ -42,7 +44,7 @@ type Runner struct {
 type Config struct {
 	Repo             aqueduct.RepoConfig
 	Workflow         *aqueduct.Workflow
-	CisternClient      *cistern.Client
+	CisternClient    *cistern.Client
 	SandboxRoot      string // Override for sandbox root dir (default: ~/.cistern/sandboxes)
 	HandoffThreshold int    // Token threshold for session handoff (default: 150000)
 	SkipInitialClone bool   // Skip the startup clone (for tests with fake repo URLs)
@@ -161,22 +163,31 @@ func (r *Runner) IdleCount() int {
 	return n
 }
 
-// RunStep executes a single workflow step for an item on the given worker.
-// It prepares the sandbox, builds context, spawns a Claude Code session,
-// polls for outcome, and returns the result.
-func (r *Runner) RunStep(w *Worker, item *cistern.Droplet, step *aqueduct.WorkflowCataracta) (*Outcome, error) {
-	log.Printf("cataracta: %s/%s: step %q for item %s", r.repo.Name, w.Name, step.Name, item.ID)
+// findWorkerByName returns the named worker without changing its state.
+func (r *Runner) findWorkerByName(name string) *Worker {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, w := range r.workers {
+		if w.Name == name {
+			return w
+		}
+	}
+	return nil
+}
 
-	// Always park the worktree on exit so feature branches are never left
-	// "in use by another worktree" when the item moves to the next step.
-	defer ParkWorktree(w.SandboxDir)
+// SpawnStep prepares the sandbox and context for a step, then spawns the agent
+// session in tmux and returns immediately. The agent signals completion by calling
+// `ct droplet pass/recirculate/block <id>`, which the Castellarius observe loop
+// detects on its next tick.
+func (r *Runner) SpawnStep(w *Worker, item *cistern.Droplet, step *aqueduct.WorkflowCataracta) error {
+	log.Printf("cataracta: %s/%s: spawning step %q for item %s", r.repo.Name, w.Name, step.Name, item.ID)
 
 	// 1. Fetch latest from remote (shared clone already exists), then ensure this worker's worktree.
 	if err := fetchSandbox(r.sharedCloneDir); err != nil {
 		log.Printf("cataracta: warning: git fetch failed for %s: %v", r.repo.Name, err)
 	}
 	if err := EnsureWorktree(w.SandboxDir, r.sharedCloneDir); err != nil {
-		return nil, fmt.Errorf("worktree: %w", err)
+		return fmt.Errorf("worktree: %w", err)
 	}
 
 	// For full_codebase agent steps (implement), position the worktree on the
@@ -184,7 +195,7 @@ func (r *Runner) RunStep(w *Worker, item *cistern.Droplet, step *aqueduct.Workfl
 	if step.Context == aqueduct.ContextFullCodebase || step.Context == "" {
 		if step.Type == aqueduct.CataractaTypeAgent {
 			if err := PrepareBranch(w.SandboxDir, item.ID); err != nil {
-				return nil, fmt.Errorf("sandbox branch: %w", err)
+				return fmt.Errorf("sandbox branch: %w", err)
 			}
 		}
 	}
@@ -203,25 +214,44 @@ func (r *Runner) RunStep(w *Worker, item *cistern.Droplet, step *aqueduct.Workfl
 		Notes:      notes,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("context: %w", err)
+		return fmt.Errorf("context: %w", err)
 	}
-	defer cleanup()
 
-	// 3. Spawn Claude Code session in tmux.
+	// 3. Spawn Claude Code session in tmux. Returns immediately.
 	sess := &Session{
-		ID:               w.SessionID,
-		WorkDir:          ctxDir,
-		Model:            step.Model,
-		Identity:         step.Identity,
-		TimeoutMinutes:   step.TimeoutMinutes,
-		HandoffThreshold: r.handoffThreshold,
+		ID:             w.SessionID,
+		WorkDir:        ctxDir,
+		Model:          step.Model,
+		Identity:       step.Identity,
+		TimeoutMinutes: step.TimeoutMinutes,
 	}
-	outcome, err := sess.Run()
-	if err != nil {
-		return nil, fmt.Errorf("session: %w", err)
+	if err := sess.Spawn(); err != nil {
+		cleanup()
+		return fmt.Errorf("session spawn: %w", err)
 	}
 
-	return outcome, nil
+	// For diff_only/spec_only, ctxDir is a tmpdir. Schedule cleanup once the
+	// session dies so the tmpdir is not left behind indefinitely.
+	if ctxDir != w.SandboxDir {
+		sessionID := w.SessionID
+		go func() {
+			for {
+				time.Sleep(30 * time.Second)
+				if exec.Command("tmux", "has-session", "-t", sessionID).Run() != nil {
+					break // session is dead
+				}
+			}
+			cleanup()
+		}()
+	}
+
+	// Park the worktree so it's not left "in use by another worktree" in the event
+	// the agent exits without the scheduler noticing for a long time.
+	// Note: ParkWorktree is called on exit from this goroutine context by the
+	// caller (adapter/scheduler) after the step is fully complete. We do NOT park
+	// here because the agent's session is still running.
+
+	return nil
 }
 
 // CataractaByName looks up a workflow step by name.
@@ -232,31 +262,6 @@ func (r *Runner) CataractaByName(name string) *aqueduct.WorkflowCataracta {
 		}
 	}
 	return nil
-}
-
-// WatchStep re-adopts an existing tmux session for the given worker and step
-// without killing and respawning it. It is used by the heartbeat to monitor
-// sessions that survived a Castellarius restart.
-//
-// Only full_codebase steps have a stable workdir (the sandbox dir itself).
-// For diff_only / spec_only steps the context tmpdir may no longer exist, so
-// this method returns an error and the caller should reset the droplet to open.
-func (r *Runner) WatchStep(w *Worker, item *cistern.Droplet, step *aqueduct.WorkflowCataracta) (*Outcome, error) {
-	if step.Context == aqueduct.ContextDiffOnly || step.Context == aqueduct.ContextSpecOnly {
-		return nil, fmt.Errorf("WatchStep: cannot re-adopt %q context step (tmpdir may be gone)", step.Context)
-	}
-
-	sess := &Session{
-		ID:             w.SessionID,
-		WorkDir:        w.SandboxDir,
-		TimeoutMinutes: step.TimeoutMinutes,
-		SkipSpawn:      true,
-	}
-	outcome, err := sess.Run()
-	if err != nil {
-		return nil, err
-	}
-	return outcome, nil
 }
 
 // Workers returns the worker pool (read-only snapshot).

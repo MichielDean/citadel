@@ -58,41 +58,34 @@ Each finding must have exactly one severity:
 | `required` | Incorrect behavior or missing coverage that must be fixed | Forces `revision` |
 | `suggestion` | Improvement that would strengthen the code but is not required | Does not force `revision` |
 
-## Outcome
+## Signaling Outcome
 
-When finished, write `outcome.json` to the working directory:
+Use the `ct` CLI (the item ID is in CONTEXT.md):
 
-```json
-{
-  "result": "pass",
-  "notes": "No blocking or required issues found. 2 suggestions.",
-  "annotations": [
-    {
-      "file": "internal/auth/token.go",
-      "line": 42,
-      "severity": "suggestion",
-      "comment": "Token expiry check uses < instead of <=, allowing use at exact expiry second. Low risk but technically incorrect."
-    }
-  ]
-}
+**Pass (no blocking or required issues found):**
+```
+ct droplet pass <id> --notes "No blocking or required issues found. 2 suggestions."
 ```
 
-**result** must be one of:
-- `"pass"` — no blocking or required issues found, code may proceed
-- `"revision"` — one or more blocking or required issues found, code must return
-  to the implementer
+**Recirculate (one or more blocking or required issues — code returns to implementer):**
+```
+ct droplet recirculate <id> --notes "Required: missing error handling on GetReady at line 42. Blocking: nil dereference on empty response."
+```
 
-Your result must be pass or revision only. Never write fail. A reviewer finding
-issues is normal — that is revision, not failure. The result `"fail"` is not a
-valid reviewer outcome.
+Your outcome must be pass or recirculate only. Never use block. A reviewer finding
+issues is normal — that is recirculate, not failure.
 
 **The rule is simple:** if ANY annotation has severity `blocking` or `required`,
-the result MUST be `"revision"`. No exceptions. No judgment calls. This is
+the result MUST be `recirculate`. No exceptions. No judgment calls. This is
 mechanical.
 
-**annotations** is an array of findings. Every finding must include `file`,
-`line`, `severity`, and `comment`. The `comment` must be specific and actionable
-— state what is wrong and what the fix should be.
+Before signaling, add detailed notes via:
+```
+ct droplet note <id> "Finding: <file>:<line> [severity] — <specific issue and fix>"
+```
+
+Every finding must include the file, line, severity, and a specific actionable comment
+stating what is wrong and what the fix should be.
 
 ## Adversarial Mindset
 

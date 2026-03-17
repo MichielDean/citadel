@@ -14,8 +14,9 @@ import (
 
 // Adapter wraps Runner instances to implement castellarius.CataractaRunner.
 type Adapter struct {
-	runners  map[string]*Runner // keyed by repo name
-	executor *gates.Executor
+	runners      map[string]*Runner // keyed by repo name
+	executor     *gates.Executor
+	queueClients map[string]*cistern.Client
 }
 
 // NewAdapter creates an Adapter with a Runner for each configured repo.
@@ -31,8 +32,8 @@ func NewAdapter(configs []aqueduct.RepoConfig, workflows map[string]*aqueduct.Wo
 			return nil, fmt.Errorf("adapter: no queue client for repo %q", repo.Name)
 		}
 		r, err := New(Config{
-			Repo:        repo,
-			Workflow:    wf,
+			Repo:          repo,
+			Workflow:      wf,
 			CisternClient: client,
 		})
 		if err != nil {
@@ -41,62 +42,44 @@ func NewAdapter(configs []aqueduct.RepoConfig, workflows map[string]*aqueduct.Wo
 		runners[repo.Name] = r
 	}
 	return &Adapter{
-		runners:  runners,
-		executor: gates.New(),
+		runners:      runners,
+		executor:     gates.New(),
+		queueClients: queueClients,
 	}, nil
 }
 
-// Run implements castellarius.CataractaRunner by delegating to the appropriate cataracta.
-func (a *Adapter) Run(ctx context.Context, req castellarius.CataractaRequest) (*castellarius.Outcome, error) {
-	// Automated steps are handled by the automated executor, not Claude.
+// Spawn implements castellarius.CataractaRunner.
+// For automated steps, runs synchronously and writes the outcome to the DB.
+// For agent steps, spawns a tmux session and returns immediately; the agent
+// signals completion by calling `ct droplet pass/recirculate/block <id>`.
+func (a *Adapter) Spawn(ctx context.Context, req castellarius.CataractaRequest) error {
 	if req.Step.Type == aqueduct.CataractaTypeAutomated {
-		return a.runAutomated(ctx, req), nil
+		return a.spawnAutomated(ctx, req)
 	}
 
 	r, ok := a.runners[req.RepoConfig.Name]
 	if !ok {
-		return nil, fmt.Errorf("adapter: no runner for repo %q", req.RepoConfig.Name)
+		return fmt.Errorf("adapter: no runner for repo %q", req.RepoConfig.Name)
 	}
 
-	// Find the worker by name.
-	var worker *Worker
-	r.mu.Lock()
-	for _, w := range r.workers {
-		if w.Name == req.WorkerName {
-			worker = w
-			break
-		}
-	}
-	r.mu.Unlock()
-
+	worker := r.findWorkerByName(req.WorkerName)
 	if worker == nil {
-		return nil, fmt.Errorf("adapter: worker %q not found in repo %q", req.WorkerName, req.RepoConfig.Name)
+		return fmt.Errorf("adapter: worker %q not found in repo %q", req.WorkerName, req.RepoConfig.Name)
 	}
 
 	step := req.Step
-
-	// ReattachSession: monitor an already-running session without killing it.
-	// Falls back to a normal RunStep if the step context cannot be re-adopted
-	// (diff_only / spec_only contexts have ephemeral tmpdirs that may be gone).
-	if req.ReattachSession {
-		outcome, err := r.WatchStep(worker, req.Item, &step)
-		if err == nil {
-			return convertOutcome(outcome), nil
-		}
-		// WatchStep declined (wrong context type or dead session) — fall through
-		// to a normal RunStep so the item gets processed cleanly.
-	}
-
-	outcome, err := r.RunStep(worker, req.Item, &step)
-	if err != nil {
-		return nil, err
-	}
-
-	return convertOutcome(outcome), nil
+	return r.SpawnStep(worker, req.Item, &step)
 }
 
-// runAutomated dispatches an automated step through the automated executor.
-func (a *Adapter) runAutomated(ctx context.Context, req castellarius.CataractaRequest) *castellarius.Outcome {
+// spawnAutomated runs an automated (gate) step synchronously, then writes the
+// outcome and any metadata notes directly to the DB so the observe phase can
+// route the item on the next tick.
+func (a *Adapter) spawnAutomated(ctx context.Context, req castellarius.CataractaRequest) error {
+	client, ok := a.queueClients[req.RepoConfig.Name]
+	if !ok {
+		return fmt.Errorf("adapter: no queue client for repo %q", req.RepoConfig.Name)
+	}
+
 	home, _ := os.UserHomeDir()
 	sandboxDir := filepath.Join(home, ".cistern", "sandboxes", req.RepoConfig.Name, req.WorkerName)
 	branch := "feat/" + req.Item.ID
@@ -105,7 +88,6 @@ func (a *Adapter) runAutomated(ctx context.Context, req castellarius.CataractaRe
 	metadata := make(map[string]any)
 	for _, n := range req.Notes {
 		if len(n.Content) > 5 && n.Content[:5] == "meta:" {
-			// Format: "meta:key=value"
 			kv := n.Content[5:]
 			for i := 0; i < len(kv); i++ {
 				if kv[i] == '=' {
@@ -126,32 +108,23 @@ func (a *Adapter) runAutomated(ctx context.Context, req castellarius.CataractaRe
 		Metadata:    metadata,
 	}
 	result := a.executor.RunStep(ctx, req.Step.Name, bc)
-	out := &castellarius.Outcome{
-		Result: castellarius.Result(result.Result),
-		Notes:  result.Notes,
-	}
-	// Convert annotations to metadata notes for persistence across steps.
-	if len(result.Annotations) > 0 {
-		for k, v := range result.Annotations {
-			out.MetaNotes = append(out.MetaNotes, fmt.Sprintf("meta:%s=%s", k, v))
-		}
-	}
-	return out
-}
 
-// convertOutcome maps a cataracta.Outcome to a castellarius.Outcome.
-func convertOutcome(ro *Outcome) *castellarius.Outcome {
-	so := &castellarius.Outcome{
-		Result: castellarius.Result(ro.Result),
-		Notes:  ro.Notes,
-	}
-	if len(ro.Annotations) > 0 {
-		for k, v := range ro.Annotations {
-			so.Annotations = append(so.Annotations, castellarius.Annotation{
-				File:    k,
-				Comment: v,
-			})
+	// Write notes to DB (visible to downstream steps).
+	if result.Notes != "" {
+		if err := client.AddNote(req.Item.ID, req.Step.Name, result.Notes); err != nil {
+			// Log but continue — the outcome is more important than the note.
+			_ = err
 		}
 	}
-	return so
+	for k, v := range result.Annotations {
+		if err := client.AddNote(req.Item.ID, req.Step.Name, fmt.Sprintf("meta:%s=%s", k, v)); err != nil {
+			_ = err
+		}
+	}
+
+	// Write outcome to DB. The observe phase routes the item on the next tick.
+	if err := client.SetOutcome(req.Item.ID, string(result.Result)); err != nil {
+		return fmt.Errorf("adapter: set outcome for %s: %w", req.Item.ID, err)
+	}
+	return nil
 }

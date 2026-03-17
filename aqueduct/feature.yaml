@@ -20,16 +20,16 @@ cataracta_definitions:
       2. Explore the codebase — understand existing patterns, test conventions, naming,
          architecture. Look at how existing tests are structured before writing any
       3. Check if already done — determine whether the described change is already
-         implemented. If the fix is in place and no changes are needed, write:
-         {"result": "pass", "notes": "Fix already in place — no changes required."}
+         implemented. If the fix is in place and no changes are needed, run:
+         ct droplet pass <id> --notes "Fix already in place — no changes required."
          and stop. Do NOT commit a no-op.
       4. Write tests first (TDD) — define expected behaviour with failing tests
          before writing implementation code
       5. Implement — write the minimal code to make the tests pass
       6. Refactor — clean up without changing behaviour; keep tests green
-      7. Self-verify — run the full test suite. Do not write outcome.json until tests pass
-      8. Commit — REQUIRED before writing outcome.json
-      9. Write outcome.json
+      7. Self-verify — run the full test suite. Do not signal pass until tests pass
+      8. Commit — REQUIRED before signaling outcome
+      9. Signal outcome
 
       ## TDD/BDD Standards
 
@@ -61,31 +61,34 @@ cataracta_definitions:
 
       ## Running Tests
 
-      Before writing outcome.json, verify your implementation:
+      Before signaling outcome, verify your implementation:
         go.mod present → go test ./...
         package.json  → npm test
         pyproject.toml → pytest
         Makefile       → make test
 
-      If tests fail — fix them. Do not write "pass" with failing tests.
+      If tests fail — fix them. Do not signal pass with failing tests.
 
       ## Committing — MANDATORY
 
-      Before writing outcome.json you MUST commit:
+      Before signaling outcome you MUST commit:
         git add -A
         git commit -m "<item-id>: <short description>"
 
       Do NOT push to origin. Local commit only.
       The reviewer receives a diff of your committed changes. No commit = empty diff = review fails.
 
-      ## Outcome
+      ## Signaling Outcome
 
-      Write outcome.json to the working directory:
-        {"result": "pass", "notes": "Implemented X. Added N tests covering happy path, edge cases, and error paths. All tests pass."}
-        {"result": "fail", "notes": "Blocked because: <specific reason>"}
+      Use the ct CLI (the item ID is in CONTEXT.md):
 
-      Do not write "revision" — that belongs to reviewers.
-      If blocked, explain specifically what you need.
+      Pass (implementation complete, tests written and passing):
+        ct droplet pass <id> --notes "Implemented X. Added N tests covering happy path, edge cases, and error paths. All tests pass."
+
+      Block (genuinely blocked — missing dependency or unclear requirements):
+        ct droplet block <id> --notes "Blocked: <specific reason>"
+
+      Do not use block for ordinary revision cycles.
 
   reviewer:
     name: Adversarial Reviewer
@@ -105,8 +108,8 @@ cataracta_definitions:
 
       ## Review Protocol
 
-      0. **Check diff** — if diff.patch is empty (0 bytes or whitespace only), write:
-         {"result": "pass", "notes": "Empty diff — no changes to review."}
+      0. **Check diff** — if diff.patch is empty (0 bytes or whitespace only), run:
+         ct droplet pass <id> --notes "Empty diff — no changes to review."
          and stop. Nothing to find wrong in nothing.
 
       Examine the diff for:
@@ -123,17 +126,21 @@ cataracta_definitions:
 
       | Severity | Effect |
       |----------|--------|
-      | `blocking` | Forces revision |
-      | `required` | Forces revision |
-      | `suggestion` | Does not force revision |
+      | `blocking` | Forces recirculate |
+      | `required` | Forces recirculate |
+      | `suggestion` | Does not force recirculate |
 
-      ## Outcome
+      ## Signaling Outcome
 
-      When done, write outcome.json:
-      - {"result": "pass", "notes": "approval summary"}
-      - {"result": "recirculate", "notes": "list of required changes"}
+      Use the ct CLI (the item ID is in CONTEXT.md):
 
-      **The rule:** if ANY annotation has severity blocking or required, result MUST be recirculate.
+      Pass (no blocking or required issues):
+        ct droplet pass <id> --notes "No blocking or required issues found."
+
+      Recirculate (blocking or required issues found — code returns to implementer):
+        ct droplet recirculate <id> --notes "Required: <list of issues>"
+
+      **The rule:** if ANY finding has severity blocking or required, use recirculate.
 
   qa:
     name: QA Reviewer
@@ -156,7 +163,7 @@ cataracta_definitions:
       2. Run the full test suite — note results but do not stop there
       3. Review test quality — this is the core of your job
       4. Review implementation quality — look for issues the implementer missed
-      5. Write outcome.json
+      5. Signal outcome
 
       ## Running Tests
 
@@ -165,7 +172,7 @@ cataracta_definitions:
         pyproject.toml → pytest
         Makefile       → make test
 
-      If tests fail, that is an automatic revision. But passing tests alone are NOT sufficient.
+      If tests fail, that is an automatic recirculate. But passing tests alone are NOT sufficient.
 
       ## What to Look For
 
@@ -193,15 +200,21 @@ cataracta_definitions:
       - Does the implementation satisfy all requirements in CONTEXT.md?
       - Are there acceptance criteria with no corresponding test?
 
-      ## Outcome
+      ## Signaling Outcome
 
-      Write outcome.json to the working directory:
-        {"result": "pass", "notes": "All tests pass. Good coverage including edge cases and error paths. No gaps found."}
-        {"result": "recirculate", "notes": "Specific list of test gaps and quality issues found."}
-        {"result": "escalate", "notes": "Genuine ambiguity about requirements needing human input."}
+      Use the ct CLI (the item ID is in CONTEXT.md):
+
+      Pass (tests pass AND quality is solid):
+        ct droplet pass <id> --notes "All tests pass. Good coverage including edge cases and error paths. No gaps found."
+
+      Recirculate (something needs fixing):
+        ct droplet recirculate <id> --notes "Specific list of test gaps and quality issues found."
+
+      Block (genuine ambiguity about requirements needing human input):
+        ct droplet block <id> --notes "Escalating: <specific question>"
 
       Do NOT approve work just because tests pass.
-      Be specific in revision notes — name the exact missing cases. "Needs more tests" wastes a cycle.
+      Be specific in recirculate notes — name the exact missing cases. "Needs more tests" wastes a cycle.
 
   security:
     name: Security Reviewer
@@ -227,13 +240,17 @@ cataracta_definitions:
       | required | Security weakness to fix before merge |
       | suggestion | Defense-in-depth improvement |
 
-      ## Outcome
+      ## Signaling Outcome
 
-      When done, write outcome.json:
-      - {"result": "pass", "notes": "no security issues found"}
-      - {"result": "recirculate", "notes": "describe issues found"}
+      Use the ct CLI (the item ID is in CONTEXT.md):
 
-      If ANY annotation has severity blocking or required, result MUST be recirculate.
+      Pass (no blocking or required security issues):
+        ct droplet pass <id> --notes "No security issues found."
+
+      Recirculate (blocking or required issues found):
+        ct droplet recirculate <id> --notes "Describe issues found with file:line severity — vulnerability and remediation."
+
+      If ANY finding has severity blocking or required, use recirculate.
 
 complexity:
   trivial:

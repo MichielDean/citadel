@@ -109,3 +109,16 @@ func (p *WorkerPool) FindAndClaimWorkerByName(name string) *Worker {
 	}
 	return nil
 }
+
+// FindWorkerByName returns the named worker without changing its state, or nil
+// if no worker with that name exists. Safe for use with pool.Release.
+func (p *WorkerPool) FindWorkerByName(name string) *Worker {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, w := range p.workers {
+		if w.Name == name {
+			return w
+		}
+	}
+	return nil
+}

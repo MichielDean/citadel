@@ -1,14 +1,12 @@
 package cataracta
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 // Session manages a Claude Code execution inside a tmux session.
@@ -27,106 +25,16 @@ type Session struct {
 	// Used to locate cataractae/<identity>/CLAUDE.md in the working directory.
 	Identity string
 
-	// TimeoutMinutes is the maximum runtime. 0 means 60 minutes.
+	// TimeoutMinutes is the maximum runtime hint passed to the agent via CONTEXT.md.
+	// 0 means default (60 minutes).
 	TimeoutMinutes int
-
-	// HandoffThreshold is the token count at which to trigger session handoff.
-	HandoffThreshold int
-
-	// SkipSpawn instructs Run to skip spawning a new tmux session and instead
-	// monitor an already-running session. Use this when re-adopting a session
-	// that survived a Castellarius restart. If the session is dead when Run is
-	// called with SkipSpawn=true, it returns a fail outcome immediately.
-	SkipSpawn bool
 }
 
-const (
-	outcomeFile  = "outcome.json"
-	handoffFile  = "handoff.md"
-	pollInterval = 5 * time.Second
-)
-
-// Run spawns a Claude Code session in tmux, polls for outcome.json, and returns
-// the parsed outcome. Handles session handoff when the token limit approaches.
-// When SkipSpawn is true the session is expected to already be running; Run
-// begins polling immediately and returns a fail outcome if the session is dead.
-func (s *Session) Run() (*Outcome, error) {
-	timeout := time.Duration(s.TimeoutMinutes) * time.Minute
-	if timeout == 0 {
-		timeout = 60 * time.Minute
-	}
-
-	if s.SkipSpawn {
-		// Re-adopting an existing session — verify it is actually alive before
-		// committing to watch. If dead, report failure so the caller can reset.
-		if !s.isAlive() {
-			return &Outcome{
-				Result: "fail",
-				Notes:  "re-adopt: session not found, treated as failed",
-			}, nil
-		}
-		log.Printf("session %s: re-adopted (skip spawn), watching for outcome", s.ID)
-	} else {
-		// Remove stale outcome file from previous runs.
-		os.Remove(filepath.Join(s.WorkDir, outcomeFile))
-
-		if err := s.spawn(); err != nil {
-			return nil, err
-		}
-	}
-
-	deadline := time.Now().Add(timeout)
-	for {
-		if time.Now().After(deadline) {
-			s.kill()
-			return nil, fmt.Errorf("session %s: timed out after %v", s.ID, timeout)
-		}
-
-		// Check for outcome.json.
-		outcome, err := s.checkOutcome()
-		if err == nil && outcome != nil {
-			s.kill()
-			return outcome, nil
-		}
-
-		// Check for handoff.md — agent hit token limit and wrote a handoff.
-		if s.checkHandoff() {
-			log.Printf("session %s: handoff detected, respawning", s.ID)
-			s.kill()
-
-			if err := s.prependHandoffToContext(); err != nil {
-				return nil, fmt.Errorf("handoff: %w", err)
-			}
-
-			// Remove handoff.md and outcome.json for fresh session.
-			os.Remove(filepath.Join(s.WorkDir, handoffFile))
-			os.Remove(filepath.Join(s.WorkDir, outcomeFile))
-
-			if err := s.spawn(); err != nil {
-				return nil, fmt.Errorf("respawn after handoff: %w", err)
-			}
-			// Reset deadline for the new session.
-			deadline = time.Now().Add(timeout)
-			continue
-		}
-
-		// Check if tmux session is still alive.
-		if !s.isAlive() {
-			// Session died — do one final outcome check before declaring failure.
-			// There is a race between the agent writing outcome.json and the tmux
-			// session window closing; we must not miss an outcome written in the
-			// last moments of the session.
-			if outcome, err := s.checkOutcome(); err == nil && outcome != nil {
-				return outcome, nil
-			}
-			return &Outcome{
-				Result: "fail",
-				Notes:  "session exited without writing outcome.json",
-			}, nil
-		}
-
-		time.Sleep(pollInterval)
-	}
+// Spawn creates a new tmux session running claude and returns immediately.
+// The Castellarius observe loop detects completion via the outcome field in the DB —
+// agents signal their outcome by calling `ct droplet pass/recirculate/block <id>`.
+func (s *Session) Spawn() error {
+	return s.spawn()
 }
 
 // spawn creates a new tmux session running claude.
@@ -167,21 +75,17 @@ func (s *Session) spawn() error {
 }
 
 // buildPrompt constructs the directive prompt for Claude.
-// The prompt explicitly tells the agent to do real work before writing outcome.json.
 func (s *Session) buildPrompt() string {
 	identityInstr := ""
 	if s.Identity != "" {
-		// Check ~/.cistern/cataractae/<identity>/CLAUDE.md first, fall back to sandbox cataractae/.
 		identityPath := s.resolveIdentityPath()
 		identityInstr = "Read " + identityPath + " for your detailed instructions and protocol. "
 	}
 	return "You are a Cistern agent. " +
-		"Read CONTEXT.md in this directory — it contains your assignment. " +
+		"Read CONTEXT.md in this directory — it contains your assignment and the exact ct commands to signal completion. " +
 		identityInstr +
-		"Complete the work described in your assignment fully before writing outcome.json. " +
-		"Do NOT write outcome.json until the work is actually finished. " +
-		"If you are running low on context window, write handoff.md summarizing " +
-		"your progress and remaining work, then stop — do not write outcome.json."
+		"Complete the work described fully. " +
+		"Signal your outcome with the ct commands shown in CONTEXT.md when done."
 }
 
 // resolveIdentityPath returns the path to the cataracta identity's CLAUDE.md file.
@@ -208,27 +112,6 @@ func (s *Session) isAlive() bool {
 	return err == nil
 }
 
-// checkOutcome reads and parses outcome.json if it exists.
-func (s *Session) checkOutcome() (*Outcome, error) {
-	path := filepath.Join(s.WorkDir, outcomeFile)
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-
-	var outcome Outcome
-	if err := json.Unmarshal(data, &outcome); err != nil {
-		return nil, fmt.Errorf("parse outcome.json: %w", err)
-	}
-	return &outcome, nil
-}
-
-// checkHandoff returns true if the agent wrote a handoff.md file.
-func (s *Session) checkHandoff() bool {
-	_, err := os.Stat(filepath.Join(s.WorkDir, handoffFile))
-	return err == nil
-}
-
 // claudePath returns the absolute path to the claude binary.
 func claudePath() string {
 	if p := os.Getenv("CLAUDE_PATH"); p != "" {
@@ -238,32 +121,4 @@ func claudePath() string {
 		return p
 	}
 	return os.ExpandEnv("$HOME/.local/bin/claude")
-}
-
-// prependHandoffToContext reads handoff.md and prepends its content
-// to CONTEXT.md so the next session gets the handoff context.
-func (s *Session) prependHandoffToContext() error {
-	handoffPath := filepath.Join(s.WorkDir, handoffFile)
-	handoff, err := os.ReadFile(handoffPath)
-	if err != nil {
-		return fmt.Errorf("read handoff.md: %w", err)
-	}
-
-	ctxPath := filepath.Join(s.WorkDir, "CONTEXT.md")
-	ctx, err := os.ReadFile(ctxPath)
-	if err != nil {
-		return fmt.Errorf("read CONTEXT.md: %w", err)
-	}
-
-	var b strings.Builder
-	b.WriteString("# Handoff from Previous Session\n\n")
-	b.Write(handoff)
-	b.WriteString("\n\n---\n\n")
-	b.Write(ctx)
-
-	if err := os.WriteFile(ctxPath, []byte(b.String()), 0644); err != nil {
-		return fmt.Errorf("write CONTEXT.md: %w", err)
-	}
-
-	return nil
 }

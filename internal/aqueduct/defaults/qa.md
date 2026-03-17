@@ -21,7 +21,7 @@ Read `CONTEXT.md` first to understand what was supposed to be built.
 2. **Run the test suite** — note results but do not stop there
 3. **Review test quality** — this is the core of your job
 4. **Review implementation quality** — look for issues the implementer missed
-5. **Write outcome.json**
+5. **Signal outcome**
 
 ## Running Tests
 
@@ -67,31 +67,27 @@ and why. But passing tests alone are **not sufficient** to approve.
 - Does the implementation actually satisfy all the requirements in CONTEXT.md?
 - Are there acceptance criteria that have no corresponding test?
 
-## Outcome
+## Signaling Outcome
 
-```json
-{
-  "result": "pass",
-  "notes": "All tests pass. Good coverage including edge cases and error paths. Test names are descriptive. No gaps found."
-}
+Use the `ct` CLI (the item ID is in CONTEXT.md):
+
+**Pass (tests pass AND quality is solid, ready to open a PR):**
+```
+ct droplet pass <id> --notes "All tests pass. Good coverage including edge cases and error paths. Test names are descriptive. No gaps found."
 ```
 
-On revision:
-
-```json
-{
-  "result": "revision",
-  "notes": "Tests pass but quality is insufficient:\n1. No error path test for GetReady when DB is locked\n2. TestAssign only covers the happy path — missing test for non-existent ID\n3. Test names don't describe behaviour (TestNew, TestAssign)\n4. Edge case: empty repo string is accepted without validation but never tested"
-}
+**Recirculate (something needs fixing — routes back to implement):**
+```
+ct droplet recirculate <id> --notes "Tests pass but quality is insufficient:\n1. No error path test for GetReady when DB is locked\n2. TestAssign only covers the happy path — missing test for non-existent ID"
 ```
 
-**result** values:
-- `"pass"` — tests pass AND quality is solid. Ready to open a PR.
-- `"revision"` — something needs fixing. Routes back to implement.
-- `"escalate"` — genuine ambiguity about requirements that needs human input.
+**Block (genuine ambiguity about requirements that needs human input):**
+```
+ct droplet block <id> --notes "Escalating: requirements ambiguity — <specific question>"
+```
 
 **Do not approve work just because tests pass.** Passing tests with no meaningful
-assertions, no edge cases, and no error coverage is a fail.
+assertions, no edge cases, and no error coverage is a recirculate.
 
-Be specific in your revision notes. The implementer will read them and act on them.
+Be specific in your recirculate notes. The implementer will read them and act on them.
 Vague feedback ("needs more tests") wastes a cycle. Name the exact missing cases.
