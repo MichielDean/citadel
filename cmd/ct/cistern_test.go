@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/MichielDean/cistern/internal/cistern"
@@ -110,6 +111,83 @@ func TestCisternListOutputFlag(t *testing.T) {
 	})
 
 	// Reset flag.
+	listOutput = "table"
+}
+
+func TestCisternListTableOutput(t *testing.T) {
+	dir := t.TempDir()
+	db := filepath.Join(dir, "test.db")
+	t.Setenv("CT_DB", db)
+
+	captureStdout := func(t *testing.T, fn func()) string {
+		t.Helper()
+		old := os.Stdout
+		r, w, _ := os.Pipe()
+		os.Stdout = w
+		fn()
+		w.Close()
+		os.Stdout = old
+		var buf bytes.Buffer
+		buf.ReadFrom(r)
+		return buf.String()
+	}
+
+	t.Run("empty cistern", func(t *testing.T) {
+		listOutput = "table"
+		listRepo = ""
+		listStatus = ""
+		out := captureStdout(t, func() {
+			if err := dropletListCmd.RunE(dropletListCmd, nil); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+		if strings.TrimSpace(out) != "Cistern dry." {
+			t.Fatalf("expected 'Cistern dry.', got %q", out)
+		}
+	})
+
+	// Add an item with empty CurrentCataracta for remaining subtests.
+	c, err := cistern.New(db, "ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.Add("github.com/test/repo", "Test droplet", "", 1, 3)
+	c.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("table header CATARACTA", func(t *testing.T) {
+		listOutput = "table"
+		listRepo = ""
+		listStatus = ""
+		out := captureStdout(t, func() {
+			if err := dropletListCmd.RunE(dropletListCmd, nil); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+		if !strings.Contains(out, "CATARACTA") {
+			t.Errorf("expected header to contain 'CATARACTA', got:\n%s", out)
+		}
+		if strings.Contains(out, "SLUICE") {
+			t.Errorf("header must not contain 'SLUICE', got:\n%s", out)
+		}
+	})
+
+	t.Run("em-dash for empty cataracta", func(t *testing.T) {
+		listOutput = "table"
+		listRepo = ""
+		listStatus = ""
+		out := captureStdout(t, func() {
+			if err := dropletListCmd.RunE(dropletListCmd, nil); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+		if !strings.Contains(out, "\u2014") {
+			t.Errorf("expected em-dash for empty cataracta column, got:\n%s", out)
+		}
+	})
+
 	listOutput = "table"
 }
 
