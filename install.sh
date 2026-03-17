@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Cistern installer
-# Usage: curl -sSf https://raw.githubusercontent.com/MichielDean/cistern/main/install.sh | bash
+# Usage: curl -sSf https://raw.githubusercontent.com/MichielDean/Cistern/main/install.sh | bash
 
 REPO='github.com/MichielDean/cistern'
 CT_DIR="${HOME}/.cistern"
@@ -137,14 +137,14 @@ configure_git() {
   fi
 
   # Tell the Go toolchain to skip the public checksum database for this repo.
-  export GOPRIVATE="${GOPRIVATE:+${GOPRIVATE},}github.com/MichielDean/*"
+  export GOPRIVATE="${GOPRIVATE:+${GOPRIVATE},}github.com/MichielDean/cistern"
   info "GOPRIVATE set ✓"
 }
 
 # --- install_ct: install via go install ---
 install_ct() {
   info "Installing ct..."
-  CGO_ENABLED=1 GOPRIVATE="github.com/MichielDean/*" go install "${REPO}/cmd/ct@latest"
+  CGO_ENABLED=1 GOPRIVATE="github.com/MichielDean/cistern" go install "${REPO}/cmd/ct@latest"
 
   local gobin ct_bin
   gobin="$(resolve_gobin)"
@@ -262,7 +262,7 @@ print_success() {
   printf "  Queue DB:   %s/cistern.db\n" "${CT_DIR}"
   printf "  Sandboxes:  %s/sandboxes/\n" "${CT_DIR}"
   printf "\n"
-  printf "${BOLD}Docs:${NC} https://github.com/MichielDean/cistern\n"
+  printf "${BOLD}Docs:${NC} https://github.com/MichielDean/Cistern\n"
   printf "\n"
 }
 
