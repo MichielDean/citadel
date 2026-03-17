@@ -273,6 +273,7 @@ cataractae:
     identity: implementer
     model: sonnet
     context: full_codebase
+    skills: []
     timeout_minutes: 30
     on_pass: adversarial-review
     on_fail: blocked
@@ -283,6 +284,7 @@ cataractae:
     identity: reviewer
     model: sonnet
     context: diff_only
+    skills: []
     timeout_minutes: 15
     skip_for: [1] # trivial droplets skip this cataracta
     on_pass: qa
@@ -295,6 +297,7 @@ cataractae:
     identity: qa
     model: sonnet
     context: full_codebase
+    skills: []
     timeout_minutes: 20
     skip_for: [1, 2] # trivial and standard droplets skip this cataracta
     on_pass: pr-create
@@ -304,12 +307,14 @@ cataractae:
 
   - name: pr-create
     type: automated
+    skills: []
     timeout_minutes: 5
     on_pass: ci-gate
     on_fail: human
 
   - name: ci-gate
     type: automated
+    skills: []
     timeout_minutes: 30
     on_pass: merge
     on_fail: implement
@@ -317,6 +322,7 @@ cataractae:
 
   - name: merge
     type: automated
+    skills: []
     timeout_minutes: 5
     on_pass: done
     on_fail: human

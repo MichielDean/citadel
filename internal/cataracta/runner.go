@@ -4,6 +4,7 @@ package cataracta
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/MichielDean/cistern/internal/aqueduct"
 	"github.com/MichielDean/cistern/internal/cistern"
+	"github.com/MichielDean/cistern/internal/skills"
 )
 
 // Worker is a named execution slot with a git worktree.
@@ -217,7 +219,23 @@ func (r *Runner) SpawnStep(w *Worker, item *cistern.Droplet, step *aqueduct.Work
 		return fmt.Errorf("context: %w", err)
 	}
 
-	// 3. Spawn Claude Code session in tmux. Returns immediately.
+	// 3. Install and copy skills into sandbox/.claude/skills/<name>/SKILL.md.
+	for _, skill := range step.Skills {
+		if err := skills.Install(skill.Name, skill.URL); err != nil {
+			log.Printf("cataracta: warning: failed to install skill %q: %v", skill.Name, err)
+			continue
+		}
+		dest := filepath.Join(w.SandboxDir, ".claude", "skills", skill.Name, "SKILL.md")
+		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+			log.Printf("cataracta: warning: mkdir skills dir for %q: %v", skill.Name, err)
+			continue
+		}
+		if err := copyFile(skills.CachePath(skill.Name), dest); err != nil {
+			log.Printf("cataracta: warning: copy skill %q: %v", skill.Name, err)
+		}
+	}
+
+	// 4. Spawn Claude Code session in tmux. Returns immediately.
 	sess := &Session{
 		ID:             w.SessionID,
 		WorkDir:        ctxDir,
@@ -260,6 +278,29 @@ func (r *Runner) CataractaByName(name string) *aqueduct.WorkflowCataracta {
 		if r.workflow.Cataractae[i].Name == name {
 			return &r.workflow.Cataractae[i]
 		}
+	}
+	return nil
+}
+
+// copyFile copies src to dst, creating dst if it does not exist.
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", src, err)
+	}
+	defer in.Close()
+
+	out, err := os.Create(dst)
+	if err != nil {
+		return fmt.Errorf("create %s: %w", dst, err)
+	}
+
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return fmt.Errorf("copy %s -> %s: %w", src, dst, err)
+	}
+	if err := out.Close(); err != nil {
+		return fmt.Errorf("close %s: %w", dst, err)
 	}
 	return nil
 }

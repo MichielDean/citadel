@@ -19,6 +19,12 @@ const (
 	ContextSpecOnly     ContextLevel = "spec_only"
 )
 
+// SkillRef references a skill by name and the URL to its SKILL.md file.
+type SkillRef struct {
+	Name string `yaml:"name"`
+	URL  string `yaml:"url"` // raw GitHub URL to SKILL.md
+}
+
 // WorkflowCataracta defines a single step in an aqueduct.
 type WorkflowCataracta struct {
 	Name    string       `yaml:"name"`
@@ -27,12 +33,13 @@ type WorkflowCataracta struct {
 	Model   string       `yaml:"model,omitempty"`
 	Context ContextLevel `yaml:"context,omitempty"`
 
-	TimeoutMinutes int    `yaml:"timeout_minutes,omitempty"`
-	SkipFor        []int  `yaml:"skip_for,omitempty"` // complexity levels that skip this step
-	OnPass         string `yaml:"on_pass,omitempty"`
-	OnFail         string `yaml:"on_fail,omitempty"`
-	OnRecirculate  string `yaml:"on_recirculate,omitempty"`
-	OnEscalate     string `yaml:"on_escalate,omitempty"`
+	TimeoutMinutes int        `yaml:"timeout_minutes,omitempty"`
+	SkipFor        []int      `yaml:"skip_for,omitempty"` // complexity levels that skip this step
+	Skills         []SkillRef `yaml:"skills,omitempty"`
+	OnPass         string     `yaml:"on_pass,omitempty"`
+	OnFail         string     `yaml:"on_fail,omitempty"`
+	OnRecirculate  string     `yaml:"on_recirculate,omitempty"`
+	OnEscalate     string     `yaml:"on_escalate,omitempty"`
 }
 
 // CataractaDefinition defines an agent role in YAML.
