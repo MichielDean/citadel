@@ -204,7 +204,8 @@ create_config() {
   info "Initializing Cistern..."
   local gobin
   gobin="$(resolve_gobin)"
-  "${gobin}/ct" init
+  "${gobin}/ct" init > /dev/null
+  info "Config and aqueduct files created"
 }
 
 # --- add_shell_completion: write completion for bash/zsh ---

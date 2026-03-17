@@ -79,14 +79,14 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	// 5. Print next-steps message.
 	fmt.Printf(`Cistern initialized.
-  Config   : ~/.cistern/cistern.yaml
-  Aqueduct : ~/.cistern/aqueduct/
-  Cataractae  : ~/.cistern/cataractae/
+  Config     : ~/.cistern/cistern.yaml
+  Aqueduct   : ~/.cistern/aqueduct/
+  Cataractae : ~/.cistern/cataractae/
 
 Next:
   1. Edit ~/.cistern/cistern.yaml — add your repos
-  2. ct cistern add --title "Your first droplet" --repo yourrepo
-  3. ct flow start
+  2. ct droplet add --title "Your first droplet" --repo yourrepo
+  3. ct castellarius start
 `)
 	return nil
 }
