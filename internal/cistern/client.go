@@ -83,7 +83,7 @@ func New(dbPath, prefix string) (*Client, error) {
 		PRIMARY KEY (droplet_id, depends_on)
 	)`)
 	// Issues table migration for existing DBs (idempotent — IF NOT EXISTS).
-	db.Exec(`CREATE TABLE IF NOT EXISTS droplet_issues (
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS droplet_issues (
 		id          TEXT PRIMARY KEY,
 		droplet_id  TEXT NOT NULL REFERENCES droplets(id),
 		flagged_by  TEXT NOT NULL,
@@ -92,7 +92,10 @@ func New(dbPath, prefix string) (*Client, error) {
 		status      TEXT NOT NULL DEFAULT 'open',
 		evidence    TEXT,
 		resolved_at DATETIME
-	)`)
+	)`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("cistern: droplet_issues migration: %w", err)
+	}
 	db.Exec(`UPDATE droplets SET status = 'delivered' WHERE status = 'closed'`)
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()

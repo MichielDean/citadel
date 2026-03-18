@@ -328,6 +328,7 @@ func TestDropletIssueList_WithIssues(t *testing.T) {
 }
 
 func TestDropletIssueList_OpenFilter(t *testing.T) {
+	t.Cleanup(func() { issueListOpen = false })
 	db := filepath.Join(t.TempDir(), "test.db")
 	t.Setenv("CT_DB", db)
 	t.Setenv("CT_NO_ASCII_LOGO", "1")
