@@ -126,6 +126,22 @@ func writeContextFile(path string, p ContextParams) error {
 	var b strings.Builder
 
 	b.WriteString("# Context\n\n")
+
+	// Surface revision notes at the very top when this is a recirculation.
+	// Agents anchor to the first thing they read — fixes must be unmissable.
+	revisionNotes := revisionCycleNotes(p.Notes)
+	if len(revisionNotes) > 0 {
+		b.WriteString("## ⚠️ REVISION REQUIRED — Fix these issues before anything else\n\n")
+		b.WriteString("This droplet was recirculated. The following issues were found and **must** be fixed.\n")
+		b.WriteString("Do not proceed to implementation until you have read and understood each issue.\n\n")
+		for i, n := range revisionNotes {
+			b.WriteString(fmt.Sprintf("### Issue %d (from: %s)\n\n", i+1, n.CataractaName))
+			b.WriteString(n.Content)
+			b.WriteString("\n\n")
+		}
+		b.WriteString("---\n\n")
+	}
+
 	b.WriteString(fmt.Sprintf("## Item: %s\n\n", p.Item.ID))
 	b.WriteString(fmt.Sprintf("**Title:** %s\n", p.Item.Title))
 	b.WriteString(fmt.Sprintf("**Status:** %s\n", p.Item.Status))
@@ -153,7 +169,7 @@ func writeContextFile(path string, p ContextParams) error {
 	b.WriteString("\n")
 
 	if len(p.Notes) > 0 {
-		b.WriteString("## Prior Step Notes\n\n")
+		b.WriteString("## All Prior Step Notes\n\n")
 		for _, n := range p.Notes {
 			if n.CataractaName != "" {
 				b.WriteString(fmt.Sprintf("### From: %s\n\n", n.CataractaName))
@@ -233,4 +249,36 @@ func buildSpecContent(item *cistern.Droplet) string {
 		b.WriteString("\n\n")
 	}
 	return b.String()
+}
+
+// revisionCycleNotes returns the notes from the most recent recirculate cycle —
+// i.e. all notes appended since the last "pass" or "block" note from a cataracta.
+// These are surfaced at the top of CONTEXT.md so the implementer sees them first.
+func revisionCycleNotes(notes []cistern.CataractaNote) []cistern.CataractaNote {
+	// Walk backwards to find the start of the latest recirculate cycle.
+	// A new cycle begins after any note whose content starts with "pass" or contains "No issues".
+	var cycle []cistern.CataractaNote
+	for i := len(notes) - 1; i >= 0; i-- {
+		n := notes[i]
+		content := strings.TrimSpace(n.Content)
+		isPassSignal := strings.HasPrefix(strings.ToLower(content), "no issues") ||
+			strings.HasPrefix(strings.ToLower(content), "fix already in place") ||
+			strings.HasPrefix(strings.ToLower(content), "all") ||
+			strings.HasPrefix(strings.ToLower(content), "implemented") ||
+			strings.HasPrefix(strings.ToLower(content), "manually verified")
+		if isPassSignal {
+			break
+		}
+		// Prepend so order is oldest-first within the cycle.
+		cycle = append([]cistern.CataractaNote{n}, cycle...)
+	}
+	// Only return notes from reviewer/security/qa cataractae — not implementer self-notes.
+	var filtered []cistern.CataractaNote
+	for _, n := range cycle {
+		name := strings.ToLower(n.CataractaName)
+		if strings.Contains(name, "review") || strings.Contains(name, "qa") || strings.Contains(name, "security") {
+			filtered = append(filtered, n)
+		}
+	}
+	return filtered
 }
