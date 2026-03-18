@@ -414,3 +414,50 @@ func TestList_ReturnsComplexity(t *testing.T) {
 		t.Errorf("items[1].Complexity = %d, want 4", items[1].Complexity)
 	}
 }
+
+func TestStats_EmptyDB(t *testing.T) {
+	c := testClient(t)
+	s, err := c.Stats()
+	if err != nil {
+		t.Fatalf("Stats on empty DB: %v", err)
+	}
+	if s.Flowing != 0 || s.Queued != 0 || s.Delivered != 0 || s.Stagnant != 0 {
+		t.Errorf("expected all zeros on empty DB, got %+v", s)
+	}
+}
+
+func TestStats_WithData(t *testing.T) {
+	c := testClient(t)
+
+	// Add 2 open (queued), 1 in_progress (flowing), 3 delivered, 1 stagnant.
+	c.Add("repo", "q1", "", 1, 3)
+	c.Add("repo", "q2", "", 1, 3)
+	item3, _ := c.Add("repo", "ip1", "", 1, 3)
+	item4, _ := c.Add("repo", "d1", "", 1, 3)
+	item5, _ := c.Add("repo", "d2", "", 1, 3)
+	item6, _ := c.Add("repo", "d3", "", 1, 3)
+	item7, _ := c.Add("repo", "s1", "", 1, 3)
+
+	c.UpdateStatus(item3.ID, "in_progress")
+	c.CloseItem(item4.ID)
+	c.CloseItem(item5.ID)
+	c.CloseItem(item6.ID)
+	c.Escalate(item7.ID, "stuck")
+
+	s, err := c.Stats()
+	if err != nil {
+		t.Fatalf("Stats: %v", err)
+	}
+	if s.Queued != 2 {
+		t.Errorf("Queued = %d, want 2", s.Queued)
+	}
+	if s.Flowing != 1 {
+		t.Errorf("Flowing = %d, want 1", s.Flowing)
+	}
+	if s.Delivered != 3 {
+		t.Errorf("Delivered = %d, want 3", s.Delivered)
+	}
+	if s.Stagnant != 1 {
+		t.Errorf("Stagnant = %d, want 1", s.Stagnant)
+	}
+}

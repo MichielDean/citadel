@@ -318,6 +318,34 @@ func parseDuration(s string) (time.Duration, error) {
 	return time.ParseDuration(s)
 }
 
+// --- cistern stats ---
+
+var dropletStatsCmd = &cobra.Command{
+	Use:   "stats",
+	Short: "Show droplet counts by status",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		c, err := cistern.New(resolveDBPath(), "")
+		if err != nil {
+			return err
+		}
+		defer c.Close()
+
+		s, err := c.Stats()
+		if err != nil {
+			return err
+		}
+
+		tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+		fmt.Fprintf(tw, "  flowing\t%d\n", s.Flowing)
+		fmt.Fprintf(tw, "  queued\t%d\n", s.Queued)
+		fmt.Fprintf(tw, "  delivered\t%d\n", s.Delivered)
+		fmt.Fprintf(tw, "  stagnant\t%d\n", s.Stagnant)
+		fmt.Fprintln(tw, "  ──────────────")
+		fmt.Fprintf(tw, "  total\t%d\n", s.Flowing+s.Queued+s.Delivered+s.Stagnant)
+		return tw.Flush()
+	},
+}
+
 // --- cistern pass ---
 
 var passNotes string
@@ -430,7 +458,7 @@ func init() {
 
 	dropletCmd.AddCommand(dropletAddCmd, dropletListCmd, dropletShowCmd, dropletNoteCmd,
 		dropletCloseCmd, dropletReopenCmd, dropletEscalateCmd, dropletPurgeCmd,
-		dropletPassCmd, dropletRecirculateCmd, dropletBlockCmd)
+		dropletPassCmd, dropletRecirculateCmd, dropletBlockCmd, dropletStatsCmd)
 	rootCmd.AddCommand(dropletCmd)
 }
 

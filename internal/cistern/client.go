@@ -490,6 +490,43 @@ func (c *Client) ListRecentEvents(limit int) ([]RecentEvent, error) {
 	return events, rows.Err()
 }
 
+// DropletStats holds counts of droplets grouped by display status.
+type DropletStats struct {
+	Flowing   int // status=in_progress
+	Queued    int // status=open
+	Delivered int // status=delivered
+	Stagnant  int // status=stagnant
+}
+
+// Stats returns counts of droplets grouped by status.
+func (c *Client) Stats() (DropletStats, error) {
+	rows, err := c.db.Query(`SELECT status, COUNT(*) FROM droplets GROUP BY status`)
+	if err != nil {
+		return DropletStats{}, fmt.Errorf("cistern: stats: %w", err)
+	}
+	defer rows.Close()
+
+	var s DropletStats
+	for rows.Next() {
+		var status string
+		var count int
+		if err := rows.Scan(&status, &count); err != nil {
+			return DropletStats{}, fmt.Errorf("cistern: stats scan: %w", err)
+		}
+		switch status {
+		case "in_progress":
+			s.Flowing += count
+		case "open":
+			s.Queued += count
+		case "delivered":
+			s.Delivered += count
+		case "stagnant":
+			s.Stagnant += count
+		}
+	}
+	return s, rows.Err()
+}
+
 func checkRowsAffected(res sql.Result, id string) error {
 	n, err := res.RowsAffected()
 	if err != nil {

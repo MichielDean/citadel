@@ -247,3 +247,94 @@ func TestComplexityName(t *testing.T) {
 		}
 	}
 }
+
+func TestDropletStats_EmptyDB(t *testing.T) {
+	dir := t.TempDir()
+	db := filepath.Join(dir, "test.db")
+	t.Setenv("CT_DB", db)
+
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	err := dropletStatsCmd.RunE(dropletStatsCmd, nil)
+
+	w.Close()
+	os.Stdout = old
+
+	if err != nil {
+		t.Fatalf("unexpected error on empty DB: %v", err)
+	}
+
+	var buf bytes.Buffer
+	buf.ReadFrom(r)
+	out := buf.String()
+
+	for _, want := range []string{"flowing", "queued", "delivered", "stagnant", "total"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestDropletStats_WithData(t *testing.T) {
+	dir := t.TempDir()
+	db := filepath.Join(dir, "test.db")
+	t.Setenv("CT_DB", db)
+
+	// Seed: 2 queued, 1 flowing, 3 delivered, 1 stagnant.
+	c, err := cistern.New(db, "ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Add("repo", "q1", "", 1, 3)
+	c.Add("repo", "q2", "", 1, 3)
+	ip, _ := c.Add("repo", "ip1", "", 1, 3)
+	d1, _ := c.Add("repo", "d1", "", 1, 3)
+	d2, _ := c.Add("repo", "d2", "", 1, 3)
+	d3, _ := c.Add("repo", "d3", "", 1, 3)
+	s1, _ := c.Add("repo", "s1", "", 1, 3)
+	c.UpdateStatus(ip.ID, "in_progress")
+	c.CloseItem(d1.ID)
+	c.CloseItem(d2.ID)
+	c.CloseItem(d3.ID)
+	c.Escalate(s1.ID, "stuck")
+	c.Close()
+
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	err = dropletStatsCmd.RunE(dropletStatsCmd, nil)
+
+	w.Close()
+	os.Stdout = old
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var buf bytes.Buffer
+	buf.ReadFrom(r)
+	out := buf.String()
+
+	checks := []struct{ label, value string }{
+		{"flowing", "1"},
+		{"queued", "2"},
+		{"delivered", "3"},
+		{"stagnant", "1"},
+		{"total", "7"},
+	}
+	for _, ch := range checks {
+		if !strings.Contains(out, ch.label) {
+			t.Errorf("output missing label %q:\n%s", ch.label, out)
+		}
+		if !strings.Contains(out, ch.value) {
+			t.Errorf("output missing value %q for %q:\n%s", ch.value, ch.label, out)
+		}
+	}
+	// Verify separator and total row present.
+	if !strings.Contains(out, "──") {
+		t.Errorf("output missing separator line:\n%s", out)
+	}
+}
