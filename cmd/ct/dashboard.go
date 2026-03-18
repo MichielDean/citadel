@@ -285,10 +285,8 @@ func renderFlowGraphRow(ch CataractaInfo) (graphLine, infoLine string) {
 
 	for i, step := range ch.Steps {
 		if i > 0 {
-			prevStep := ch.Steps[i-1]
-			if prevStep == ch.Step && ch.DropletID != "" {
+			if step == ch.Step && ch.DropletID != "" {
 				g.WriteString(colorDim + " ──" + colorReset + colorGreen + "●" + colorReset + colorDim + "──▶ " + colorReset)
-				activeCol = visualCol + 3
 			} else {
 				g.WriteString(colorDim + " ──○──▶ " + colorReset)
 			}
@@ -296,16 +294,11 @@ func renderFlowGraphRow(ch CataractaInfo) (graphLine, infoLine string) {
 		}
 		if step == ch.Step && ch.DropletID != "" {
 			g.WriteString(colorGreen + step + colorReset)
+			activeCol = visualCol // step name starts here (after any incoming edge)
 		} else {
 			g.WriteString(colorDim + step + colorReset)
 		}
 		visualCol += len([]rune(step))
-	}
-
-	// Trailing node if the last step is active.
-	if len(ch.Steps) > 0 && ch.Steps[len(ch.Steps)-1] == ch.Step && ch.DropletID != "" {
-		g.WriteString(colorDim + " ──" + colorReset + colorGreen + "●" + colorReset)
-		activeCol = visualCol + 3
 	}
 
 	graphLine = g.String()

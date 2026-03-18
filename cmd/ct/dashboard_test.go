@@ -321,28 +321,58 @@ func TestRenderDashboard_ContainsExpectedSections(t *testing.T) {
 }
 
 func TestRenderFlowGraphRow_ActiveStep(t *testing.T) {
+	// Use step="review" (non-first step) to verify ● appears on the incoming edge,
+	// i.e. before the active step name: implement ──●──▶ review ──○──▶ qa
 	ch := CataractaInfo{
 		Name:            "virgo",
 		DropletID:       "ci-s76ho",
-		Step:            "implement",
+		Step:            "review",
 		Steps:           []string{"implement", "review", "qa"},
 		Elapsed:         3*time.Minute + 12*time.Second,
-		CataractaIndex:  1,
+		CataractaIndex:  2,
 		TotalCataractae: 3,
 	}
 	graphLine, infoLine := renderFlowGraphRow(ch)
 
-	if !strings.Contains(graphLine, "●") {
-		t.Error("graph line should contain filled node ● for active step")
+	stripANSI := func(s string) string {
+		var out strings.Builder
+		inEsc := false
+		for _, r := range s {
+			if r == '\033' {
+				inEsc = true
+				continue
+			}
+			if inEsc {
+				if r == 'm' {
+					inEsc = false
+				}
+				continue
+			}
+			out.WriteRune(r)
+		}
+		return out.String()
 	}
-	if !strings.Contains(graphLine, "○") {
+
+	cleanGraph := stripANSI(graphLine)
+
+	// ● must appear before "review" in the graph (incoming edge semantics).
+	bulletIdx := strings.Index(cleanGraph, "●")
+	if bulletIdx < 0 {
+		t.Fatal("graph line should contain filled node ● for active step")
+	}
+	reviewIdx := strings.Index(cleanGraph, "review")
+	if reviewIdx < 0 {
+		t.Fatal("graph line should contain the active step name 'review'")
+	}
+	if bulletIdx >= reviewIdx {
+		t.Errorf("● (col %d) should appear before 'review' (col %d) in graph line", bulletIdx, reviewIdx)
+	}
+
+	if !strings.Contains(cleanGraph, "○") {
 		t.Error("graph line should contain hollow node ○ for inactive steps")
 	}
-	if !strings.Contains(graphLine, "implement") {
-		t.Error("graph line should contain the active step name")
-	}
-	if !strings.Contains(graphLine, "review") {
-		t.Error("graph line should contain subsequent step names")
+	if !strings.Contains(cleanGraph, "implement") {
+		t.Error("graph line should contain preceding step name 'implement'")
 	}
 	if !strings.Contains(infoLine, "↑") {
 		t.Error("info line should contain pointer ↑")
@@ -421,18 +451,26 @@ func TestRenderFlowGraphRow_PointerAligned(t *testing.T) {
 	cleanGraph := stripANSI(graphLine)
 	cleanInfo := stripANSI(infoLine)
 
-	// Find the ● position (rune column) in the clean graph.
+	// ● must appear BEFORE the active step name "review".
 	bulletPos := runeIndex(cleanGraph, "●")
 	if bulletPos < 0 {
 		t.Fatal("no ● in graph line")
 	}
-	// The ↑ in the info line should be at the same visual column.
+	reviewPos := runeIndex(cleanGraph, "review")
+	if reviewPos < 0 {
+		t.Fatal("no 'review' in graph line")
+	}
+	if bulletPos >= reviewPos {
+		t.Errorf("● at visual col %d should be before 'review' at col %d (incoming edge semantics)", bulletPos, reviewPos)
+	}
+
+	// ↑ in the info line should align with the start of the active step name "review".
 	arrowPos := runeIndex(cleanInfo, "↑")
 	if arrowPos < 0 {
 		t.Fatal("no ↑ in info line")
 	}
-	if bulletPos != arrowPos {
-		t.Errorf("● at visual col %d, ↑ at visual col %d — should be aligned", bulletPos, arrowPos)
+	if arrowPos != reviewPos {
+		t.Errorf("↑ at visual col %d should align with 'review' at col %d in graph line", arrowPos, reviewPos)
 	}
 }
 

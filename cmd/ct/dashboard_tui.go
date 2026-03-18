@@ -198,12 +198,10 @@ func (m dashboardTUIModel) tuiFlowGraphRow(ch CataractaInfo) (graphLine, infoLin
 
 	for i, step := range ch.Steps {
 		if i > 0 {
-			prevStep := ch.Steps[i-1]
 			// " ──" = 3 visual chars, "●"/"○" = 1, "──▶ " = 4 → total 8
-			if prevStep == ch.Step && ch.DropletID != "" {
+			if step == ch.Step && ch.DropletID != "" {
 				g.WriteString(tuiStyleDim.Render(" ──"))
 				g.WriteString(tuiStyleGreen.Render("●"))
-				activeVisualCol = visualCol + 3
 				g.WriteString(tuiStyleDim.Render("──▶ "))
 			} else {
 				g.WriteString(tuiStyleDim.Render(" ──○──▶ "))
@@ -212,17 +210,11 @@ func (m dashboardTUIModel) tuiFlowGraphRow(ch CataractaInfo) (graphLine, infoLin
 		}
 		if step == ch.Step && ch.DropletID != "" {
 			g.WriteString(tuiStyleGreen.Bold(true).Render(step))
+			activeVisualCol = visualCol // step name starts here (after any incoming edge)
 		} else {
 			g.WriteString(tuiStyleDim.Render(step))
 		}
 		visualCol += len([]rune(step))
-	}
-
-	// Trailing node if the last step is active.
-	if len(ch.Steps) > 0 && ch.Steps[len(ch.Steps)-1] == ch.Step && ch.DropletID != "" {
-		g.WriteString(tuiStyleDim.Render(" ──"))
-		g.WriteString(tuiStyleGreen.Render("●"))
-		activeVisualCol = visualCol + 3
 	}
 
 	graphLine = g.String()
