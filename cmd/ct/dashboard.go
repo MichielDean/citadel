@@ -139,7 +139,7 @@ func fetchDashboardData(cfgPath, dbPath string) *DashboardData {
 			}
 		case "open":
 			data.QueuedCount++
-		case "closed":
+		case "delivered":
 			data.DoneCount++
 		}
 	}
@@ -167,10 +167,10 @@ func fetchDashboardData(cfgPath, dbPath string) *DashboardData {
 		}
 	}
 
-	// Recent flow: most recently updated closed/escalated items.
+	// Recent flow: most recently updated delivered/stagnant items.
 	var recent []*cistern.Droplet
 	for _, item := range allItems {
-		if item.Status == "closed" || item.Status == "escalated" {
+		if item.Status == "delivered" || item.Status == "stagnant" {
 			recent = append(recent, item)
 		}
 	}
@@ -486,7 +486,7 @@ h1,h2{margin:0 0 10px}h1{font-size:20px}h2{font-size:15px;color:#9db1db}
 	sb.WriteString(`<div class="wrap">`)
 	sb.WriteString(`<div class="card"><h1>CT Dashboard</h1>`)
 	sb.WriteString(fmt.Sprintf(`<div class="muted"><span class="ok">%d flowing</span> • <span class="warn">%d queued</span> • %d delivered</div>`,
-		snapshot.Queue.Flowing, snapshot.Queue.Queued, snapshot.Queue.Closed))
+		snapshot.Counts.Flowing, snapshot.Counts.Queued, snapshot.Counts.Delivered))
 	sb.WriteString(fmt.Sprintf(`<div class="muted" style="margin-top:6px">last update: %s</div>`, time.Now().Format("15:04:05")))
 	sb.WriteString(`</div>`)
 

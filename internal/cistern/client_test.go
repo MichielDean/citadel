@@ -262,8 +262,8 @@ func TestEscalate(t *testing.T) {
 	}
 
 	got, _ := c.Get(item.ID)
-	if got.Status != "escalated" {
-		t.Errorf("status = %q, want %q", got.Status, "escalated")
+	if got.Status != "stagnant" {
+		t.Errorf("status = %q, want %q", got.Status, "stagnant")
 	}
 }
 
@@ -276,8 +276,8 @@ func TestCloseItem(t *testing.T) {
 	}
 
 	got, _ := c.Get(item.ID)
-	if got.Status != "closed" {
-		t.Errorf("status = %q, want %q", got.Status, "closed")
+	if got.Status != "delivered" {
+		t.Errorf("status = %q, want %q", got.Status, "delivered")
 	}
 }
 
@@ -320,7 +320,7 @@ func TestList_ByStatus(t *testing.T) {
 	_ = item1
 	c.CloseItem(item2.ID)
 
-	items, err := c.List("", "closed")
+	items, err := c.List("", "delivered")
 	if err != nil {
 		t.Fatal(err)
 	}

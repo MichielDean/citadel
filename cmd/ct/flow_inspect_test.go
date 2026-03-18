@@ -113,20 +113,20 @@ func TestFlowInspectCisternCounts(t *testing.T) {
 		t.Fatalf("invalid JSON: %v", err)
 	}
 
-	if out.Queue.Flowing != 1 {
-		t.Errorf("flowing: got %d, want 1", out.Queue.Flowing)
+	if out.Counts.Flowing != 1 {
+		t.Errorf("flowing: got %d, want 1", out.Counts.Flowing)
 	}
-	if out.Queue.Queued != 1 {
-		t.Errorf("queued: got %d, want 1", out.Queue.Queued)
+	if out.Counts.Queued != 1 {
+		t.Errorf("queued: got %d, want 1", out.Counts.Queued)
 	}
-	if out.Queue.Stagnant != 1 {
-		t.Errorf("stagnant: got %d, want 1", out.Queue.Stagnant)
+	if out.Counts.Stagnant != 1 {
+		t.Errorf("stagnant: got %d, want 1", out.Counts.Stagnant)
 	}
-	if out.Queue.Closed != 1 {
-		t.Errorf("closed: got %d, want 1", out.Queue.Closed)
+	if out.Counts.Delivered != 1 {
+		t.Errorf("delivered: got %d, want 1", out.Counts.Delivered)
 	}
-	if out.Queue.Total != 3 { // flowing + queued + stagnant, not closed
-		t.Errorf("total: got %d, want 3", out.Queue.Total)
+	if out.Counts.Total != 3 { // flowing + queued + stagnant, not closed
+		t.Errorf("total: got %d, want 3", out.Counts.Total)
 	}
 
 	// Droplets array should exclude closed items.
@@ -224,13 +224,13 @@ func TestBuildInspectOutput_UsesProvidedPathsAndIncludesStagnant(t *testing.T) {
 	if out.Cistern.Config != cfgPath {
 		t.Errorf("config: got %q, want %q", out.Cistern.Config, cfgPath)
 	}
-	if out.Queue.Stagnant != 1 {
-		t.Errorf("stagnant: got %d, want 1", out.Queue.Stagnant)
+	if out.Counts.Stagnant != 1 {
+		t.Errorf("stagnant: got %d, want 1", out.Counts.Stagnant)
 	}
 	if len(out.Droplets) != 1 {
 		t.Fatalf("droplets: got %d, want 1", len(out.Droplets))
 	}
-	if out.Droplets[0].Status != "escalated" {
+	if out.Droplets[0].Status != "stagnant" {
 		t.Errorf("droplet status: got %q, want escalated", out.Droplets[0].Status)
 	}
 }

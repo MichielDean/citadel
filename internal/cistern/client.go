@@ -74,6 +74,9 @@ func New(dbPath, prefix string) (*Client, error) {
 	db.Exec(`ALTER TABLE droplets RENAME COLUMN current_step TO current_cataracta`)
 	db.Exec(`ALTER TABLE droplets ADD COLUMN complexity INTEGER DEFAULT 3`)
 	db.Exec(`ALTER TABLE droplets ADD COLUMN outcome TEXT DEFAULT NULL`)
+	// Vocabulary migrations: update legacy status values to canonical vocabulary.
+	db.Exec(`UPDATE droplets SET status = 'stagnant' WHERE status = 'escalated'`)
+	db.Exec(`UPDATE droplets SET status = 'delivered' WHERE status = 'closed'`)
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("cistern: schema: %w", err)
@@ -264,7 +267,7 @@ func (c *Client) GetNotes(id string) ([]CataractaNote, error) {
 // Escalate marks a droplet as needing human attention and records the reason.
 func (c *Client) Escalate(id, reason string) error {
 	res, err := c.db.Exec(
-		`UPDATE droplets SET status = 'escalated', updated_at = ? WHERE id = ?`,
+		`UPDATE droplets SET status = 'stagnant', updated_at = ? WHERE id = ?`,
 		time.Now().UTC(), id,
 	)
 	if err != nil {
@@ -284,10 +287,10 @@ func (c *Client) Escalate(id, reason string) error {
 	return nil
 }
 
-// CloseItem marks a droplet as closed.
+// CloseItem marks a droplet as delivered.
 func (c *Client) CloseItem(id string) error {
 	res, err := c.db.Exec(
-		`UPDATE droplets SET status = 'closed', updated_at = ? WHERE id = ?`,
+		`UPDATE droplets SET status = 'delivered', updated_at = ? WHERE id = ?`,
 		time.Now().UTC(), id,
 	)
 	if err != nil {
@@ -397,7 +400,7 @@ func scanDroplet(row *sql.Row) (*Droplet, error) {
 	return &droplet, nil
 }
 
-// Purge deletes closed/escalated droplets older than olderThan, cascading to
+// Purge deletes delivered/stagnant droplets older than olderThan, cascading to
 // cataracta_notes and events. Returns the count of droplets deleted (or that would be
 // deleted in dry-run mode).
 func (c *Client) Purge(olderThan time.Duration, dryRun bool) (int, error) {
@@ -406,7 +409,7 @@ func (c *Client) Purge(olderThan time.Duration, dryRun bool) (int, error) {
 	if dryRun {
 		var count int
 		err := c.db.QueryRow(
-			`SELECT COUNT(*) FROM droplets WHERE status IN ('closed', 'escalated') AND updated_at < ?`,
+			`SELECT COUNT(*) FROM droplets WHERE status IN ('delivered', 'stagnant') AND updated_at < ?`,
 			cutoff,
 		).Scan(&count)
 		if err != nil {
@@ -423,7 +426,7 @@ func (c *Client) Purge(olderThan time.Duration, dryRun bool) (int, error) {
 
 	if _, err := tx.Exec(
 		`DELETE FROM cataracta_notes WHERE droplet_id IN (
-			SELECT id FROM droplets WHERE status IN ('closed', 'escalated') AND updated_at < ?
+			SELECT id FROM droplets WHERE status IN ('delivered', 'stagnant') AND updated_at < ?
 		)`, cutoff,
 	); err != nil {
 		return 0, fmt.Errorf("cistern: purge cataracta_notes: %w", err)
@@ -431,14 +434,14 @@ func (c *Client) Purge(olderThan time.Duration, dryRun bool) (int, error) {
 
 	if _, err := tx.Exec(
 		`DELETE FROM events WHERE droplet_id IN (
-			SELECT id FROM droplets WHERE status IN ('closed', 'escalated') AND updated_at < ?
+			SELECT id FROM droplets WHERE status IN ('delivered', 'stagnant') AND updated_at < ?
 		)`, cutoff,
 	); err != nil {
 		return 0, fmt.Errorf("cistern: purge events: %w", err)
 	}
 
 	res, err := tx.Exec(
-		`DELETE FROM droplets WHERE status IN ('closed', 'escalated') AND updated_at < ?`,
+		`DELETE FROM droplets WHERE status IN ('delivered', 'stagnant') AND updated_at < ?`,
 		cutoff,
 	)
 	if err != nil {

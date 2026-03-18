@@ -311,7 +311,7 @@ var statusCmd = &cobra.Command{
 				}
 			case "open":
 				queued++
-			case "closed":
+			case "delivered":
 				done++
 			}
 		}
