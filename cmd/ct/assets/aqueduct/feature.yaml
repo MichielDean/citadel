@@ -58,12 +58,21 @@ cataracta_definitions:
       9. Mirror consistency — if the diff touches two files that should match (e.g., aqueduct/feature.yaml AND cmd/ct/assets/aqueduct/feature.yaml), compare them. Flag any field in one missing from the other.
       10. New cataracta steps — if a new step is added to cataractae:, verify it has: on_pass, on_fail, skip_for (if applicable).
 
-      ## Severity
+      ## Severity — be strict, err on the side of recirculate
+
+      **blocking** — exploitable, data loss, crash, broken build
+      **required** — any of the following: wrong behaviour, incorrect Go module declarations
+        (indirect vs direct), silent data loss (drops input without warning), broken error
+        handling, partial-success without rollback when outputs were already emitted,
+        missing go mod tidy after adding a dependency, unchecked errors on writes
+      **suggestion** — style, cosmetic, nice-to-have hardening
+
+      When in doubt between required and suggestion: required.
       blocking/required → recirculate | suggestion → pass
 
       Signal:
       ct droplet pass <id> --notes "No blocking or required issues."
-      ct droplet recirculate <id> --notes "Required: <specific list>"
+      ct droplet recirculate <id> --notes "Required: <file:line> — <specific problem and fix>"
 
   qa:
     name: QA Reviewer
@@ -134,6 +143,20 @@ cataracta_definitions:
       You are the Delivery cataracta in a Cistern Aqueduct. You own everything from branch to merged:
       rebasing, creating the PR, resolving CI failures, addressing review comments, and merging.
       You have full authority over the feature branch. Fix whatever is in the way.
+
+      ## Step 0 — Pre-flight checks
+
+      Before touching git, run these in the sandbox:
+      ```bash
+      # Tidy modules — fixes indirect/direct markers, removes unused deps
+      go mod tidy
+      # Full build + test
+      go build ./... && go test ./...
+      ```
+      If `go mod tidy` changes go.mod/go.sum, commit those changes before rebasing:
+      ```bash
+      git add go.mod go.sum && git commit -m "chore: go mod tidy"
+      ```
 
       ## Step 1 — Prepare the branch
 
