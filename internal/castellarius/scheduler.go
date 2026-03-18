@@ -33,6 +33,7 @@ type CisternClient interface {
 	CloseItem(id string) error
 	List(repo, status string) ([]*cistern.Droplet, error)
 	Purge(olderThan time.Duration, dryRun bool) (int, error)
+	SetCataracta(id, cataracta string) error
 }
 
 // CataractaRunner executes a single workflow step.
@@ -648,6 +649,11 @@ func (s *Castellarius) handleTerminal(client CisternClient, itemID, terminal, fr
 		reason := fmt.Sprintf("reached terminal %q from cataracta %q", terminal, fromStep)
 		if err := client.Escalate(itemID, reason); err != nil {
 			s.logger.Error("escalate at terminal failed", "droplet", itemID, "error", err)
+		}
+		if strings.ToLower(terminal) == "human" {
+			if err := client.SetCataracta(itemID, "human"); err != nil {
+				s.logger.Error("set cataracta human failed", "droplet", itemID, "error", err)
+			}
 		}
 	}
 }

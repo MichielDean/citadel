@@ -176,6 +176,13 @@ func (c *pipelineClient) Purge(olderThan time.Duration, dryRun bool) (int, error
 	return 0, nil
 }
 
+func (c *pipelineClient) SetCataracta(id, cataracta string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.item.CurrentCataracta = cataracta
+	return nil
+}
+
 // resultToOutcome converts an Outcome Result to the DB outcome string
 // written by `ct droplet` commands.
 func resultToOutcome(r Result) string {

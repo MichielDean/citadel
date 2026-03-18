@@ -377,6 +377,19 @@ func (c *Client) SetOutcome(id, outcome string) error {
 	return checkRowsAffected(res, id)
 }
 
+// SetCataracta updates the current_cataracta field on a droplet without changing
+// any other fields. Used by the scheduler to mark a droplet as awaiting human approval.
+func (c *Client) SetCataracta(id, cataracta string) error {
+	res, err := c.db.Exec(
+		`UPDATE droplets SET current_cataracta = ?, updated_at = ? WHERE id = ?`,
+		cataracta, time.Now().UTC(), id,
+	)
+	if err != nil {
+		return fmt.Errorf("cistern: set cataracta %s: %w", id, err)
+	}
+	return checkRowsAffected(res, id)
+}
+
 // Get retrieves a single droplet by ID. Returns an error if not found.
 func (c *Client) Get(id string) (*Droplet, error) {
 	row := c.db.QueryRow(

@@ -153,7 +153,7 @@ var dropletListCmd = &cobra.Command{
 		tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 		fmt.Fprintln(tw, "ID\tCOMPLEXITY\tTITLE\tSTATUS\tELAPSED\tCATARACTA")
 		for _, item := range active {
-			ds := displayStatus(item.Status)
+			ds := displayStatusForDroplet(item)
 			cataracta := item.CurrentCataracta
 			if cataracta == "" {
 				cataracta = "\u2014"
@@ -164,6 +164,9 @@ var dropletListCmd = &cobra.Command{
 					ds = "\u2298 blocked"
 					cataracta = "waiting: " + blockedBy[0]
 				}
+			}
+			if ds == "awaiting" {
+				ds = "\u23f8 awaiting approval"
 			}
 			elapsed := "\u2014"
 			if item.Status == "in_progress" {
@@ -202,7 +205,7 @@ func printDropletListTerminal(active, dimmed []*cistern.Droplet, showAll bool, t
 		colID, "ID", colCX, "COMPLEXITY", titleMax, "TITLE", colSt, "STATUS", colEl, "ELAPSED", "CATARACTA")
 
 	for _, item := range active {
-		ds := displayStatus(item.Status)
+		ds := displayStatusForDroplet(item)
 		cataracta := item.CurrentCataracta
 		if cataracta == "" {
 			cataracta = "—"
@@ -245,6 +248,15 @@ func displayStatus(status string) string {
 	default:
 		return status
 	}
+}
+
+// displayStatusForDroplet returns the display status for a droplet, overriding
+// for human-gated droplets to show "awaiting approval".
+func displayStatusForDroplet(item *cistern.Droplet) string {
+	if item.CurrentCataracta == "human" && (item.Status == "stagnant" || item.Status == "escalated") {
+		return "awaiting"
+	}
+	return displayStatus(item.Status)
 }
 
 // --- cistern show ---
@@ -748,6 +760,35 @@ var dropletBlockCmd = &cobra.Command{
 	},
 }
 
+// --- cistern approve ---
+
+var dropletApproveCmd = &cobra.Command{
+	Use:   "approve <id>",
+	Short: "Approve a human-gated droplet for delivery",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		id := args[0]
+		c, err := cistern.New(resolveDBPath(), "")
+		if err != nil {
+			return err
+		}
+		defer c.Close()
+
+		item, err := c.Get(id)
+		if err != nil {
+			return err
+		}
+		if item.CurrentCataracta != "human" {
+			return fmt.Errorf("%s is not awaiting human approval (cataracta: %s)", id, item.CurrentCataracta)
+		}
+		if err := c.Assign(id, "", "delivery"); err != nil {
+			return err
+		}
+		fmt.Printf("Droplet %s approved for delivery\n", id)
+		return nil
+	},
+}
+
 // --- cistern peek ---
 
 var (
@@ -888,8 +929,8 @@ func init() {
 
 	dropletCmd.AddCommand(dropletAddCmd, dropletListCmd, dropletShowCmd, dropletNoteCmd,
 		dropletCloseCmd, dropletReopenCmd, dropletEscalateCmd, dropletPurgeCmd,
-		dropletPassCmd, dropletRecirculateCmd, dropletBlockCmd, dropletStatsCmd,
-		dropletDepsCmd, dropletPeekCmd, dropletIssueCmd)
+		dropletPassCmd, dropletRecirculateCmd, dropletBlockCmd, dropletApproveCmd,
+		dropletStatsCmd, dropletDepsCmd, dropletPeekCmd, dropletIssueCmd)
 	rootCmd.AddCommand(dropletCmd)
 }
 

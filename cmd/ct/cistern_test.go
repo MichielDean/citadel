@@ -338,3 +338,104 @@ func TestDropletStats_WithData(t *testing.T) {
 		t.Errorf("output missing separator line:\n%s", out)
 	}
 }
+
+func TestDropletApprove(t *testing.T) {
+	dir := t.TempDir()
+	db := filepath.Join(dir, "test.db")
+	t.Setenv("CT_DB", db)
+
+	c, err := cistern.New(db, "ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, err := c.Add("repo", "Critical feature", "", 1, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Simulate scheduler routing to human gate.
+	c.UpdateStatus(item.ID, "stagnant")
+	c.SetCataracta(item.ID, "human")
+	c.Close()
+
+	t.Run("approve releases to delivery", func(t *testing.T) {
+		old := os.Stdout
+		r, w, _ := os.Pipe()
+		os.Stdout = w
+
+		err := dropletApproveCmd.RunE(dropletApproveCmd, []string{item.ID})
+
+		w.Close()
+		os.Stdout = old
+
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		var buf bytes.Buffer
+		buf.ReadFrom(r)
+		out := buf.String()
+		if !strings.Contains(out, "approved for delivery") {
+			t.Errorf("expected 'approved for delivery' in output, got: %q", out)
+		}
+
+		// Verify DB state: status=open, current_cataracta=delivery.
+		c2, _ := cistern.New(db, "")
+		defer c2.Close()
+		got, err := c2.Get(item.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Status != "open" {
+			t.Errorf("expected status 'open', got %q", got.Status)
+		}
+		if got.CurrentCataracta != "delivery" {
+			t.Errorf("expected current_cataracta 'delivery', got %q", got.CurrentCataracta)
+		}
+	})
+}
+
+func TestDropletApprove_NotHumanGated(t *testing.T) {
+	dir := t.TempDir()
+	db := filepath.Join(dir, "test.db")
+	t.Setenv("CT_DB", db)
+
+	c, err := cistern.New(db, "ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, err := c.Add("repo", "Normal feature", "", 1, 3)
+	c.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = dropletApproveCmd.RunE(dropletApproveCmd, []string{item.ID})
+	if err == nil {
+		t.Fatal("expected error for non-human-gated droplet")
+	}
+	if !strings.Contains(err.Error(), "not awaiting human approval") {
+		t.Errorf("expected 'not awaiting human approval' in error, got: %v", err)
+	}
+}
+
+func TestDisplayStatusForDroplet_AwaitingApproval(t *testing.T) {
+	// Human-gated droplet should display as "awaiting".
+	d := &cistern.Droplet{Status: "stagnant", CurrentCataracta: "human"}
+	got := displayStatusForDroplet(d)
+	if got != "awaiting" {
+		t.Errorf("expected 'awaiting', got %q", got)
+	}
+
+	// Non-human stagnant droplet should display as "stagnant".
+	d2 := &cistern.Droplet{Status: "stagnant", CurrentCataracta: "implement"}
+	got2 := displayStatusForDroplet(d2)
+	if got2 != "stagnant" {
+		t.Errorf("expected 'stagnant', got %q", got2)
+	}
+
+	// Icon for awaiting should be present in statusIcon.
+	icon := statusIcon("awaiting")
+	if !strings.Contains(icon, "⏸") {
+		t.Errorf("expected ⏸ icon for 'awaiting', got %q", icon)
+	}
+}

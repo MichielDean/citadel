@@ -301,6 +301,7 @@ var statusCmd = &cobra.Command{
 		}
 
 		flowing, queued, done := 0, 0, 0
+		var humanGated []*cistern.Droplet
 		assignee := map[string]*cistern.Droplet{}
 		for _, item := range allItems {
 			switch item.Status {
@@ -314,6 +315,9 @@ var statusCmd = &cobra.Command{
 			case "delivered":
 				done++
 			}
+			if item.CurrentCataracta == "human" && (item.Status == "stagnant" || item.Status == "escalated") {
+				humanGated = append(humanGated, item)
+			}
 		}
 
 		// ── Cistern summary ───────────────────────────────────────────────────
@@ -322,6 +326,17 @@ var statusCmd = &cobra.Command{
 			col(colorYellow, fmt.Sprintf("%d", queued)),
 			col(colorDim, fmt.Sprintf("%d", done)))
 		fmt.Printf("%s\n\n", summary)
+
+		if len(humanGated) > 0 {
+			ids := make([]string, 0, len(humanGated))
+			for _, d := range humanGated {
+				ids = append(ids, d.ID)
+			}
+			fmt.Printf("%s %d droplet(s) awaiting human approval: %s\n\n",
+				col(colorYellow, "⏸"),
+				len(humanGated),
+				strings.Join(ids, ", "))
+		}
 
 		// ── Castellarius / aqueducts ──────────────────────────────────────────
 		fmt.Printf("Castellarius  watching\n")

@@ -129,6 +129,16 @@ func (m *mockClient) Purge(olderThan time.Duration, dryRun bool) (int, error) {
 	return 0, nil
 }
 
+func (m *mockClient) SetCataracta(id, cataracta string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.steps[id] = cataracta
+	if item, ok := m.items[id]; ok {
+		item.CurrentCataracta = cataracta
+	}
+	return nil
+}
+
 // mockRunner records Spawn calls and writes outcomes to the mockClient.
 // Set client to enable routing assertions; nil disables outcome writing.
 type mockRunner struct {
@@ -1137,6 +1147,42 @@ func TestTick_TrivialDropSkipsReviewAndQA(t *testing.T) {
 	// implement passes → adversarial-review skipped → qa skipped → should go to delivery.
 	if client.steps["triv-1"] != "delivery" {
 		t.Errorf("expected trivial droplet at delivery, got %q", client.steps["triv-1"])
+	}
+}
+
+func TestComplexity_HumanGateSetsCurrentCataracta(t *testing.T) {
+	wf := complexityWorkflow()
+	client := newMockClient()
+	client.readyItems = []*cistern.Droplet{
+		{ID: "crit-2", CurrentCataracta: "qa", Complexity: 4},
+	}
+
+	runner := newMockRunner(client)
+	config := aqueduct.AqueductConfig{
+		Repos: []aqueduct.RepoConfig{
+			{Name: "test-repo", Cataractae: 1, Names: []string{"alpha"}, Prefix: "test"},
+		},
+		MaxCataractae: 4,
+	}
+	workflows := map[string]*aqueduct.Workflow{"test-repo": wf}
+	clients := map[string]CisternClient{"test-repo": client}
+	sched := NewFromParts(config, workflows, clients, runner)
+	sched.Tick(context.Background())
+
+	if !runner.waitCalls(1, time.Second) {
+		t.Fatal("timed out waiting for runner")
+	}
+	sched.Tick(context.Background())
+	time.Sleep(10 * time.Millisecond)
+
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	// Human gate: escalated and current_cataracta must be set to "human".
+	if _, ok := client.escalated["crit-2"]; !ok {
+		t.Errorf("expected critical droplet escalated, not found in escalated map")
+	}
+	if client.steps["crit-2"] != "human" {
+		t.Errorf("expected current_cataracta='human', got %q", client.steps["crit-2"])
 	}
 }
 

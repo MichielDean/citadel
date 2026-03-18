@@ -27,6 +27,8 @@ func statusCode(dStatus string) string {
 		return colorGreen
 	case "queued":
 		return colorYellow
+	case "awaiting":
+		return colorYellow
 	case "stagnant":
 		return colorRed
 	case "delivered":
@@ -43,6 +45,8 @@ func statusIcon(dStatus string) string {
 		return col(colorGreen, "●")
 	case "queued":
 		return col(colorYellow, "○")
+	case "awaiting":
+		return col(colorYellow, "⏸")
 	case "stagnant":
 		return col(colorRed, "✗")
 	case "delivered":
