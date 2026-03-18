@@ -23,7 +23,7 @@ type DropletProposal struct {
 	DependsOn   []string `json:"depends_on"`
 }
 
-const refineSystemPrompt = `You are a software project planning assistant in the Cistern agentic pipeline.
+const filterSystemPrompt = `You are a software project planning assistant in the Cistern agentic pipeline.
 
 Cistern vocabulary:
   droplet   — a unit of work (like a ticket or story)
@@ -81,7 +81,7 @@ func callRefineAPI(title, description string) ([]DropletProposal, error) {
 		MaxTokens: 16000,
 		Thinking:  anthropic.ThinkingConfigParamOfEnabled(8000),
 		System: []anthropic.TextBlockParam{
-			{Text: refineSystemPrompt},
+			{Text: filterSystemPrompt},
 		},
 		Messages: []anthropic.MessageParam{
 			anthropic.NewUserMessage(anthropic.NewTextBlock(userPrompt)),
@@ -190,27 +190,27 @@ func addProposals(c *cistern.Client, proposals []DropletProposal, repo string, p
 
 // --- Interactive TUI ---
 
-type refinePhase int
+type filterPhase int
 
 const (
-	phaseReview  refinePhase = iota // reviewing proposals one by one
+	phaseReview  filterPhase = iota // reviewing proposals one by one
 	phaseEdit                       // editing the current proposal's title
 	phaseSummary                    // show confirmed list, ask for final confirm
 	phaseDone                       // finished
 )
 
-type refineModel struct {
+type filterModel struct {
 	proposals []DropletProposal
 	cursor    int         // index of currently viewed proposal
 	confirmed []bool      // true = will add, false = skipped
 	decided   []bool      // true = user has made a decision for this proposal
-	phase     refinePhase
+	phase     filterPhase
 	editBuf   string // buffer for inline title editing
 	quitting  bool
 }
 
-func newRefineModel(proposals []DropletProposal) refineModel {
-	return refineModel{
+func newFilterModel(proposals []DropletProposal) filterModel {
+	return filterModel{
 		proposals: proposals,
 		confirmed: make([]bool, len(proposals)),
 		decided:   make([]bool, len(proposals)),
@@ -218,7 +218,7 @@ func newRefineModel(proposals []DropletProposal) refineModel {
 }
 
 // confirmedProposals returns only the proposals the user confirmed.
-func (m refineModel) confirmedProposals() []DropletProposal {
+func (m filterModel) confirmedProposals() []DropletProposal {
 	var out []DropletProposal
 	for i, p := range m.proposals {
 		if m.confirmed[i] {
@@ -228,9 +228,9 @@ func (m refineModel) confirmedProposals() []DropletProposal {
 	return out
 }
 
-func (m refineModel) Init() tea.Cmd { return nil }
+func (m filterModel) Init() tea.Cmd { return nil }
 
-func (m refineModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m filterModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m.phase {
 	case phaseReview:
 		return m.updateReview(msg)
@@ -242,7 +242,7 @@ func (m refineModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Quit
 }
 
-func (m refineModel) updateReview(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m filterModel) updateReview(msg tea.Msg) (tea.Model, tea.Cmd) {
 	key, ok := msg.(tea.KeyMsg)
 	if !ok {
 		return m, nil
@@ -275,7 +275,7 @@ func (m refineModel) updateReview(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // advance moves to the next undecided proposal, or to the summary phase.
-func (m refineModel) advance() (tea.Model, tea.Cmd) {
+func (m filterModel) advance() (tea.Model, tea.Cmd) {
 	// Find next undecided
 	for i := m.cursor + 1; i < len(m.proposals); i++ {
 		if !m.decided[i] {
@@ -288,7 +288,7 @@ func (m refineModel) advance() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m refineModel) updateEdit(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m filterModel) updateEdit(msg tea.Msg) (tea.Model, tea.Cmd) {
 	key, ok := msg.(tea.KeyMsg)
 	if !ok {
 		return m, nil
@@ -326,7 +326,7 @@ func (m refineModel) updateEdit(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m refineModel) updateSummary(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m filterModel) updateSummary(msg tea.Msg) (tea.Model, tea.Cmd) {
 	key, ok := msg.(tea.KeyMsg)
 	if !ok {
 		return m, nil
@@ -367,7 +367,7 @@ func complexityBadge(cx string) string {
 	return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(col)).Render(cx)
 }
 
-func (m refineModel) View() string {
+func (m filterModel) View() string {
 	if m.phase == phaseDone {
 		return ""
 	}
@@ -461,15 +461,15 @@ func wordWrap(text string, width int) string {
 
 // runRefineInteractive presents a Bubble Tea TUI for the user to review, edit,
 // confirm, or skip each proposal, then adds the confirmed ones.
-func runRefineInteractive(c *cistern.Client, proposals []DropletProposal, repo string, priority int) error {
-	model := newRefineModel(proposals)
+func runFilterInteractive(c *cistern.Client, proposals []DropletProposal, repo string, priority int) error {
+	model := newFilterModel(proposals)
 	p := tea.NewProgram(model, tea.WithOutput(os.Stderr))
 	result, err := p.Run()
 	if err != nil {
 		return fmt.Errorf("TUI error: %w", err)
 	}
 
-	final, ok := result.(refineModel)
+	final, ok := result.(filterModel)
 	if !ok {
 		return fmt.Errorf("unexpected TUI result type")
 	}
@@ -488,6 +488,6 @@ func runRefineInteractive(c *cistern.Client, proposals []DropletProposal, repo s
 }
 
 // runRefineNonInteractive adds all proposals immediately without prompting.
-func runRefineNonInteractive(c *cistern.Client, proposals []DropletProposal, repo string, priority int) error {
+func runFilterNonInteractive(c *cistern.Client, proposals []DropletProposal, repo string, priority int) error {
 	return addProposals(c, proposals, repo, priority)
 }

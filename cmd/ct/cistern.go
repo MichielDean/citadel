@@ -27,7 +27,7 @@ var (
 	addRepo        string
 	addComplexity  string
 	addDependsOn   []string
-	addRefine      bool
+	addFilter      bool
 	addYes         bool
 )
 
@@ -42,7 +42,7 @@ var dropletAddCmd = &cobra.Command{
 			return fmt.Errorf("--repo is required")
 		}
 
-		if addRefine {
+		if addFilter {
 			proposals, err := callRefineAPI(addTitle, addDescription)
 			if err != nil {
 				return err
@@ -53,9 +53,9 @@ var dropletAddCmd = &cobra.Command{
 			}
 			defer c.Close()
 			if addYes {
-				return runRefineNonInteractive(c, proposals, addRepo, addPriority)
+				return runFilterNonInteractive(c, proposals, addRepo, addPriority)
 			}
-			return runRefineInteractive(c, proposals, addRepo, addPriority)
+			return runFilterInteractive(c, proposals, addRepo, addPriority)
 		}
 
 		c, err := cistern.New(resolveDBPath(), inferPrefix(addRepo))
@@ -615,7 +615,7 @@ func init() {
 	dropletAddCmd.Flags().StringVar(&addRepo, "repo", "", "target repository (required)")
 	dropletAddCmd.Flags().StringVarP(&addComplexity, "complexity", "x", "3", "droplet complexity: 1/trivial, 2/standard, 3/full (default), 4/critical")
 	dropletAddCmd.Flags().StringArrayVar(&addDependsOn, "depends-on", nil, "dependency droplet ID (repeatable)")
-	dropletAddCmd.Flags().BoolVar(&addRefine, "refine", false, "run LLM-assisted refinement before creating droplet(s)")
+	dropletAddCmd.Flags().BoolVar(&addFilter, "filter", false, "run filtration — LLM-assisted pass to refine ideas into well-specified droplets")
 	dropletAddCmd.Flags().BoolVar(&addYes, "yes", false, "skip confirmation prompts (for non-interactive/agent use)")
 
 	dropletDepsCmd.Flags().StringVar(&depsAdd, "add", "", "add a dependency (dep ID)")
