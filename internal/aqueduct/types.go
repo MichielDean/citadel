@@ -137,16 +137,36 @@ type DroughtHook struct {
 	Timeout int    `yaml:"timeout_seconds,omitempty"` // default 30s
 }
 
+// RateLimitConfig configures rate limiting for the delivery cataracta API endpoint.
+// All limits apply within a sliding window. Zero values use the defaults noted below.
+type RateLimitConfig struct {
+	// PerIPRequests is the maximum number of requests allowed per source IP
+	// within Window. Default: 60.
+	PerIPRequests int `yaml:"per_ip_requests"`
+	// PerTokenRequests is the maximum number of requests allowed per auth token
+	// within Window. Default: 120.
+	PerTokenRequests int `yaml:"per_token_requests"`
+	// Window is the sliding window duration as a Go duration string (e.g. "1m",
+	// "30s"). Default: "1m".
+	Window string `yaml:"window"`
+}
+
 // AqueductConfig is the top-level configuration for a Cistern instance.
 type AqueductConfig struct {
-	Repos                 []RepoConfig  `yaml:"repos"`
-	MaxCataractae         int           `yaml:"max_cataractae"`
-	HandoffTokenThreshold int           `yaml:"handoff_token_threshold"`
-	RetentionDays         int           `yaml:"retention_days"`
-	CleanupInterval       string        `yaml:"cleanup_interval"`
+	Repos                 []RepoConfig     `yaml:"repos"`
+	MaxCataractae         int              `yaml:"max_cataractae"`
+	HandoffTokenThreshold int              `yaml:"handoff_token_threshold"`
+	RetentionDays         int              `yaml:"retention_days"`
+	CleanupInterval       string           `yaml:"cleanup_interval"`
 	// HeartbeatInterval controls how often the Castellarius scans in-progress
 	// droplets for orphaned or stalled sessions. Accepts Go duration strings
 	// (e.g. "30s", "1m"). Defaults to "30s" when empty.
-	HeartbeatInterval     string        `yaml:"heartbeat_interval,omitempty"`
-	DroughtHooks          []DroughtHook `yaml:"drought_hooks,omitempty"`
+	HeartbeatInterval     string           `yaml:"heartbeat_interval,omitempty"`
+	DroughtHooks          []DroughtHook    `yaml:"drought_hooks,omitempty"`
+	// RateLimit configures rate limiting for the delivery cataracta API endpoint.
+	// Omit to use the built-in defaults (60 req/min per IP, 120 req/min per token).
+	RateLimit             *RateLimitConfig `yaml:"rate_limit,omitempty"`
+	// DeliveryAddr is the TCP listen address for the delivery cataracta HTTP
+	// server (e.g. ":8080"). An empty string disables the HTTP server.
+	DeliveryAddr          string           `yaml:"delivery_addr,omitempty"`
 }
