@@ -93,8 +93,8 @@ func (m dashboardTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m dashboardTUIModel) View() string {
-	if m.width < 100 || m.height < 24 {
-		return fmt.Sprintf("Terminal too small — need at least 100×24 (current: %d×%d)\n", m.width, m.height)
+	if m.width < 100 || m.height < 40 {
+		return fmt.Sprintf("Terminal too small — need at least 100×40 (current: %d×%d)\n", m.width, m.height)
 	}
 	if m.data == nil {
 		return "  Loading…\n"
@@ -188,35 +188,41 @@ func (m dashboardTUIModel) viewAqueductArches() []string {
 //	                   ║  ●  ║       ║  ○  ║        ║  ○  ║       ║  ○  ║
 //	                   ╚═════╝       ╚═════╝        ╚═════╝       ╚═════╝
 //	                 implement    adv-review           qa          delivery
-// tuiAqueductRow renders a single aqueduct as a Roman arch diagram.
+// tuiAqueductRow renders a single aqueduct as a brick masonry arch diagram.
 //
-// Each cataracta is drawn as a tapered solid pier (▓ chars). The pier is
-// widest at the top where it meets the channel, and narrows across three taper
-// rows, creating arch-shaped openings between adjacent piers:
+// Each cataracta is a tapered brick pier — wide at the top where it meets the
+// channel and narrowing over three taper rows, creating arch-shaped openings
+// between adjacent piers. Each logical row is rendered as two sub-rows:
+//   - A ▀ mortar-cap row (horizontal mortar line between courses)
+//   - A brick-face row with staggered ▌ joints (courses offset per row)
+//
+// Active cataracta pier glows green; idle piers are dim. No indicators needed.
 //
 //	  virgo   ╔══════════════════════════════════════════════════════╗
 //	          ║  ≈ ≈  ci-abc  implement  2m 14s  ████░░░░  ≈ ≈ ≈   ║
 //	          ╚══════════════════════════════════════════════════════╝
-//	          ▓▓▓▓▓▓▓▓▓▓▓▓    ▓▓▓▓▓▓▓▓▓▓▓▓    ▓▓▓▓▓▓▓▓▓▓▓▓    ▓▓▓▓▓▓▓▓▓▓▓▓
-//	           ██████████        ██████████      ██████████      ██████████
-//	            ████████          ████████        ████████        ████████
-//	             ██●███            ██○███          ██○███          ██○███
-//	             ██████            ██████          ██████          ██████
-//	             ██████            ██████          ██████          ██████
-//	           implement        adv-review           qa           delivery
+//	          ▀▀▀▀▀▀▀▀▀▀▀▀    ▀▀▀▀▀▀▀▀▀▀▀▀    ▀▀▀▀▀▀▀▀▀▀▀▀    ▀▀▀▀▀▀▀▀▀▀▀▀
+//	          ████▌███████     ████▌███████     ████▌███████     ████▌███████
+//	           ▀▀▀▀▀▀▀▀▀▀       ▀▀▀▀▀▀▀▀▀▀       ▀▀▀▀▀▀▀▀▀▀       ▀▀▀▀▀▀▀▀▀▀
+//	           ████▌█████        ████▌█████        ████▌█████        ████▌█████
+//	            ▀▀▀▀▀▀▀▀          ▀▀▀▀▀▀▀▀          ▀▀▀▀▀▀▀▀          ▀▀▀▀▀▀▀▀
+//	            ████▌███           ████▌███           ████▌███           ████▌███
+//	              ▀▀▀▀▀▀             ▀▀▀▀▀▀             ▀▀▀▀▀▀             ▀▀▀▀▀▀
+//	              ██████             ██████             ██████             ██████
+//	           implement        adv-review              qa              delivery
 func (m dashboardTUIModel) tuiAqueductRow(ch CataractaInfo) []string {
 	const (
-		colW      = 16  // width per cataracta column, including inter-arch space
-		archTopW  = 12  // arch body width at the top row (colW-archTopW = gap budget)
-		taperRows = 3   // rows of tapering: archTopW → pierW (2 chars narrower each row)
-		pierRows  = 3   // rows of constant-width pier beneath the arch
-		nameW     = 10  // prefix name column
+		colW      = 16  // chars per cataracta column (arch body + inter-arch gap)
+		archTopW  = 12  // pier width at top row (widest — spans most of column)
+		taperRows = 3   // logical taper rows; pier narrows by 2 chars per row
+		pierRows  = 1   // logical constant-width pier rows at the bottom
+		brickW    = 4   // brick width before a ▌ vertical joint char
+		nameW     = 10
 	)
-	// pierW = archTopW - taperRows*2 = 12 - 6 = 6 chars at minimum.
-	// Must be ≥ 3 to fit the ●/○ indicator.
+	// pierW = archTopW - taperRows*2 = 12 - 6 = 6
 	pierW := archTopW - taperRows*2
 
-	g := tuiStyleGreen
+	g   := tuiStyleGreen
 	dim := tuiStyleDim
 
 	steps := ch.Steps
@@ -225,81 +231,73 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaInfo) []string {
 	}
 	n := len(steps)
 
-	prefix := "  " + padRight(ch.Name, nameW) + "  "
-	indent := strings.Repeat(" ", len([]rune(prefix)))
+	prefix  := "  " + padRight(ch.Name, nameW) + "  "
+	indent  := strings.Repeat(" ", len([]rune(prefix)))
+	padL    := (colW - archTopW) / 2
+	chanW   := (n-1)*colW + archTopW
+	chanPad := strings.Repeat(" ", padL)
 
 	isActive := func(step string) bool {
 		return step == ch.Step && ch.DropletID != ""
 	}
 
-	// Channel inner width exactly spans arch tops: from left edge of arch 0
-	// to right edge of arch n-1.
-	// Each arch top is archTopW wide, centred in colW (padL = (colW-archTopW)/2).
-	// Span = (n-1)*colW + archTopW.
-	padL := (colW - archTopW) / 2
-	chanW := (n-1)*colW + archTopW
-	chanPad := strings.Repeat(" ", padL)
-
-	// Line 1 — channel top.
+	// Channel rows.
 	l1 := prefix + chanPad + dim.Render("╔"+strings.Repeat("═", chanW)+"╗")
-
-	// Line 2 — water / idle.
 	var water string
 	if ch.DropletID != "" {
-		bar := progressBar(ch.CataractaIndex, ch.TotalCataractae, 8)
+		bar     := progressBar(ch.CataractaIndex, ch.TotalCataractae, 8)
 		content := fmt.Sprintf(" ≈ ≈  %s  %s  %s  ≈ ≈ ", ch.DropletID, formatElapsed(ch.Elapsed), bar)
-		water = g.Render(padOrTruncCenter(content, chanW))
+		water    = g.Render(padOrTruncCenter(content, chanW))
 	} else {
 		water = dim.Render(padOrTruncCenter(" — idle — ", chanW))
 	}
 	l2 := indent + chanPad + dim.Render("║") + water + dim.Render("║")
-
-	// Line 3 — channel bottom: same width as top, no ╤ joints.
 	l3 := indent + chanPad + dim.Render("╚"+strings.Repeat("═", chanW)+"╝")
 
-	// Arch rows: taper then pier.
-	// Each row, every arch column is: padL spaces + body + padR spaces.
-	// padL/padR grow as bodyW shrinks, widening the visible gap between piers
-	// and creating the arch-opening silhouette.
-	totalRows := taperRows + pierRows
-	archLines := make([]string, totalRows)
-	for row := 0; row < totalRows; row++ {
-		bodyW := archTopW - row*2
+	// Arch/pier rows: each logical row → 2 rendered sub-rows (mortar + brick).
+	var archLines []string
+	for lr := 0; lr < taperRows+pierRows; lr++ {
+		bodyW := archTopW - lr*2
 		if bodyW < pierW {
 			bodyW = pierW
 		}
 		rowPadL := (colW - bodyW) / 2
 		rowPadR := colW - bodyW - rowPadL
 
-		var sb strings.Builder
-		sb.WriteString(indent)
+		var mortSB, brickSB strings.Builder
+		mortSB.WriteString(indent)
+		brickSB.WriteString(indent)
+
 		for i, step := range steps {
-			active := isActive(step)
+			style := dim
+			if isActive(step) {
+				style = g
+			}
 
-			sb.WriteString(strings.Repeat(" ", rowPadL))
+			mortSB.WriteString(strings.Repeat(" ", rowPadL))
+			brickSB.WriteString(strings.Repeat(" ", rowPadL))
 
-			// Build arch body. Add ●/○ indicator in centre of middle pier row.
-			body := []rune(strings.Repeat("▓", bodyW))
-			if row == taperRows+1 {
-				mid := len(body) / 2
-				if active {
-					body[mid] = '●'
+			// Mortar sub-row: uniform ▀ across full pier width.
+			mortSB.WriteString(style.Render(strings.Repeat("▀", bodyW)))
+
+			// Brick sub-row: staggered ▌ joints, offset alternates per logical row.
+			offset := (brickW / 2) * (lr % 2)
+			body   := make([]rune, bodyW)
+			for c := 0; c < bodyW; c++ {
+				if (c+offset)%(brickW+1) == brickW {
+					body[c] = '▌'
 				} else {
-					body[mid] = '○'
+					body[c] = '█'
 				}
 			}
-			rendered := string(body)
-			if active {
-				sb.WriteString(g.Render(rendered))
-			} else {
-				sb.WriteString(dim.Render(rendered))
-			}
+			brickSB.WriteString(style.Render(string(body)))
 
 			if i < n-1 {
-				sb.WriteString(strings.Repeat(" ", rowPadR))
+				mortSB.WriteString(strings.Repeat(" ", rowPadR))
+				brickSB.WriteString(strings.Repeat(" ", rowPadR))
 			}
 		}
-		archLines[row] = sb.String()
+		archLines = append(archLines, mortSB.String(), brickSB.String())
 	}
 
 	// Label line.
@@ -319,8 +317,8 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaInfo) []string {
 	}
 
 	result := []string{l1, l2, l3}
-	result = append(result, archLines...)
-	result = append(result, lblLine.String())
+	result  = append(result, archLines...)
+	result  = append(result, lblLine.String())
 	return result
 }
 
