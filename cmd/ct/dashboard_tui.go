@@ -269,22 +269,39 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaInfo) []string {
 	} else {
 		water = dim.Render(padOrTruncCenter(" — idle — ", chanW-2))
 	}
-	// Water exits the right wall horizontally — start of the waterfall arc.
-	l2 := indent + chanPad + cStyle.Render("█") + water + cStyle.Render("█") + g.Render("≈≈≈")
+	// Waterfall styles: three brightness levels so the stream has depth.
+	// Bright = dense core, mid = flowing body, dim = spray / mist at edges.
+	wfBright := lipgloss.NewStyle().Foreground(lipgloss.Color("#a8eeff"))
+	wfMid    := lipgloss.NewStyle().Foreground(lipgloss.Color("#3ec8e8"))
+	wfDim    := lipgloss.NewStyle().Foreground(lipgloss.Color("#1a7a96"))
 
-	// Waterfall arc offsets (sub-row indexed 0–7):
-	// Water exits with horizontal momentum, parabola curves it down, slight base spread.
-	//   sub  pad  water   shape
-	//    0    1   ≈≈     ← shoots out horizontally
-	//    1    3   ≈≈     ← still outward
-	//    2    5   ≈      ← begins to arc
-	//    3    6   ≈      ← steeper
-	//    4    7   ≈      ← falling
-	//    5    7   ≈      ← near vertical
-	//    6    7   ≈      ← near vertical
-	//    7    6   ≈≈     ← base splash (spreads back slightly)
-	wfPads := [8]int{1, 3, 5, 6, 7, 7, 7, 6}
-	wfW    := [8]string{"≈≈", "≈≈", "≈", "≈", "≈", "≈", "≈", "≈≈"}
+	// Eight pre-built waterfall row strings — one per arch sub-row (0=mort lr=0 … 7=brick lr=3).
+	// Shape: water exits horizontally with momentum, arcs under gravity, thins to a
+	// near-vertical stream, widens again at the base (splash / pool).
+	// Chars: ▓ = dense core  ▒ = mid flow  ≈ = surface turbulence  ░ = spray/mist
+	sp := func(n int) string { return strings.Repeat(" ", n) }
+	wfRows := [8]string{
+		// sub 0 (mort lr=0): exits channel — wide horizontal jet, still at height
+		sp(1) + wfDim.Render("░") + wfMid.Render("≈") + wfBright.Render("▓") + wfMid.Render("≈") + wfDim.Render("░"),
+		// sub 1 (brick lr=0): spreading outward, gravity just starting to pull
+		sp(2) + wfDim.Render("░") + wfMid.Render("≈") + wfBright.Render("▓") + wfMid.Render("≈"),
+		// sub 2 (mort lr=1): arc turning — stream narrows, picks up speed
+		sp(4) + wfMid.Render("≈") + wfBright.Render("▓▓") + wfMid.Render("≈"),
+		// sub 3 (brick lr=1): steep, thin curtain
+		sp(6) + wfMid.Render("≈") + wfBright.Render("▓▓"),
+		// sub 4 (mort lr=2): nearly vertical, tight stream
+		sp(7) + wfBright.Render("▓") + wfMid.Render("▒"),
+		// sub 5 (brick lr=2): vertical fall
+		sp(7) + wfMid.Render("▒") + wfBright.Render("▓"),
+		// sub 6 (mort lr=3): approaching base — starts to widen again
+		sp(6) + wfDim.Render("░") + wfMid.Render("▒") + wfBright.Render("▓") + wfMid.Render("▒"),
+		// sub 7 (brick lr=3): base splash — wide pool, bright core, spray at both sides
+		sp(4) + wfDim.Render("░≈") + wfMid.Render("▒") + wfBright.Render("▓▓") + wfMid.Render("▒") + wfDim.Render("≈░"),
+	}
+
+	// Water exits the right channel wall as a wide horizontal jet.
+	wfExit := wfDim.Render("░") + wfMid.Render("≈") + wfBright.Render("▓▓") + wfMid.Render("≈") + wfDim.Render("░")
+	l2 := indent + chanPad + cStyle.Render("█") + water + cStyle.Render("█") + wfExit
 
 	// Arch + pier rows: each logical row → 2 rendered sub-rows.
 	// Solid masonry ABUTMENTS (rowPadL wide) fill each side so the arch spans
@@ -412,10 +429,10 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaInfo) []string {
 			brickSB.WriteString(dim.Render(string(abutBrick)))
 		}
 
-		// Waterfall: parabolic arc exits from the right channel wall.
-		subRow  := lr * 2
-		mortSB.WriteString(strings.Repeat(" ", wfPads[subRow])   + g.Render(wfW[subRow]))
-		brickSB.WriteString(strings.Repeat(" ", wfPads[subRow+1]) + g.Render(wfW[subRow+1]))
+		// Waterfall: append pre-built parabolic arc row for this sub-row pair.
+		subRow := lr * 2
+		mortSB.WriteString(wfRows[subRow])
+		brickSB.WriteString(wfRows[subRow+1])
 
 		archLines = append(archLines, mortSB.String(), brickSB.String())
 	}
