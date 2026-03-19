@@ -1046,11 +1046,12 @@ func complexityWorkflow() *aqueduct.Workflow {
 		Cataractae: []aqueduct.WorkflowCataractae{
 			{Name: "implement", Type: aqueduct.CataractaeTypeAgent, OnPass: "adversarial-review", OnFail: "blocked"},
 			{Name: "adversarial-review", Type: aqueduct.CataractaeTypeAgent, SkipFor: []int{1}, OnPass: "qa", OnFail: "implement", OnRecirculate: "implement"},
-			{Name: "qa", Type: aqueduct.CataractaeTypeAgent, SkipFor: []int{1, 2}, OnPass: "delivery", OnFail: "implement"},
+			{Name: "qa", Type: aqueduct.CataractaeTypeAgent, SkipFor: []int{1, 2}, OnPass: "docs", OnFail: "implement"},
+			{Name: "docs", Type: aqueduct.CataractaeTypeAgent, SkipFor: []int{1}, OnPass: "delivery", OnFail: "implement", OnRecirculate: "implement", OnEscalate: "human"},
 			{Name: "delivery", Type: aqueduct.CataractaeTypeAgent, OnPass: "done", OnRecirculate: "implement", OnEscalate: "human"},
 		},
 		Complexity: aqueduct.ComplexityConfig{
-			Trivial:  aqueduct.ComplexityLevel{Level: 1, SkipCataractae: []string{"adversarial-review", "qa"}},
+			Trivial:  aqueduct.ComplexityLevel{Level: 1, SkipCataractae: []string{"adversarial-review", "qa", "docs"}},
 			Standard: aqueduct.ComplexityLevel{Level: 2, SkipCataractae: []string{"qa"}},
 			Full:     aqueduct.ComplexityLevel{Level: 3, SkipCataractae: []string{}},
 			Critical: aqueduct.ComplexityLevel{Level: 4, SkipCataractae: []string{}, RequireHuman: true},
@@ -1073,10 +1074,10 @@ func TestAdvanceSkipped_StandardSkipsQA(t *testing.T) {
 	wf := complexityWorkflow()
 	skipSteps := wf.Complexity.SkipCataractaeForLevel(2) // ["qa"]
 
-	// adversarial-review passes → qa → should skip to delivery.
+	// adversarial-review passes → qa (skipped) → docs (not skipped for standard).
 	got := advanceSkippedCataractae("qa", wf, skipSteps)
-	if got != "delivery" {
-		t.Errorf("advanceSkippedCataractae(qa, standard) = %q, want %q", got, "delivery")
+	if got != "docs" {
+		t.Errorf("advanceSkippedCataractae(qa, standard) = %q, want %q", got, "docs")
 	}
 
 	// adversarial-review itself is not skipped.
@@ -1108,11 +1109,11 @@ func TestComplexity_CriticalHumanGateBeforeMerge(t *testing.T) {
 	wf := complexityWorkflow()
 	client := newMockClient()
 	client.readyItems = []*cistern.Droplet{
-		{ID: "crit-1", CurrentCataractae: "qa", Complexity: 4},
+		{ID: "crit-1", CurrentCataractae: "docs", Complexity: 4},
 	}
 
 	runner := newMockRunner(client)
-	// default outcome "pass"; qa.OnPass = "delivery" → critical → "human" → escalate
+	// default outcome "pass"; docs.OnPass = "delivery" → critical → "human" → escalate
 
 	config := aqueduct.AqueductConfig{
 		Repos: []aqueduct.RepoConfig{
@@ -1133,7 +1134,7 @@ func TestComplexity_CriticalHumanGateBeforeMerge(t *testing.T) {
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	// qa passes → next is delivery → critical requires human gate → should escalate.
+	// docs passes → next is delivery → critical requires human gate → should escalate.
 	if _, ok := client.escalated["crit-1"]; !ok {
 		t.Errorf("expected critical droplet escalated to human before delivery, got step %q", client.steps["crit-1"])
 	}
@@ -1148,7 +1149,7 @@ func TestTick_TrivialDropSkipsReviewAndQA(t *testing.T) {
 
 	runner := newMockRunner(client)
 	// default outcome "pass"; implement.OnPass = "adversarial-review"
-	// trivial skips adversarial-review and qa → goes to delivery
+	// trivial skips adversarial-review, qa, and docs → goes to delivery
 
 	config := aqueduct.AqueductConfig{
 		Repos: []aqueduct.RepoConfig{
@@ -1169,7 +1170,7 @@ func TestTick_TrivialDropSkipsReviewAndQA(t *testing.T) {
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	// implement passes → adversarial-review skipped → qa skipped → should go to delivery.
+	// implement passes → adversarial-review skipped → qa skipped → docs skipped → should go to delivery.
 	if client.steps["triv-1"] != "delivery" {
 		t.Errorf("expected trivial droplet at delivery, got %q", client.steps["triv-1"])
 	}
@@ -1179,7 +1180,7 @@ func TestComplexity_HumanGateSetsCurrentCataractae(t *testing.T) {
 	wf := complexityWorkflow()
 	client := newMockClient()
 	client.readyItems = []*cistern.Droplet{
-		{ID: "crit-2", CurrentCataractae: "qa", Complexity: 4},
+		{ID: "crit-2", CurrentCataractae: "docs", Complexity: 4},
 	}
 
 	runner := newMockRunner(client)

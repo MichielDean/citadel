@@ -216,6 +216,12 @@ cataractae_definitions:
       ct droplet pass <id> --notes "No security issues."
       ct droplet recirculate <id> --notes "<file:line> — <vulnerability and exact remediation>"
 
+  docs_writer:
+    name: Docs Writer
+    description: "Reviews the diff and updates or creates documentation for user-visible changes."
+    instructions: |
+      Read CONTEXT.md; run git diff main...HEAD; find all .md files; for each changed area (CLI, config, pipeline, architecture) check if docs exist and are accurate; if no user-visible changes pass with 'No documentation updates required'; otherwise update outdated sections, add missing docs, commit with '<id>: docs: update documentation for changes'; signal pass with file list or recirculate with specific ambiguity.
+
   delivery:
     name: Delivery
     description: "Takes implementation from branch to merged — owns all git operations, PR lifecycle, CI, and merge."
@@ -353,7 +359,7 @@ cataractae_definitions:
 complexity:
   trivial:
     level: 1
-    skip_cataractae: [adversarial-review, qa]
+    skip_cataractae: [adversarial-review, qa, docs]
   standard:
     level: 2
     skip_cataractae: [qa]
@@ -420,6 +426,21 @@ cataractae:
         path: skills/cistern-droplet-state/SKILL.md
     timeout_minutes: 15
     skip_for: [1, 2, 3] # only critical droplets run security review
+    on_pass: docs
+    on_fail: implement
+    on_recirculate: implement
+    on_escalate: human
+
+  - name: docs
+    type: agent
+    identity: docs_writer
+    model: sonnet
+    context: full_codebase
+    skills:
+      - name: cistern-droplet-state
+        path: skills/cistern-droplet-state/SKILL.md
+    timeout_minutes: 20
+    skip_for: [1] # trivial droplets skip docs
     on_pass: delivery
     on_fail: implement
     on_recirculate: implement
