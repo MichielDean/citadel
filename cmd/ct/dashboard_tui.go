@@ -115,7 +115,12 @@ func (m dashboardTUIModel) View() string {
 	parts = append(parts, m.viewStatusBar())
 	parts = append(parts, sep)
 
-	// 4. Recent flow.
+	// 4. Cistern — queued droplets waiting.
+	parts = append(parts, tuiStyleHeader.Render("  CISTERN"))
+	parts = append(parts, m.viewCistern()...)
+	parts = append(parts, sep)
+
+	// 5. Recent flow.
 	parts = append(parts, tuiStyleHeader.Render("  RECENT FLOW"))
 	parts = append(parts, m.viewRecentFlow()...)
 	parts = append(parts, sep)
@@ -374,6 +379,72 @@ func (m dashboardTUIModel) tuiFlowGraphRow(ch CataractaInfo) (graphLine, infoLin
 			"  " + tuiStyleGreen.Render(bar)
 	}
 	return
+}
+
+func (m dashboardTUIModel) viewCistern() []string {
+	// Show open (queued) droplets — things waiting to be picked up.
+	// In-progress items are already visible in the aqueduct diagram above.
+	var queued []*cistern.Droplet
+	for _, item := range m.data.CisternItems {
+		if item.Status == "open" {
+			queued = append(queued, item)
+		}
+	}
+	if len(queued) == 0 {
+		return []string{tuiStyleDim.Render("  Cistern is empty.")}
+	}
+
+	lines := make([]string, 0, len(queued))
+	for _, item := range queued {
+		lines = append(lines, m.viewCisternRow(item))
+	}
+	return lines
+}
+
+func (m dashboardTUIModel) viewCisternRow(item *cistern.Droplet) string {
+	age := time.Since(item.CreatedAt).Round(time.Minute)
+	id  := padRight(item.ID, 10)
+
+	// Blocked?
+	blockedBy, isBlocked := m.data.BlockedByMap[item.ID]
+	var statusStr string
+	if isBlocked {
+		statusStr = tuiStyleRed.Render(fmt.Sprintf("blocked by %s", blockedBy))
+	} else {
+		statusStr = tuiStyleYellow.Render("queued")
+	}
+
+	// Priority indicator.
+	prio := ""
+	switch item.Priority {
+	case 1:
+		prio = tuiStyleRed.Render("↑")
+	case 2:
+		prio = tuiStyleDim.Render("·")
+	case 3:
+		prio = tuiStyleDim.Render("↓")
+	}
+
+	// Truncate title to fit.
+	fixedW := 2 + 10 + 2 + 1 + 1 + 7 + 2 + 20
+	titleW := m.width - fixedW
+	if titleW < 8 {
+		titleW = 8
+	}
+	title := item.Title
+	r := []rune(title)
+	if len(r) > titleW {
+		title = string(r[:titleW-1]) + "…"
+	}
+
+	elapsed := tuiStyleDim.Render(formatElapsed(age))
+	return fmt.Sprintf("  %s %s  %s  %s  %s",
+		prio,
+		tuiStyleDim.Render(id),
+		elapsed,
+		statusStr,
+		title,
+	)
 }
 
 func (m dashboardTUIModel) viewRecentFlow() []string {

@@ -489,6 +489,29 @@ func renderDashboard(data *DashboardData) string {
 		data.FlowingCount, data.QueuedCount, data.DoneCount))
 	sb.WriteString(sep + "\n")
 
+	// Cistern — queued droplets.
+	sb.WriteString("  CISTERN\n")
+	var queued []*cistern.Droplet
+	for _, item := range data.CisternItems {
+		if item.Status == "open" {
+			queued = append(queued, item)
+		}
+	}
+	if len(queued) == 0 {
+		sb.WriteString("  Cistern is empty.\n")
+	} else {
+		for _, item := range queued {
+			age := time.Since(item.CreatedAt).Round(time.Minute)
+			blocked := ""
+			if dep, ok := data.BlockedByMap[item.ID]; ok {
+				blocked = fmt.Sprintf(" [blocked by %s]", dep)
+			}
+			sb.WriteString(fmt.Sprintf("  ○ %-10s  %s  %s%s\n",
+				item.ID, formatElapsed(age), item.Title, blocked))
+		}
+	}
+	sb.WriteString(sep + "\n")
+
 	// Recent flow.
 	sb.WriteString("  RECENT FLOW\n")
 	if len(data.RecentItems) == 0 {
