@@ -273,29 +273,34 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaInfo) []string {
 		wfMid.Render("≈") + wfMid.Render("▒") + wfDim.Render("░")
 	const waveViz = 6 // visual width of one waveSegment (no ANSI codes)
 
+	// buildChanWater centers `infoStr` in the channel with wave motifs on each side.
+	// Waves fill remaining space so the total width is always chanW-2.
+	buildChanWater := func(infoStr string, infoStyle lipgloss.Style) string {
+		info     := infoStyle.Render(infoStr)
+		infoViz  := len([]rune(infoStr))
+		remaining := chanW - 2 - infoViz
+		if remaining < 0 { remaining = 0 }
+		leftTiles  := remaining / 2 / waveViz
+		rightTiles := remaining / 2 / waveViz
+		leftRem    := remaining/2 - leftTiles*waveViz
+		rightRem   := chanW - 2 - infoViz - leftTiles*waveViz - leftRem - rightTiles*waveViz
+		if rightRem < 0 { rightRem = 0 }
+		var wb strings.Builder
+		for range leftTiles  { wb.WriteString(waveSegment) }
+		wb.WriteString(wfDim.Render(strings.Repeat("░", leftRem)))
+		wb.WriteString(info)
+		for range rightTiles { wb.WriteString(waveSegment) }
+		wb.WriteString(wfDim.Render(strings.Repeat("░", rightRem)))
+		return wb.String()
+	}
+
 	var water string
 	if ch.DropletID != "" {
 		bar     := progressBar(ch.CataractaIndex, ch.TotalCataractae, 8)
 		infoStr := fmt.Sprintf("  %s  %s  %s  ", ch.DropletID, formatElapsed(ch.Elapsed), bar)
-		info    := wfMid.Render(infoStr)
-		inner   := waveSegment + info + waveSegment
-		innerViz := waveViz*2 + len([]rune(infoStr))
-		padL := (chanW - 2 - innerViz) / 2
-		if padL < 0 { padL = 0 }
-		padR := chanW - 2 - innerViz - padL
-		if padR < 0 { padR = 0 }
-		water = strings.Repeat(" ", padL) + inner + strings.Repeat(" ", padR)
+		water    = buildChanWater(infoStr, wfMid)
 	} else {
-		// Idle: tile the wave motif across the full channel width.
-		tiles := (chanW - 2) / waveViz
-		rem   := chanW - 2 - tiles*waveViz
-		var wb strings.Builder
-		for range tiles {
-			wb.WriteString(waveSegment)
-		}
-		// Fill any remainder with dim chars so width is exact.
-		wb.WriteString(wfDim.Render(strings.Repeat("░", rem)))
-		water = wb.String()
+		water = buildChanWater("  — idle —  ", wfDim)
 	}
 
 	// Eight pre-built waterfall row strings — one per arch sub-row (0=mort lr=0 … 7=brick lr=3).
