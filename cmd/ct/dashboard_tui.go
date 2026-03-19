@@ -150,12 +150,17 @@ func (m dashboardTUIModel) View() string {
 	parts = append(parts, m.viewStatusBar())
 	parts = append(parts, sep)
 
-	// 4. Cistern — queued droplets waiting.
+	// 4. Current flow — live narrative for active droplets.
+	parts = append(parts, tuiStyleHeader.Render("  CURRENT FLOW"))
+	parts = append(parts, m.viewCurrentFlow()...)
+	parts = append(parts, sep)
+
+	// 5. Cistern — queued droplets waiting.
 	parts = append(parts, tuiStyleHeader.Render("  CISTERN"))
 	parts = append(parts, m.viewCistern()...)
 	parts = append(parts, sep)
 
-	// 5. Recent flow.
+	// 6. Recent flow.
 	parts = append(parts, tuiStyleHeader.Render("  RECENT FLOW"))
 	parts = append(parts, m.viewRecentFlow()...)
 	parts = append(parts, sep)
@@ -629,6 +634,84 @@ func (m dashboardTUIModel) tuiFlowGraphRow(ch CataractaeInfo) (graphLine, infoLi
 			"  " + revisedStyle.Render(bar)
 	}
 	return
+}
+
+func (m dashboardTUIModel) viewCurrentFlow() []string {
+	d := m.data
+	if len(d.FlowActivities) == 0 {
+		return []string{tuiStyleDim.Render("  No droplets currently flowing.")}
+	}
+
+	maxW := m.width - 6 // leave room for indent + borders
+	if maxW < 40 {
+		maxW = 40
+	}
+
+	truncate := func(s string, n int) string {
+		runes := []rune(s)
+		if len(runes) <= n {
+			return s
+		}
+		return string(runes[:n-1]) + "…"
+	}
+
+	// Collapse multi-line note content to a single meaningful line.
+	firstMeaningfulLine := func(content string) string {
+		for _, line := range strings.Split(content, "\n") {
+			line = strings.TrimSpace(line)
+			if line != "" && !strings.HasPrefix(line, "#") && !strings.HasPrefix(line, "---") {
+				return line
+			}
+		}
+		return strings.TrimSpace(content)
+	}
+
+	var lines []string
+	for _, fa := range d.FlowActivities {
+		// Header: droplet ID + step + note count + title.
+		revisedTag := ""
+		headerStyle := tuiStyleGreen
+		if fa.NoteCount > 0 {
+			revisedTag = tuiStyleYellow.Render(fmt.Sprintf(" ♻ %d", fa.NoteCount))
+			headerStyle = tuiStyleYellow
+		}
+		stepStr := headerStyle.Render(fa.Step)
+		idStr   := tuiStyleHeader.Render(fa.DropletID)
+		title   := tuiStyleDim.Render("  " + truncate(fa.Title, maxW-30))
+		lines = append(lines, fmt.Sprintf("  %s  %s%s%s", idStr, stepStr, revisedTag, title))
+
+		if len(fa.RecentNotes) == 0 {
+			lines = append(lines, tuiStyleDim.Render("    (no notes yet — first pass)"))
+		} else {
+			for _, note := range fa.RecentNotes {
+				// Timestamp: relative if recent, otherwise HH:MM.
+				age := time.Since(note.CreatedAt)
+				var ts string
+				switch {
+				case age < time.Minute:
+					ts = "just now"
+				case age < time.Hour:
+					ts = fmt.Sprintf("%dm ago", int(age.Minutes()))
+				default:
+					ts = note.CreatedAt.Local().Format("15:04")
+				}
+
+				who  := tuiStyleDim.Render("[" + note.CataractaeName + "]")
+				when := tuiStyleDim.Render(ts)
+				text := firstMeaningfulLine(note.Content)
+				text  = truncate(text, maxW-30)
+				lines = append(lines,
+					fmt.Sprintf("    › %s  %s  %s", who, tuiStyleFooter.Render(text), when),
+				)
+			}
+		}
+		lines = append(lines, "") // spacer between droplets
+	}
+	// Trim trailing blank line.
+	if len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	return lines
 }
 
 func (m dashboardTUIModel) viewCistern() []string {

@@ -45,6 +45,16 @@ type CataractaeInfo struct {
 	NoteCount       int // number of reviewer/QA notes; >0 means the droplet has been revised
 }
 
+// FlowActivity holds the live narrative for one in-progress droplet —
+// its current stage and the most recent notes exchanged between cataractae.
+type FlowActivity struct {
+	DropletID   string
+	Title       string
+	Step        string
+	NoteCount   int
+	RecentNotes []cistern.CataractaeNote // last 3, newest last
+}
+
 // DashboardData holds all data required to render the dashboard.
 type DashboardData struct {
 	CataractaeCount int
@@ -55,6 +65,7 @@ type DashboardData struct {
 	CisternItems   []*cistern.Droplet // flowing + queued
 	RecentItems    []*cistern.Droplet // recently closed/escalated
 	BlockedByMap   map[string]string  // droplet ID -> first blocking dep ID
+	FlowActivities []FlowActivity     // live narrative for in-progress droplets
 	FarmRunning    bool
 	FetchedAt      time.Time
 }
@@ -188,6 +199,29 @@ func fetchDashboardData(cfgPath, dbPath string) *DashboardData {
 		recent = recent[:recentEventLimit]
 	}
 	data.RecentItems = recent
+
+	// Current flow: build live narrative for each in-progress droplet.
+	for _, item := range allItems {
+		if item.Status != "in_progress" {
+			continue
+		}
+		notes, err := c.GetNotes(item.ID)
+		if err != nil {
+			notes = nil
+		}
+		// Keep last 3 notes (most recent activity).
+		recent := notes
+		if len(recent) > 3 {
+			recent = recent[len(recent)-3:]
+		}
+		data.FlowActivities = append(data.FlowActivities, FlowActivity{
+			DropletID:   item.ID,
+			Title:       item.Title,
+			Step:        item.CurrentCataractae,
+			NoteCount:   len(notes),
+			RecentNotes: recent,
+		})
+	}
 
 	data.FarmRunning = true
 	return data
