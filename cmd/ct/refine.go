@@ -77,9 +77,8 @@ func callRefineAPI(title, description string) ([]DropletProposal, error) {
 	defer cancel()
 
 	resp, err := client.Messages.New(ctx, anthropic.MessageNewParams{
-		Model:     anthropic.ModelClaudeSonnet4_5,
-		MaxTokens: 16000,
-		Thinking:  anthropic.ThinkingConfigParamOfEnabled(8000),
+		Model:     anthropic.ModelClaudeHaiku4_5,
+		MaxTokens: 4096,
 		System: []anthropic.TextBlockParam{
 			{Text: filterSystemPrompt},
 		},
