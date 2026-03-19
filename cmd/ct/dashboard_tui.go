@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -188,38 +189,37 @@ func (m dashboardTUIModel) viewAqueductArches() []string {
 //	                   ║  ●  ║       ║  ○  ║        ║  ○  ║       ║  ○  ║
 //	                   ╚═════╝       ╚═════╝        ╚═════╝       ╚═════╝
 //	                 implement    adv-review           qa          delivery
-// tuiAqueductRow renders a single aqueduct as a brick masonry arch diagram.
+// tuiAqueductRow renders a single aqueduct as a V1 Roman arch diagram:
+// tapered brick piers with solid arch-crown material filling the span at the
+// top, creating a proper arch opening that widens as the piers narrow.
 //
-// Each cataracta is a tapered brick pier — wide at the top where it meets the
-// channel and narrowing over three taper rows, creating arch-shaped openings
-// between adjacent piers. Each logical row is rendered as two sub-rows:
-//   - A ▀ mortar-cap row (horizontal mortar line between courses)
-//   - A brick-face row with staggered ▌ joints (courses offset per row)
-//
-// Active cataracta pier glows green; idle piers are dim. No indicators needed.
+// Each logical row → 2 rendered sub-rows (▀ mortar cap + █▌ brick face).
+// Arch crown material fills the inter-pier span in the top (taper) rows,
+// using a semicircle formula to curve the arch intrados from closed at the
+// keystone to fully open at the impost.
 //
 //	  virgo   ╔══════════════════════════════════════════════════════╗
 //	          ║  ≈ ≈  ci-abc  implement  2m 14s  ████░░░░  ≈ ≈ ≈   ║
 //	          ╚══════════════════════════════════════════════════════╝
-//	          ▀▀▀▀▀▀▀▀▀▀▀▀    ▀▀▀▀▀▀▀▀▀▀▀▀    ▀▀▀▀▀▀▀▀▀▀▀▀    ▀▀▀▀▀▀▀▀▀▀▀▀
-//	          ████▌███████     ████▌███████     ████▌███████     ████▌███████
-//	           ▀▀▀▀▀▀▀▀▀▀       ▀▀▀▀▀▀▀▀▀▀       ▀▀▀▀▀▀▀▀▀▀       ▀▀▀▀▀▀▀▀▀▀
-//	           ████▌█████        ████▌█████        ████▌█████        ████▌█████
-//	            ▀▀▀▀▀▀▀▀          ▀▀▀▀▀▀▀▀          ▀▀▀▀▀▀▀▀          ▀▀▀▀▀▀▀▀
-//	            ████▌███           ████▌███           ████▌███           ████▌███
-//	              ▀▀▀▀▀▀             ▀▀▀▀▀▀             ▀▀▀▀▀▀             ▀▀▀▀▀▀
-//	              ██████             ██████             ██████             ██████
+//	          ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+//	          ████▌████████▀▀▀▀▀▀▀▀▀▀▀▀████▌████████▀▀▀▀▀▀▀▀▀▀▀▀████▌████████
+//	           ▀▀▀▀▀▀▀▀▀▀▀▀▀▀  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+//	           ████▌█████████  ████████████▌████  █████████▌████  █████████
+//	            ▀▀▀▀▀▀▀▀▀▀▀▀▀        ▀▀▀▀▀▀▀▀▀▀▀▀▀        ▀▀▀▀▀▀▀▀▀▀▀▀▀
+//	            ████▌██████████        █████████████▌        ██████████
+//	              ▀▀▀▀▀▀▀▀▀             ▀▀▀▀▀▀▀▀▀             ▀▀▀▀▀▀▀▀▀
+//	              █████████             █████████             █████████
 //	           implement        adv-review              qa              delivery
 func (m dashboardTUIModel) tuiAqueductRow(ch CataractaInfo) []string {
 	const (
-		colW      = 16  // chars per cataracta column (arch body + inter-arch gap)
-		archTopW  = 12  // pier width at top row (widest — spans most of column)
-		taperRows = 3   // logical taper rows; pier narrows by 2 chars per row
-		pierRows  = 1   // logical constant-width pier rows at the bottom
-		brickW    = 4   // brick width before a ▌ vertical joint char
+		colW      = 16  // chars per cataracta column
+		archTopW  = 12  // pier width at top row (widest)
+		taperRows = 3   // logical taper rows; pier narrows by 2 per row
+		pierRows  = 1   // constant-width pier rows beneath taper
+		brickW    = 4   // brick width before ▌ vertical joint
 		nameW     = 10
 	)
-	// pierW = archTopW - taperRows*2 = 12 - 6 = 6
+	// pierW = archTopW - taperRows*2 = 6
 	pierW := archTopW - taperRows*2
 
 	g   := tuiStyleGreen
@@ -233,12 +233,40 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaInfo) []string {
 
 	prefix  := "  " + padRight(ch.Name, nameW) + "  "
 	indent  := strings.Repeat(" ", len([]rune(prefix)))
-	padL    := (colW - archTopW) / 2
-	chanW   := (n-1)*colW + archTopW
-	chanPad := strings.Repeat(" ", padL)
+	chanPadL := (colW - archTopW) / 2
+	chanW    := (n-1)*colW + archTopW
+	chanPad  := strings.Repeat(" ", chanPadL)
 
 	isActive := func(step string) bool {
 		return step == ch.Step && ch.DropletID != ""
+	}
+
+	// archCrown computes how many chars to fill from each side of the inter-pier
+	// gap at logical row lr, using a semicircle formula keyed to gapWidth.
+	// Returns (leftFill, openGap, rightFill). Active only during taper rows.
+	archCrown := func(lr, gapWidth int) (lf, og, rf int) {
+		if lr >= taperRows || gapWidth <= 0 {
+			return 0, gapWidth, 0
+		}
+		r  := float64(gapWidth) / 2.0
+		t  := float64(lr) / float64(taperRows)
+		oh := r * math.Sin(math.Pi / 2.0 * t)
+		fe := r - oh
+		full := int(fe)
+		frac := fe - float64(full)
+		haunch := frac > 0.25 && gapWidth > 2
+		lf = full
+		if haunch {
+			lf++
+		}
+		rf = lf
+		og = gapWidth - lf - rf
+		if og < 0 {
+			og = 0
+			lf = gapWidth / 2
+			rf = gapWidth - lf
+		}
+		return lf, og, rf
 	}
 
 	// Channel rows.
@@ -254,7 +282,9 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaInfo) []string {
 	l2 := indent + chanPad + dim.Render("║") + water + dim.Render("║")
 	l3 := indent + chanPad + dim.Render("╚"+strings.Repeat("═", chanW)+"╝")
 
-	// Arch/pier rows: each logical row → 2 rendered sub-rows (mortar + brick).
+	// Arch + pier rows: each logical row → 2 rendered sub-rows.
+	// Piers are brick-textured (tapered). Inter-pier span gets arch-crown
+	// material (solid) in the top rows, empty in the lower rows.
 	var archLines []string
 	for lr := 0; lr < taperRows+pierRows; lr++ {
 		bodyW := archTopW - lr*2
@@ -262,25 +292,28 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaInfo) []string {
 			bodyW = pierW
 		}
 		rowPadL := (colW - bodyW) / 2
-		rowPadR := colW - bodyW - rowPadL
+		gapW    := colW - bodyW         // inter-pier gap width = rowPadR + next rowPadL
+
+		lf, og, rf := archCrown(lr, gapW)
 
 		var mortSB, brickSB strings.Builder
 		mortSB.WriteString(indent)
 		brickSB.WriteString(indent)
 
+		// Left margin aligns first pier under channel.
+		mortSB.WriteString(strings.Repeat(" ", rowPadL))
+		brickSB.WriteString(strings.Repeat(" ", rowPadL))
+
 		for i, step := range steps {
-			style := dim
+			pStyle := dim
 			if isActive(step) {
-				style = g
+				pStyle = g
 			}
 
-			mortSB.WriteString(strings.Repeat(" ", rowPadL))
-			brickSB.WriteString(strings.Repeat(" ", rowPadL))
+			// Pier mortar sub-row.
+			mortSB.WriteString(pStyle.Render(strings.Repeat("▀", bodyW)))
 
-			// Mortar sub-row: uniform ▀ across full pier width.
-			mortSB.WriteString(style.Render(strings.Repeat("▀", bodyW)))
-
-			// Brick sub-row: staggered ▌ joints, offset alternates per logical row.
+			// Pier brick sub-row: staggered joints.
 			offset := (brickW / 2) * (lr % 2)
 			body   := make([]rune, bodyW)
 			for c := 0; c < bodyW; c++ {
@@ -290,11 +323,31 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaInfo) []string {
 					body[c] = '█'
 				}
 			}
-			brickSB.WriteString(style.Render(string(body)))
+			brickSB.WriteString(pStyle.Render(string(body)))
 
+			// Inter-pier span (between this pier and the next).
 			if i < n-1 {
-				mortSB.WriteString(strings.Repeat(" ", rowPadR))
-				brickSB.WriteString(strings.Repeat(" ", rowPadR))
+				// Arch crown active if either adjacent pier is active.
+				aStyle := dim
+				if isActive(step) || isActive(steps[i+1]) {
+					aStyle = g
+				}
+
+				// Left arch crown (solid — voussoir stone, no brick joints).
+				if lf > 0 {
+					mortSB.WriteString(aStyle.Render(strings.Repeat("▀", lf)))
+					brickSB.WriteString(aStyle.Render(strings.Repeat("█", lf)))
+				}
+				// Open arch gap.
+				if og > 0 {
+					mortSB.WriteString(strings.Repeat(" ", og))
+					brickSB.WriteString(strings.Repeat(" ", og))
+				}
+				// Right arch crown.
+				if rf > 0 {
+					mortSB.WriteString(aStyle.Render(strings.Repeat("▀", rf)))
+					brickSB.WriteString(aStyle.Render(strings.Repeat("█", rf)))
+				}
 			}
 		}
 		archLines = append(archLines, mortSB.String(), brickSB.String())
