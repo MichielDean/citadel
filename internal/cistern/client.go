@@ -382,6 +382,18 @@ func (c *Client) GetLastReviewedCommit(id string) (string, error) {
 	return commit.String, nil
 }
 
+// UpdateTitle sets the title field on a droplet.
+func (c *Client) UpdateTitle(id, title string) error {
+	res, err := c.db.Exec(
+		`UPDATE droplets SET title = ?, updated_at = ? WHERE id = ?`,
+		title, time.Now().UTC(), id,
+	)
+	if err != nil {
+		return fmt.Errorf("cistern: update title %s: %w", id, err)
+	}
+	return checkRowsAffected(res, id)
+}
+
 // UpdateStatus sets the status field on a droplet.
 func (c *Client) UpdateStatus(id, status string) error {
 	res, err := c.db.Exec(

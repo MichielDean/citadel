@@ -710,3 +710,40 @@ func TestDropletExport(t *testing.T) {
 	exportStatus = ""
 	exportPriority = 0
 }
+
+func TestDropletRename(t *testing.T) {
+	dir := t.TempDir()
+	db := filepath.Join(dir, "test.db")
+	t.Setenv("CT_DB", db)
+
+	c, err := cistern.New(db, "ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, err := c.Add("repo", "Original Title", "", 1, 3)
+	c.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("success", func(t *testing.T) {
+		err := dropletRenameCmd.RunE(dropletRenameCmd, []string{item.ID, "New Title"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		c2, _ := cistern.New(db, "ts")
+		defer c2.Close()
+		got, _ := c2.Get(item.ID)
+		if got.Title != "New Title" {
+			t.Errorf("expected title %q, got %q", "New Title", got.Title)
+		}
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		err := dropletRenameCmd.RunE(dropletRenameCmd, []string{"ts-xxxxx", "Whatever"})
+		if err == nil {
+			t.Fatal("expected error for unknown droplet ID")
+		}
+	})
+}

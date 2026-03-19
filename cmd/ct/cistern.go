@@ -411,6 +411,27 @@ var dropletExportCmd = &cobra.Command{
 	},
 }
 
+// --- cistern rename ---
+
+var dropletRenameCmd = &cobra.Command{
+	Use:   "rename <id> <new-title>",
+	Short: "Rename a droplet — update its title",
+	Args:  cobra.ExactArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		c, err := cistern.New(resolveDBPath(), "")
+		if err != nil {
+			return err
+		}
+		defer c.Close()
+
+		if err := c.UpdateTitle(args[0], args[1]); err != nil {
+			return err
+		}
+		fmt.Printf("droplet %s renamed to %q\n", args[0], args[1])
+		return nil
+	},
+}
+
 // --- cistern show ---
 
 var dropletShowCmd = &cobra.Command{
@@ -1093,7 +1114,7 @@ func init() {
 		dropletCloseCmd, dropletReopenCmd, dropletEscalateCmd, dropletPurgeCmd,
 		dropletPassCmd, dropletRecirculateCmd, dropletBlockCmd, dropletApproveCmd,
 		dropletStatsCmd, dropletDepsCmd, dropletPeekCmd, dropletIssueCmd, dropletSearchCmd,
-		dropletExportCmd)
+		dropletExportCmd, dropletRenameCmd)
 	rootCmd.AddCommand(dropletCmd)
 }
 
