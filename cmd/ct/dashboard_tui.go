@@ -382,8 +382,8 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaInfo, frame int) []string 
 	// hugs the structure for the first couple of rows, then falls nearly vertical.
 	// Stays close → feels connected to the arch. Wide pool forms at the base.
 	wfRows := [8]string{
-		// sub 0: exits flush — ▓ right against the abutment edge (trimmed to 2 chars)
-		sp(0) + wfMid.Render("▒") + wfA(0).Render("▓"),
+		// sub 0: exits flush — ▓ right against the abutment edge
+		sp(0) + wfMid.Render("▒") + wfA(0).Render("▓") + wfMid.Render("▒") + wfDim.Render("░"),
 		// sub 1: still hugging the structure
 		sp(0) + wfDim.Render("░") + wfA(1).Render("▓") + wfMid.Render("▒"),
 		// sub 2: just starts to peel away
@@ -400,8 +400,8 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaInfo, frame int) []string 
 		sp(0) + wfDim.Render("░≈") + wfMid.Render("▒▒") + wfA(1).Render("▓▓") + wfMid.Render("▒▒") + wfDim.Render("≈░"),
 	}
 
-	// Channel exit: compact spill — water exits flush, no wide launching jet.
-	wfExit := wfDim.Render("░") + wfMid.Render("▒") + wfA(0).Render("▓▓") + wfMid.Render("▒") + wfDim.Render("░")
+	// Channel exit: compact spill — trim trailing two blocks (▒░) off the top row.
+	wfExit := wfDim.Render("░") + wfMid.Render("▒") + wfA(0).Render("▓▓")
 	l2 := indent + chanPad + cStyle.Render("█") + water + cStyle.Render("█") + wfExit
 
 	// Arch + pier rows: each logical row → 2 rendered sub-rows.
