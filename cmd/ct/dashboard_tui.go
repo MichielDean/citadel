@@ -90,9 +90,6 @@ func (m dashboardTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m dashboardTUIModel) View() string {
-	if m.width < 100 || m.height < 40 {
-		return fmt.Sprintf("Terminal too small — need at least 100×40 (current: %d×%d)\n", m.width, m.height)
-	}
 	if m.data == nil {
 		return "  Loading…\n"
 	}
@@ -215,8 +212,11 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaInfo) []string {
 
 	prefix  := "  " + padRight(ch.Name, nameW) + "  "
 	indent  := strings.Repeat(" ", len([]rune(prefix)))
-	chanPadL := (colW - archTopW) / 2
-	chanW    := (n-1)*colW + archTopW
+	// chanW spans the full n*colW so channel walls align with label row edges.
+	// chanPadL is 0 — channel starts immediately after the name prefix.
+	// The arch piers sit inside the channel with rowPadL spacing on each side.
+	chanPadL := 0
+	chanW    := n * colW
 	chanPad  := strings.Repeat(" ", chanPadL)
 
 	isActive := func(step string) bool {
@@ -255,9 +255,10 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaInfo) []string {
 	// l1: ▀ mortar cap, exactly chanW wide — matches arch mortar row 0 perfectly.
 	// l2: solid █ walls + water content (chanW-2 body = chanW total incl. walls).
 	// No l3: arch mortar row 0 is the channel floor — seamless connection.
-	//
-	// Waterfall: water overflows the right wall (l2) and falls diagonally after delivery.
-	// Each arch sub-row gets (lr spaces + ▀/█ + ≈) appended — 1 char rightward per row.
+	// Channel — full-width so it connects flush to both sides of the arch.
+	// chanW = n*colW → channel walls align exactly with label row edges.
+	// The arch piers sit inside the channel; rowPadL (grows each row) forms
+	// solid masonry abutments that widen toward the base — architecturally correct.
 	cStyle := dim
 	l1     := prefix + chanPad + cStyle.Render(strings.Repeat("▀", chanW))
 	var water string
@@ -268,12 +269,26 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaInfo) []string {
 	} else {
 		water = dim.Render(padOrTruncCenter(" — idle — ", chanW-2))
 	}
-	// Water overflows the right wall — start of the waterfall cascade.
-	l2 := indent + chanPad + cStyle.Render("█") + water + cStyle.Render("█") + g.Render("≈≈")
+	// Water exits the right wall horizontally — start of the waterfall arc.
+	l2 := indent + chanPad + cStyle.Render("█") + water + cStyle.Render("█") + g.Render("≈≈≈")
+
+	// Waterfall arc offsets (sub-row indexed 0–7):
+	// Water exits with horizontal momentum, parabola curves it down, slight base spread.
+	//   sub  pad  water   shape
+	//    0    1   ≈≈     ← shoots out horizontally
+	//    1    3   ≈≈     ← still outward
+	//    2    5   ≈      ← begins to arc
+	//    3    6   ≈      ← steeper
+	//    4    7   ≈      ← falling
+	//    5    7   ≈      ← near vertical
+	//    6    7   ≈      ← near vertical
+	//    7    6   ≈≈     ← base splash (spreads back slightly)
+	wfPads := [8]int{1, 3, 5, 6, 7, 7, 7, 6}
+	wfW    := [8]string{"≈≈", "≈≈", "≈", "≈", "≈", "≈", "≈", "≈≈"}
 
 	// Arch + pier rows: each logical row → 2 rendered sub-rows.
-	// Piers are brick-textured (tapered). Arch-crown material fills the inter-pier
-	// span during taper rows, evaluated at per-sub-row t for smoother curve.
+	// Solid masonry ABUTMENTS (rowPadL wide) fill each side so the arch spans
+	// exactly chanW at every row — no blank gaps beside the channel walls.
 	// Mortar sub-row: t = lr/taperRows  (start of logical row)
 	// Brick sub-row:  t = (lr+0.5)/taperRows  (mid-point — extra curve step)
 	var archLines []string
@@ -303,9 +318,22 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaInfo) []string {
 		mortSB.WriteString(indent)
 		brickSB.WriteString(indent)
 
-		// Left margin aligns first pier under channel.
-		mortSB.WriteString(strings.Repeat(" ", rowPadL))
-		brickSB.WriteString(strings.Repeat(" ", rowPadL))
+		// Left abutment: solid masonry filling from channel wall to first pier edge.
+		// Width = rowPadL, grows each row so base is wider than keystone — correct.
+		offset := (brickW / 2) * (lr % 2)
+		{
+			abutMort := strings.Repeat("▀", rowPadL)
+			abutBrick := make([]rune, rowPadL)
+			for c := 0; c < rowPadL; c++ {
+				if (c+offset)%(brickW+1) == brickW {
+					abutBrick[c] = '▌'
+				} else {
+					abutBrick[c] = '█'
+				}
+			}
+			mortSB.WriteString(dim.Render(abutMort))
+			brickSB.WriteString(dim.Render(string(abutBrick)))
+		}
 
 		for i, step := range steps {
 			pStyle := dim
@@ -317,7 +345,6 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaInfo) []string {
 			mortSB.WriteString(pStyle.Render(strings.Repeat("▀", bodyW)))
 
 			// Pier brick sub-row: staggered joints.
-			offset := (brickW / 2) * (lr % 2)
 			body   := make([]rune, bodyW)
 			for c := 0; c < bodyW; c++ {
 				if (c+offset)%(brickW+1) == brickW {
@@ -370,12 +397,25 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaInfo) []string {
 				}
 			}
 		}
-		// Waterfall: diagonal cascade falling to the right of the last pier.
-		// Each logical row shifts 1 char rightward, matching the taper geometry.
-		// Mortar sub-rows get ▀ (mortar cap), brick sub-rows get █ (wall body).
-		wfPad := strings.Repeat(" ", lr)
-		mortSB.WriteString(wfPad + dim.Render("▀") + g.Render("≈"))
-		brickSB.WriteString(wfPad + dim.Render("█") + g.Render("≈"))
+		// Right abutment: mirrors the left, fills channel wall to last pier edge.
+		{
+			abutMort := strings.Repeat("▀", rowPadL)
+			abutBrick := make([]rune, rowPadL)
+			for c := 0; c < rowPadL; c++ {
+				if (c+offset)%(brickW+1) == brickW {
+					abutBrick[c] = '▌'
+				} else {
+					abutBrick[c] = '█'
+				}
+			}
+			mortSB.WriteString(dim.Render(abutMort))
+			brickSB.WriteString(dim.Render(string(abutBrick)))
+		}
+
+		// Waterfall: parabolic arc exits from the right channel wall.
+		subRow  := lr * 2
+		mortSB.WriteString(strings.Repeat(" ", wfPads[subRow])   + g.Render(wfW[subRow]))
+		brickSB.WriteString(strings.Repeat(" ", wfPads[subRow+1]) + g.Render(wfW[subRow+1]))
 
 		archLines = append(archLines, mortSB.String(), brickSB.String())
 	}
