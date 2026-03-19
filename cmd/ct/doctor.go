@@ -225,7 +225,10 @@ func runDoctorExtendedChecks(cfg *aqueduct.AqueductConfig, cfgPath, home, dbPath
 	// Check 5: Systemd service health (only on systemd systems).
 	checkSystemdService()
 
-	// Check 6: Stalled droplets (warnings only — does not affect ok).
+	// Check 6: Repo sandbox health — one check per configured repo.
+	checkRepoSandboxes(cfg)
+
+	// Check 7: Stalled droplets (warnings only — does not affect ok).
 	checkStalledDroplets(dbPath)
 
 	return ok
@@ -406,6 +409,76 @@ func resolveGoBin() (string, error) {
 		return "", fmt.Errorf("cannot determine GOPATH: %w", err)
 	}
 	return filepath.Join(strings.TrimSpace(string(out)), "bin"), nil
+}
+
+// checkRepoSandboxes checks that each configured repo has accessible sandboxes.
+// Informational — does not affect overall pass/fail.
+func checkRepoSandboxes(cfg *aqueduct.AqueductConfig) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	sandboxRoot := filepath.Join(home, ".cistern", "sandboxes")
+
+	for _, repo := range cfg.Repos {
+		names := repo.Names
+		if len(names) == 0 {
+			for i := 0; i < repo.Cataractae; i++ {
+				names = append(names, fmt.Sprintf("worker-%d", i+1))
+			}
+		}
+
+		allCloned := true
+		for _, name := range names {
+			dir := filepath.Join(sandboxRoot, repo.Name, name)
+			if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
+				allCloned = false
+				break
+			}
+		}
+
+		if allCloned {
+			fmt.Printf("✓ repo: %s (%d aqueduct(s) cloned)\n", repo.Name, len(names))
+		} else {
+			if doctorFix {
+				// Attempt to clone missing sandboxes.
+				cloneErr := preCloneSandboxesDoctor(repo, sandboxRoot)
+				if cloneErr != nil {
+					fmt.Printf("✗ repo: %s — clone failed: %v\n", repo.Name, cloneErr)
+				} else {
+					fmt.Printf("↻ repo: %s — sandboxes cloned\n", repo.Name)
+				}
+			} else {
+				fmt.Printf("✗ repo: %s — sandbox(es) not cloned. Run: ct repo clone %s\n", repo.Name, repo.Name)
+			}
+		}
+	}
+}
+
+// preCloneSandboxesDoctor is the doctor variant of preCloneSandboxes.
+// Defined here to avoid import cycle; mirrors cmd/ct/repo.go:preCloneSandboxes.
+func preCloneSandboxesDoctor(repo aqueduct.RepoConfig, sandboxRoot string) error {
+	names := repo.Names
+	if len(names) == 0 {
+		for i := 0; i < repo.Cataractae; i++ {
+			names = append(names, fmt.Sprintf("worker-%d", i+1))
+		}
+	}
+	repoRoot := filepath.Join(sandboxRoot, repo.Name)
+	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
+		return err
+	}
+	for _, name := range names {
+		dir := filepath.Join(repoRoot, name)
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			continue // already exists
+		}
+		out, err := exec.Command("git", "clone", repo.URL, dir).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("clone %s/%s: %w — %s", repo.Name, name, err, string(out))
+		}
+	}
+	return nil
 }
 
 // checkStalledDroplets warns about in_progress droplets that have not updated
