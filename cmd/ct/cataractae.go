@@ -40,7 +40,7 @@ func runCataractaeGenerate(cmd *cobra.Command, args []string) error {
 		cfgPath := resolveConfigPath()
 		cfg, err := aqueduct.ParseAqueductConfig(cfgPath)
 		if err != nil {
-			return fmt.Errorf("loading config: %w (use --workflow to specify a workflow file directly)", err)
+			return fmt.Errorf("loading config: %w (use --workflow to specify an aqueduct file directly)", err)
 		}
 		if len(cfg.Repos) == 0 {
 			return fmt.Errorf("no repos configured")
@@ -54,11 +54,11 @@ func runCataractaeGenerate(cmd *cobra.Command, args []string) error {
 
 	w, err := aqueduct.ParseWorkflow(wfPath)
 	if err != nil {
-		return fmt.Errorf("parse workflow: %w", err)
+		return fmt.Errorf("parse aqueduct: %w", err)
 	}
 
 	if len(w.CataractaDefinitions) == 0 {
-		fmt.Println("no cataracta_definitions defined in workflow")
+		fmt.Println("no cataracta_definitions defined in aqueduct")
 		return nil
 	}
 
@@ -79,7 +79,7 @@ func runCataractaeGenerate(cmd *cobra.Command, args []string) error {
 
 var cataractaeListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List all cataracta definitions in the workflow YAML",
+	Short: "List all cataracta definitions in the aqueduct",
 	RunE:  runCataractaeList,
 }
 
@@ -102,11 +102,11 @@ func runCataractaeList(cmd *cobra.Command, args []string) error {
 
 	w, err := aqueduct.ParseWorkflow(wfPath)
 	if err != nil {
-		return fmt.Errorf("parse workflow: %w", err)
+		return fmt.Errorf("parse aqueduct: %w", err)
 	}
 
 	if len(w.CataractaDefinitions) == 0 {
-		fmt.Println("no cataracta_definitions defined in workflow")
+		fmt.Println("no cataracta_definitions defined in aqueduct")
 		return nil
 	}
 
@@ -156,16 +156,16 @@ func runCataractaeEdit(cmd *cobra.Command, args []string) error {
 	// Read the raw YAML to preserve structure.
 	data, err := os.ReadFile(wfPath)
 	if err != nil {
-		return fmt.Errorf("read workflow: %w", err)
+		return fmt.Errorf("read aqueduct: %w", err)
 	}
 
 	w, err := aqueduct.ParseWorkflow(wfPath)
 	if err != nil {
-		return fmt.Errorf("parse workflow: %w", err)
+		return fmt.Errorf("parse aqueduct: %w", err)
 	}
 
 	if len(w.CataractaDefinitions) == 0 {
-		fmt.Println("no cataracta_definitions defined in workflow")
+		fmt.Println("no cataracta_definitions defined in aqueduct")
 		return nil
 	}
 
@@ -243,7 +243,7 @@ func runCataractaeEdit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("marshal yaml: %w", err)
 	}
 	if err := os.WriteFile(wfPath, out, 0o644); err != nil {
-		return fmt.Errorf("write workflow: %w", err)
+		return fmt.Errorf("write aqueduct: %w", err)
 	}
 
 	// Regenerate CLAUDE.md.
@@ -289,12 +289,12 @@ func runCataractaeReset(cmd *cobra.Command, args []string) error {
 	// Read the raw YAML to preserve structure.
 	data, err := os.ReadFile(wfPath)
 	if err != nil {
-		return fmt.Errorf("read workflow: %w", err)
+		return fmt.Errorf("read aqueduct: %w", err)
 	}
 
 	w, err := aqueduct.ParseWorkflow(wfPath)
 	if err != nil {
-		return fmt.Errorf("parse workflow: %w", err)
+		return fmt.Errorf("parse aqueduct: %w", err)
 	}
 
 	cataractaeDir := cisternCataractaeDir()
@@ -391,7 +391,7 @@ func runCataractaeReset(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// writeWorkflowCataractaDefinitions updates the roles section of a workflow YAML file.
+// writeWorkflowCataractaDefinitions updates the cataracta_definitions section of an aqueduct YAML file.
 func writeWorkflowCataractaDefinitions(wfPath string, originalData []byte, w *aqueduct.Workflow) error {
 	var raw map[string]interface{}
 	if err := yaml.Unmarshal(originalData, &raw); err != nil {
@@ -404,7 +404,7 @@ func writeWorkflowCataractaDefinitions(wfPath string, originalData []byte, w *aq
 		return fmt.Errorf("marshal yaml: %w", err)
 	}
 	if err := os.WriteFile(wfPath, out, 0o644); err != nil {
-		return fmt.Errorf("write workflow: %w", err)
+		return fmt.Errorf("write aqueduct: %w", err)
 	}
 	return nil
 }
@@ -420,7 +420,7 @@ func cisternCataractaeDir() string {
 
 // --- cataractae status ---
 
-// cataractaeStatusCmd shows which workflow steps are currently occupied and by
+// cataractaeStatusCmd shows which aqueducts are flowing and by
 // which operator and droplet. This is the pipeline view — steps on the left,
 // what's flowing through each on the right.
 var cataractaeStatusCmd = &cobra.Command{

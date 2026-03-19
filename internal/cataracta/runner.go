@@ -4,6 +4,7 @@ package cataracta
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/MichielDean/cistern/internal/aqueduct"
 	"github.com/MichielDean/cistern/internal/cistern"
+	"github.com/MichielDean/cistern/internal/skills"
 )
 
 // Worker is a named execution slot with a git worktree.
@@ -82,11 +84,13 @@ func New(cfg Config) (*Runner, error) {
 		return nil, err
 	}
 
-	// Ensure the shared clone exists once at startup — workers share it via worktrees.
+	// Ensure each aqueduct has its own dedicated clone.
 	// SkipInitialClone is set in tests that use fake repo URLs.
 	if !cfg.SkipInitialClone {
-		if err := EnsureSharedClone(repoSandboxDir, cfg.Repo.URL); err != nil {
-			return nil, fmt.Errorf("cataracta: initial clone for %q: %w", cfg.Repo.Name, err)
+		for _, w := range workers {
+			if err := EnsureDedicatedClone(w.SandboxDir, cfg.Repo.URL); err != nil {
+				return nil, fmt.Errorf("cataracta: initial clone for %q/%s: %w", cfg.Repo.Name, w.Name, err)
+			}
 		}
 	}
 
@@ -182,16 +186,8 @@ func (r *Runner) findWorkerByName(name string) *Worker {
 func (r *Runner) SpawnStep(w *Worker, item *cistern.Droplet, step *aqueduct.WorkflowCataracta) error {
 	log.Printf("cataracta: %s/%s: spawning step %q for item %s", r.repo.Name, w.Name, step.Name, item.ID)
 
-	// 1. Fetch latest from remote (shared clone already exists), then ensure this worker's worktree.
-	if err := fetchSandbox(r.sharedCloneDir); err != nil {
-		log.Printf("cataracta: warning: git fetch failed for %s: %v", r.repo.Name, err)
-	}
-	if err := EnsureWorktree(w.SandboxDir, r.sharedCloneDir); err != nil {
-		return fmt.Errorf("worktree: %w", err)
-	}
-
-	// For full_codebase agent steps (implement), position the worktree on the
-	// item's persistent feature branch so revision cycles are incremental.
+		// 1. Position the dedicated clone on the item's feature branch.
+	// PrepareBranch fetches latest origin/main and creates or resumes the branch.
 	if step.Context == aqueduct.ContextFullCodebase || step.Context == "" {
 		if step.Type == aqueduct.CataractaTypeAgent {
 			if err := PrepareBranch(w.SandboxDir, item.ID); err != nil {
@@ -206,18 +202,53 @@ func (r *Runner) SpawnStep(w *Worker, item *cistern.Droplet, step *aqueduct.Work
 		log.Printf("cataracta: warning: could not fetch notes for %s: %v", item.ID, err)
 	}
 
+	openIssues, err := r.queue.ListIssues(item.ID, true)
+	if err != nil {
+		log.Printf("cataracta: warning: could not fetch open issues for %s: %v", item.ID, err)
+	}
+
 	ctxDir, cleanup, err := PrepareContext(ContextParams{
-		Level:      step.Context,
-		SandboxDir: w.SandboxDir,
-		Item:       item,
-		Step:       step,
-		Notes:      notes,
+		Level:       step.Context,
+		SandboxDir:  w.SandboxDir,
+		Item:        item,
+		Step:        step,
+		Notes:       notes,
+		OpenIssues:  openIssues,
+		QueueClient: r.queue,
 	})
 	if err != nil {
 		return fmt.Errorf("context: %w", err)
 	}
 
-	// 3. Spawn Claude Code session in tmux. Returns immediately.
+	// 3. Copy skills into sandbox/.claude/skills/<name>/SKILL.md.
+	// The runtime never fetches skills automatically — they must be installed
+	// ahead of time via `ct skills install`. In-repo skills (path: set) are
+	// copied from the sandbox worktree; external skills are read from the
+	// local store at ~/.cistern/skills/<name>/SKILL.md.
+	for _, skill := range step.Skills {
+		var src string
+		if skill.Path != "" {
+			// In-repo skill: resolve relative to the sandbox worktree.
+			src = filepath.Join(w.SandboxDir, skill.Path)
+		} else {
+			// External skill: must already be installed locally.
+			if !skills.IsInstalled(skill.Name) {
+				log.Printf("cataracta: warning: skill %q not installed — run `ct skills install %s <url>`", skill.Name, skill.Name)
+				continue
+			}
+			src = skills.LocalPath(skill.Name)
+		}
+		dest := filepath.Join(w.SandboxDir, ".claude", "skills", skill.Name, "SKILL.md")
+		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+			log.Printf("cataracta: warning: mkdir skills dir for %q: %v", skill.Name, err)
+			continue
+		}
+		if err := copyFile(src, dest); err != nil {
+			log.Printf("cataracta: warning: copy skill %q: %v", skill.Name, err)
+		}
+	}
+
+	// 4. Spawn Claude Code session in tmux. Returns immediately.
 	sess := &Session{
 		ID:             w.SessionID,
 		WorkDir:        ctxDir,
@@ -260,6 +291,29 @@ func (r *Runner) CataractaByName(name string) *aqueduct.WorkflowCataracta {
 		if r.workflow.Cataractae[i].Name == name {
 			return &r.workflow.Cataractae[i]
 		}
+	}
+	return nil
+}
+
+// copyFile copies src to dst, creating dst if it does not exist.
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", src, err)
+	}
+	defer in.Close()
+
+	out, err := os.Create(dst)
+	if err != nil {
+		return fmt.Errorf("create %s: %w", dst, err)
+	}
+
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return fmt.Errorf("copy %s -> %s: %w", src, dst, err)
+	}
+	if err := out.Close(); err != nil {
+		return fmt.Errorf("close %s: %w", dst, err)
 	}
 	return nil
 }

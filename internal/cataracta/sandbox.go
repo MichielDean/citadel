@@ -8,62 +8,48 @@ import (
 	"strings"
 )
 
-// EnsureSharedClone guarantees a single shared clone of the repo exists at dir.
-// All workers share this clone's object store via git worktrees.
-// On first call it clones the repo; on subsequent calls it fetches updates.
-func EnsureSharedClone(dir, repoURL string) error {
+// EnsureDedicatedClone guarantees a full independent git clone exists at dir.
+// Each aqueduct gets its own clone — no worktrees, no shared object store,
+// no "already used by worktree" errors possible.
+//
+// On first call: clones the repo.
+// On subsequent calls: fetches latest remote refs.
+func EnsureDedicatedClone(dir, repoURL string) error {
 	gitDir := filepath.Join(dir, ".git")
 	if _, err := os.Stat(gitDir); os.IsNotExist(err) {
 		if err := os.RemoveAll(dir); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("remove stale clone dir: %w", err)
+			return fmt.Errorf("remove stale sandbox dir: %w", err)
 		}
 		return cloneSandbox(dir, repoURL)
 	}
+	// Existing clone — just fetch.
 	return fetchSandbox(dir)
 }
 
-// EnsureWorktree guarantees a git worktree for a worker exists at worktreeDir,
-// rooted in the shared clone at cloneDir. The worktree is created detached;
-// callers must call PrepareBranch to check out the correct branch.
-func EnsureWorktree(worktreeDir, cloneDir string) error {
-	// Prune stale worktree registrations (entries whose directories no longer exist).
-	pruneCmd := exec.Command("git", "worktree", "prune")
-	pruneCmd.Dir = cloneDir
-	_ = pruneCmd.Run() // best-effort; ignore errors
+// EnsureSharedClone is preserved for backward compatibility with tests.
+// New code should use EnsureDedicatedClone.
+func EnsureSharedClone(dir, repoURL string) error {
+	return EnsureDedicatedClone(dir, repoURL)
+}
 
-	// A worktree has a .git file (not dir) pointing back to the main repo.
-	gitPath := filepath.Join(worktreeDir, ".git")
-	if _, err := os.Stat(gitPath); err == nil {
-		return nil // Already exists and valid.
-	}
-
-	// Remove any stale non-git debris before adding the worktree.
-	if err := os.RemoveAll(worktreeDir); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("remove stale worktree dir: %w", err)
-	}
-
-	// Use --force in case the path is still registered (prune may not always catch it).
-	cmd := exec.Command("git", "worktree", "add", "--detach", "--force", worktreeDir, "HEAD")
-	cmd.Dir = cloneDir
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("git worktree add %s: %w: %s", worktreeDir, err, out)
-	}
+// EnsureWorktree is a no-op stub kept for backward compatibility with tests.
+// Dedicated clones replace worktrees — callers can safely remove EnsureWorktree calls.
+func EnsureWorktree(_, _ string) error {
 	return nil
 }
 
 // EnsureSandbox is kept for backward compatibility with tests.
-// New code should call EnsureSharedClone + EnsureWorktree.
 func EnsureSandbox(dir, repoURL string) error {
-	return EnsureSharedClone(dir, repoURL)
+	return EnsureDedicatedClone(dir, repoURL)
 }
 
 // PrepareBranch positions the sandbox on a per-item feature branch.
 //
 // If the branch already exists locally (e.g., resuming after review feedback),
-// it checks out the existing branch and rebases onto origin/main. This
-// preserves the implementer's previous commits so revision is incremental.
+// it checks out the existing branch. This preserves the implementer's previous
+// commits so revision is incremental.
 //
-// If the branch does not yet exist, it is created from origin/main.
+// If the branch does not yet exist, it is created from a fresh origin/main.
 func PrepareBranch(dir, itemID string) error {
 	branch := "feat/" + itemID
 
@@ -79,19 +65,22 @@ func PrepareBranch(dir, itemID string) error {
 	}
 
 	if exists {
-		// Resume existing work — check out the branch.
-		// Use -f in case git thinks the branch is in use by a now-pruned worktree.
-		checkout := exec.Command("git", "checkout", "-f", branch)
+		checkout := exec.Command("git", "checkout", branch)
 		checkout.Dir = dir
 		if out, err := checkout.CombinedOutput(); err != nil {
 			return fmt.Errorf("git checkout %s in %s: %w: %s", branch, dir, err, out)
 		}
-		// Clean stale runner artifacts from the working tree (not committed code).
 		cleanArtifacts(dir)
 		return nil
 	}
 
 	// New branch — start from a clean origin/main.
+	fetch := exec.Command("git", "fetch", "origin")
+	fetch.Dir = dir
+	if out, err := fetch.CombinedOutput(); err != nil {
+		return fmt.Errorf("git fetch in %s: %w: %s", dir, err, out)
+	}
+
 	reset := exec.Command("git", "reset", "--hard", "origin/main")
 	reset.Dir = dir
 	if out, err := reset.CombinedOutput(); err != nil {
@@ -165,20 +154,26 @@ func configureGitIdentity(dir string) error {
 	return nil
 }
 
-// ParkWorktree detaches HEAD in the worktree so no worktree holds a feature
-// branch between steps. The shared clone owns the main branch; workers must
-// use detached HEAD as their "parked" state so any worker can check out any
-// feature branch on the next step.
-func ParkWorktree(dir string) {
-	cmd := exec.Command("git", "checkout", "--detach", "HEAD")
+// currentHead returns the current HEAD commit hash in the given directory.
+// It is a pure helper with no side effects.
+func currentHead(dir string) (string, error) {
+	cmd := exec.Command("git", "rev-parse", "HEAD")
 	cmd.Dir = dir
-	_ = cmd.Run() // best-effort; failure just means the next checkout may conflict
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("git rev-parse HEAD in %s: %w", dir, err)
+	}
+	return strings.TrimSpace(string(out)), nil
 }
+
+// ParkWorktree is a no-op kept for backward compatibility.
+// Dedicated clones don't need HEAD parking between steps.
+func ParkWorktree(_ string) {}
 
 // cleanArtifacts removes runner-written files from the working tree so they
 // don't appear in diffs or confuse the agent.
 func cleanArtifacts(dir string) {
 	for _, f := range []string{"CONTEXT.md", "handoff.md"} {
-		_ = os.Remove(dir + "/" + f)
+		_ = os.Remove(filepath.Join(dir, f))
 	}
 }

@@ -62,9 +62,9 @@ func (a *Adapter) Spawn(ctx context.Context, req castellarius.CataractaRequest) 
 		return fmt.Errorf("adapter: no runner for repo %q", req.RepoConfig.Name)
 	}
 
-	worker := r.findWorkerByName(req.WorkerName)
+	worker := r.findWorkerByName(req.AqueductName)
 	if worker == nil {
-		return fmt.Errorf("adapter: worker %q not found in repo %q", req.WorkerName, req.RepoConfig.Name)
+		return fmt.Errorf("adapter: worker %q not found in repo %q", req.AqueductName, req.RepoConfig.Name)
 	}
 
 	step := req.Step
@@ -81,7 +81,7 @@ func (a *Adapter) spawnAutomated(ctx context.Context, req castellarius.Cataracta
 	}
 
 	home, _ := os.UserHomeDir()
-	sandboxDir := filepath.Join(home, ".cistern", "sandboxes", req.RepoConfig.Name, req.WorkerName)
+	sandboxDir := filepath.Join(home, ".cistern", "sandboxes", req.RepoConfig.Name, req.AqueductName)
 	branch := "feat/" + req.Item.ID
 
 	// Build metadata from prior annotations stored as step notes with "meta:" prefix.
@@ -99,7 +99,7 @@ func (a *Adapter) spawnAutomated(ctx context.Context, req castellarius.Cataracta
 	}
 
 	bc := gates.DropletContext{
-		ID:          req.WorkerName + "-" + req.Item.ID,
+		ID:          req.AqueductName + "-" + req.Item.ID,
 		Title:       req.Item.Title,
 		Description: req.Item.Description,
 		WorkDir:     sandboxDir,

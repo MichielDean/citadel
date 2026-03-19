@@ -11,8 +11,8 @@ repos:
     cataractae: 2
     # Cataracta operator names — who processes the droplets
     names:
-      - upstream
-      - tributary
+      - virgo
+      - marcia
     prefix: st
 
   - name: cistern
@@ -20,8 +20,8 @@ repos:
     workflow_path: aqueduct/feature.yaml
     cataractae: 2
     names:
-      - seep
-      - confluence
+      - virgo
+      - marcia
     prefix: ct
 
 max_cataractae: 4

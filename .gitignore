@@ -1,0 +1,13 @@
+# Cistern sandbox artifacts — auto-generated per run, never committed
+CONTEXT.md
+.claude/
+
+# Build artifacts
+/ct
+/dist/
+
+# Go test cache
+*.test
+
+# OS
+.DS_Store

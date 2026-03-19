@@ -41,15 +41,15 @@ cataractae:
 		t.Fatal(err)
 	}
 
-	// Config referencing two operators named "upstream" and "tributary".
+	// Config referencing two operators named "virgo" and "marcia".
 	cfgContent := `repos:
   - name: myrepo
     url: https://example.com/repo
     workflow_path: feature.yaml
     cataractae: 2
     names:
-      - upstream
-      - tributary
+      - virgo
+      - marcia
     prefix: mr
 max_cataractae: 4
 `
@@ -72,10 +72,10 @@ func TestFetchDashboardData_FeedsDataCorrectly(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Add: 1 flowing assigned to "upstream", 1 queued, 1 closed.
+	// Add: 1 flowing assigned to "virgo", 1 queued, 1 closed.
 	flowing, _ := c.Add("myrepo", "Feature A", "", 1, 2)
 	c.GetReady("myrepo") // marks it in_progress
-	c.Assign(flowing.ID, "upstream", "implement")
+	c.Assign(flowing.ID, "virgo", "implement")
 
 	_, _ = c.Add("myrepo", "Feature B", "", 2, 2) // stays open/queued
 
@@ -104,41 +104,41 @@ func TestFetchDashboardData_FeedsDataCorrectly(t *testing.T) {
 		t.Error("FetchedAt should be set")
 	}
 
-	// Cataracta "upstream" should be assigned to the flowing item.
-	var upstream *CataractaInfo
+	// Cataracta "virgo" should be assigned to the flowing item.
+	var virgo *CataractaInfo
 	for i := range data.Cataractae {
-		if data.Cataractae[i].Name == "upstream" {
-			upstream = &data.Cataractae[i]
+		if data.Cataractae[i].Name == "virgo" {
+			virgo = &data.Cataractae[i]
 		}
 	}
-	if upstream == nil {
-		t.Fatal("cataracta upstream not found in data.Cataractae")
+	if virgo == nil {
+		t.Fatal("cataracta virgo not found in data.Cataractae")
 	}
-	if upstream.DropletID != flowing.ID {
-		t.Errorf("upstream.DropletID = %q, want %q", upstream.DropletID, flowing.ID)
+	if virgo.DropletID != flowing.ID {
+		t.Errorf("virgo.DropletID = %q, want %q", virgo.DropletID, flowing.ID)
 	}
-	if upstream.Step != "implement" {
-		t.Errorf("upstream.Step = %q, want %q", upstream.Step, "implement")
+	if virgo.Step != "implement" {
+		t.Errorf("virgo.Step = %q, want %q", virgo.Step, "implement")
 	}
-	if upstream.CataractaIndex != 1 {
-		t.Errorf("upstream.CataractaIndex = %d, want 1", upstream.CataractaIndex)
+	if virgo.CataractaIndex != 1 {
+		t.Errorf("virgo.CataractaIndex = %d, want 1", virgo.CataractaIndex)
 	}
-	if upstream.TotalCataractae != 3 {
-		t.Errorf("upstream.TotalCataractae = %d, want 3", upstream.TotalCataractae)
+	if virgo.TotalCataractae != 3 {
+		t.Errorf("virgo.TotalCataractae = %d, want 3", virgo.TotalCataractae)
 	}
 
-	// Cataracta "tributary" should be dry.
-	var tributary *CataractaInfo
+	// Cataracta "marcia" should be dry.
+	var marcia *CataractaInfo
 	for i := range data.Cataractae {
-		if data.Cataractae[i].Name == "tributary" {
-			tributary = &data.Cataractae[i]
+		if data.Cataractae[i].Name == "marcia" {
+			marcia = &data.Cataractae[i]
 		}
 	}
-	if tributary == nil {
-		t.Fatal("cataracta tributary not found in data.Cataractae")
+	if marcia == nil {
+		t.Fatal("cataracta marcia not found in data.Cataractae")
 	}
-	if tributary.DropletID != "" {
-		t.Errorf("tributary.DropletID = %q, want empty (dry)", tributary.DropletID)
+	if marcia.DropletID != "" {
+		t.Errorf("marcia.DropletID = %q, want empty (dry)", marcia.DropletID)
 	}
 
 	// Cistern should contain flowing + queued (2 items).
@@ -265,20 +265,21 @@ func TestDashboard_ExitsWhenInputClosed(t *testing.T) {
 // --- TestRenderDashboard ---
 
 func TestRenderDashboard_ContainsExpectedSections(t *testing.T) {
+	steps := []string{"implement", "review", "merge"}
 	data := &DashboardData{
-		CataractaCount:  2,
-		FlowingCount: 1,
-		QueuedCount:  1,
-		DoneCount:    3,
+		CataractaCount: 2,
+		FlowingCount:   1,
+		QueuedCount:    1,
+		DoneCount:      3,
 		Cataractae: []CataractaInfo{
-			{Name: "upstream", DropletID: "ci-abc12", Step: "implement", CataractaIndex: 1, TotalCataractae: 6, Elapsed: 2*time.Minute + 14*time.Second},
-			{Name: "tributary"},
+			{Name: "virgo", DropletID: "ci-abc12", Step: "implement", Steps: steps, CataractaIndex: 1, TotalCataractae: 3, Elapsed: 2*time.Minute + 14*time.Second},
+			{Name: "marcia", Steps: steps},
 		},
 		CisternItems: []*cistern.Droplet{
 			{ID: "ci-abc12", Repo: "cistern", Status: "in_progress", CurrentCataracta: "implement", Complexity: 2},
 		},
 		RecentItems: []*cistern.Droplet{
-			{ID: "ci-xyz99", Status: "closed", CurrentCataracta: "merge", UpdatedAt: time.Now()},
+			{ID: "ci-xyz99", Status: "delivered", CurrentCataracta: "merge", UpdatedAt: time.Now()},
 		},
 		FarmRunning: true,
 		FetchedAt:   time.Date(2026, 3, 14, 15, 7, 42, 0, time.UTC),
@@ -286,23 +287,190 @@ func TestRenderDashboard_ContainsExpectedSections(t *testing.T) {
 
 	out := renderDashboard(data)
 
-	sections := []string{"CISTERN", "SLUICES", "CISTERN", "RECENT FLOW"}
-	for _, s := range sections {
-		if !strings.Contains(out, s) {
-			t.Errorf("output missing section %q", s)
+	// Flow graph should contain step names and node symbols.
+	for _, want := range []string{"implement", "review", "merge", "●", "○"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q in flow graph", want)
 		}
 	}
-	if !strings.Contains(out, "upstream") {
-		t.Error("output missing cataracta name upstream")
+	// Aqueduct names appear in the flow graph rows.
+	if !strings.Contains(out, "virgo") {
+		t.Error("output missing cataracta name virgo")
 	}
-	if !strings.Contains(out, "tributary") {
-		t.Error("output missing cataracta name tributary")
+	if !strings.Contains(out, "marcia") {
+		t.Error("output missing cataracta name marcia")
 	}
+	// Cistern counts.
+	if !strings.Contains(out, "flowing") {
+		t.Error("output missing flowing count")
+	}
+	if !strings.Contains(out, "queued") {
+		t.Error("output missing queued count")
+	}
+	// Recent flow section.
+	if !strings.Contains(out, "RECENT FLOW") {
+		t.Error("output missing RECENT FLOW section")
+	}
+	// Timestamp and footer.
 	if !strings.Contains(out, "15:07:42") {
 		t.Error("output missing last update timestamp")
 	}
 	if !strings.Contains(out, "q to quit") {
 		t.Error("output missing footer hint")
+	}
+}
+
+func TestRenderFlowGraphRow_ActiveStep(t *testing.T) {
+	// Use step="review" (non-first step) to verify ● appears on the incoming edge,
+	// i.e. before the active step name: implement ──●──▶ review ──○──▶ qa
+	ch := CataractaInfo{
+		Name:            "virgo",
+		DropletID:       "ci-s76ho",
+		Step:            "review",
+		Steps:           []string{"implement", "review", "qa"},
+		Elapsed:         3*time.Minute + 12*time.Second,
+		CataractaIndex:  2,
+		TotalCataractae: 3,
+	}
+	graphLine, infoLine := renderFlowGraphRow(ch)
+
+	stripANSI := func(s string) string {
+		var out strings.Builder
+		inEsc := false
+		for _, r := range s {
+			if r == '\033' {
+				inEsc = true
+				continue
+			}
+			if inEsc {
+				if r == 'm' {
+					inEsc = false
+				}
+				continue
+			}
+			out.WriteRune(r)
+		}
+		return out.String()
+	}
+
+	cleanGraph := stripANSI(graphLine)
+
+	// ● must appear before "review" in the graph (incoming edge semantics).
+	bulletIdx := strings.Index(cleanGraph, "●")
+	if bulletIdx < 0 {
+		t.Fatal("graph line should contain filled node ● for active step")
+	}
+	reviewIdx := strings.Index(cleanGraph, "review")
+	if reviewIdx < 0 {
+		t.Fatal("graph line should contain the active step name 'review'")
+	}
+	if bulletIdx >= reviewIdx {
+		t.Errorf("● (col %d) should appear before 'review' (col %d) in graph line", bulletIdx, reviewIdx)
+	}
+
+	if !strings.Contains(cleanGraph, "○") {
+		t.Error("graph line should contain hollow node ○ for inactive steps")
+	}
+	if !strings.Contains(cleanGraph, "implement") {
+		t.Error("graph line should contain preceding step name 'implement'")
+	}
+	if !strings.Contains(infoLine, "↑") {
+		t.Error("info line should contain pointer ↑")
+	}
+	if !strings.Contains(infoLine, "virgo") {
+		t.Error("info line should contain aqueduct name")
+	}
+	if !strings.Contains(infoLine, "ci-s76ho") {
+		t.Error("info line should contain droplet ID")
+	}
+	if !strings.Contains(infoLine, "3m 12s") {
+		t.Error("info line should contain elapsed time")
+	}
+}
+
+func TestRenderFlowGraphRow_Idle(t *testing.T) {
+	ch := CataractaInfo{
+		Name:  "marcia",
+		Steps: []string{"implement", "review", "qa"},
+	}
+	graphLine, infoLine := renderFlowGraphRow(ch)
+
+	if strings.Contains(graphLine, "●") {
+		t.Error("idle graph line should not contain filled node ●")
+	}
+	if !strings.Contains(graphLine, "○") {
+		t.Error("idle graph line should contain hollow nodes ○")
+	}
+	if infoLine != "" {
+		t.Errorf("idle aqueduct should have no info line, got %q", infoLine)
+	}
+}
+
+func TestRenderFlowGraphRow_PointerAligned(t *testing.T) {
+	ch := CataractaInfo{
+		Name:            "virgo",
+		DropletID:       "ci-abc",
+		Step:            "review",
+		Steps:           []string{"implement", "review", "qa"},
+		CataractaIndex:  2,
+		TotalCataractae: 3,
+	}
+	graphLine, infoLine := renderFlowGraphRow(ch)
+
+	// Strip ANSI escape codes to get visually clean strings.
+	stripANSI := func(s string) string {
+		var out strings.Builder
+		inEsc := false
+		for _, r := range s {
+			if r == '\033' {
+				inEsc = true
+				continue
+			}
+			if inEsc {
+				if r == 'm' {
+					inEsc = false
+				}
+				continue
+			}
+			out.WriteRune(r)
+		}
+		return out.String()
+	}
+
+	// runeIndex returns the rune (visual) index of sub in s.
+	// strings.Index returns byte offsets; multi-byte chars (─, ○, ●, ▶, ↑)
+	// mean byte offset ≠ visual column — so we convert explicitly.
+	runeIndex := func(s, sub string) int {
+		byteIdx := strings.Index(s, sub)
+		if byteIdx < 0 {
+			return -1
+		}
+		return len([]rune(s[:byteIdx]))
+	}
+
+	cleanGraph := stripANSI(graphLine)
+	cleanInfo := stripANSI(infoLine)
+
+	// ● must appear BEFORE the active step name "review".
+	bulletPos := runeIndex(cleanGraph, "●")
+	if bulletPos < 0 {
+		t.Fatal("no ● in graph line")
+	}
+	reviewPos := runeIndex(cleanGraph, "review")
+	if reviewPos < 0 {
+		t.Fatal("no 'review' in graph line")
+	}
+	if bulletPos >= reviewPos {
+		t.Errorf("● at visual col %d should be before 'review' at col %d (incoming edge semantics)", bulletPos, reviewPos)
+	}
+
+	// ↑ in the info line should align with the start of the active step name "review".
+	arrowPos := runeIndex(cleanInfo, "↑")
+	if arrowPos < 0 {
+		t.Fatal("no ↑ in info line")
+	}
+	if arrowPos != reviewPos {
+		t.Errorf("↑ at visual col %d should align with 'review' at col %d in graph line", arrowPos, reviewPos)
 	}
 }
 
@@ -312,55 +480,12 @@ func TestRenderDashboard_AqueductsClosedWhenNoCataractae(t *testing.T) {
 		FetchedAt: time.Now(),
 	}
 	out := renderDashboard(data)
-	if !strings.Contains(out, "Aqueducts closed") {
-		t.Error("expected 'Aqueducts closed' when no channels configured")
+	if !strings.Contains(out, "No aqueducts configured") {
+		t.Error("expected 'No aqueducts configured' when no channels configured")
 	}
 }
 
-func TestRenderDashboardHTML_ContainsEasterEggHoverText(t *testing.T) {
-	dropletID := "ct-ab123"
-	stage := "implement"
-	elapsed := 42
-	snapshot := inspectOutput{
-		Cataractae: []cataractaInfo{
-			{Name: "upstream", DropletID: &dropletID, Stage: &stage, ElapsedSeconds: &elapsed},
-		},
-		Queue: cisternInfo{Flowing: 1, Queued: 0, Closed: 0},
-	}
 
-	out := renderDashboardHTML(snapshot)
-
-	if !strings.Contains(out, "id=\"easter-egg\"") {
-		t.Error("html dashboard should include subtle easter egg icon")
-	}
-	if !strings.Contains(out, "Four letters guard the gate you seek") {
-		t.Error("html dashboard should include easter egg hover text")
-	}
-	if !strings.Contains(out, "CT Dashboard") {
-		t.Error("html dashboard should include title")
-	}
-}
-
-func TestDashboardListenAddr_UsesProvidedPort(t *testing.T) {
-	got := dashboardListenAddr(defaultDashboardHTMLPort)
-	if got != ":5737" {
-		t.Errorf("dashboardListenAddr(defaultDashboardHTMLPort) = %q, want %q", got, ":5737")
-	}
-}
-
-func TestRenderDashboardHTML_ShowsEscalatedDropFromInspectSnapshot(t *testing.T) {
-	snapshot := inspectOutput{
-		Droplets: []dropletInfo{{ID: "ct-poisn1", Status: "escalated", Stage: "qa", UpdatedAt: time.Now()}},
-	}
-
-	out := renderDashboardHTML(snapshot)
-	if !strings.Contains(out, "ct-poisn1") {
-		t.Error("html dashboard should render droplet id from inspect snapshot")
-	}
-	if !strings.Contains(out, displayStatus("escalated")) {
-		t.Error("html dashboard should render escalated display status from inspect snapshot")
-	}
-}
 
 // --- TestProgressBar ---
 

@@ -262,8 +262,8 @@ func TestEscalate(t *testing.T) {
 	}
 
 	got, _ := c.Get(item.ID)
-	if got.Status != "escalated" {
-		t.Errorf("status = %q, want %q", got.Status, "escalated")
+	if got.Status != "stagnant" {
+		t.Errorf("status = %q, want %q", got.Status, "stagnant")
 	}
 }
 
@@ -276,8 +276,8 @@ func TestCloseItem(t *testing.T) {
 	}
 
 	got, _ := c.Get(item.ID)
-	if got.Status != "closed" {
-		t.Errorf("status = %q, want %q", got.Status, "closed")
+	if got.Status != "delivered" {
+		t.Errorf("status = %q, want %q", got.Status, "delivered")
 	}
 }
 
@@ -320,7 +320,7 @@ func TestList_ByStatus(t *testing.T) {
 	_ = item1
 	c.CloseItem(item2.ID)
 
-	items, err := c.List("", "closed")
+	items, err := c.List("", "delivered")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -413,4 +413,341 @@ func TestList_ReturnsComplexity(t *testing.T) {
 	if items[1].Complexity != 4 {
 		t.Errorf("items[1].Complexity = %d, want 4", items[1].Complexity)
 	}
+}
+
+func TestStats_EmptyDB(t *testing.T) {
+	c := testClient(t)
+	s, err := c.Stats()
+	if err != nil {
+		t.Fatalf("Stats on empty DB: %v", err)
+	}
+	if s.Flowing != 0 || s.Queued != 0 || s.Delivered != 0 || s.Stagnant != 0 {
+		t.Errorf("expected all zeros on empty DB, got %+v", s)
+	}
+}
+
+func TestAdd_WithDeps(t *testing.T) {
+	c := testClient(t)
+	parent, _ := c.Add("myrepo", "Parent", "", 1, 3)
+	child, err := c.Add("myrepo", "Child", "", 1, 3, parent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deps, err := c.GetDependencies(child.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deps) != 1 || deps[0] != parent.ID {
+		t.Errorf("GetDependencies = %v, want [%s]", deps, parent.ID)
+	}
+}
+
+func TestAdd_UnknownDep(t *testing.T) {
+	c := testClient(t)
+	_, err := c.Add("myrepo", "Child", "", 1, 3, "nonexistent")
+	if err == nil {
+		t.Error("expected error for unknown dep ID")
+	}
+}
+
+func TestAddDependency_And_RemoveDependency(t *testing.T) {
+	c := testClient(t)
+	a, _ := c.Add("myrepo", "A", "", 1, 3)
+	b, _ := c.Add("myrepo", "B", "", 1, 3)
+
+	if err := c.AddDependency(b.ID, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	deps, _ := c.GetDependencies(b.ID)
+	if len(deps) != 1 || deps[0] != a.ID {
+		t.Errorf("after add: GetDependencies = %v, want [%s]", deps, a.ID)
+	}
+
+	if err := c.RemoveDependency(b.ID, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	deps, _ = c.GetDependencies(b.ID)
+	if len(deps) != 0 {
+		t.Errorf("after remove: GetDependencies = %v, want []", deps)
+	}
+}
+
+func TestAddDependency_UnknownDroplet(t *testing.T) {
+	c := testClient(t)
+	a, _ := c.Add("myrepo", "A", "", 1, 3)
+	if err := c.AddDependency("nonexistent", a.ID); err == nil {
+		t.Error("expected error for unknown droplet")
+	}
+	if err := c.AddDependency(a.ID, "nonexistent"); err == nil {
+		t.Error("expected error for unknown depends_on")
+	}
+}
+
+func TestGetBlockedBy(t *testing.T) {
+	c := testClient(t)
+	parent, _ := c.Add("myrepo", "Parent", "", 1, 3)
+	child, _ := c.Add("myrepo", "Child", "", 1, 3, parent.ID)
+
+	// Parent not delivered — child is blocked.
+	blocked, err := c.GetBlockedBy(child.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blocked) != 1 || blocked[0] != parent.ID {
+		t.Errorf("GetBlockedBy = %v, want [%s]", blocked, parent.ID)
+	}
+
+	// Deliver parent — child should no longer be blocked.
+	c.CloseItem(parent.ID)
+	blocked, err = c.GetBlockedBy(child.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blocked) != 0 {
+		t.Errorf("GetBlockedBy after deliver = %v, want []", blocked)
+	}
+}
+
+func TestGetReady_SkipsBlocked(t *testing.T) {
+	c := testClient(t)
+	parent, _ := c.Add("myrepo", "Parent", "", 1, 3)
+	_, _ = c.Add("myrepo", "Child", "", 1, 3, parent.ID)
+
+	// GetReady should return parent (child is blocked).
+	got, err := c.GetReady("myrepo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil {
+		t.Fatal("expected parent, got nil")
+	}
+	if got.ID != parent.ID {
+		t.Errorf("got %s, want parent %s", got.ID, parent.ID)
+	}
+
+	// Deliver parent.
+	c.CloseItem(parent.ID)
+	// Reopen child to 'open' (it was still open, just couldn't be dispatched).
+	// Child should now be ready.
+	got, err = c.GetReady("myrepo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil {
+		t.Fatal("expected child to be ready after parent delivered, got nil")
+	}
+}
+
+func TestGetReady_SkipsBlocked_NothingAvailable(t *testing.T) {
+	c := testClient(t)
+	parent, _ := c.Add("myrepo", "Parent", "", 1, 3)
+	_, _ = c.Add("myrepo", "Child", "", 1, 3, parent.ID)
+
+	// Claim parent.
+	c.GetReady("myrepo") // claims parent (in_progress)
+	// Now only child is open but blocked — GetReady should return nil.
+	got, err := c.GetReady("myrepo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != nil {
+		t.Errorf("expected nil (child blocked), got %s", got.ID)
+	}
+}
+
+func TestSetAndGetLastReviewedCommit(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+
+	// Initially empty.
+	commit, err := c.GetLastReviewedCommit(item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if commit != "" {
+		t.Errorf("expected empty last_reviewed_commit, got %q", commit)
+	}
+
+	// Set a commit hash.
+	hash := "abc1234def5678"
+	if err := c.SetLastReviewedCommit(item.ID, hash); err != nil {
+		t.Fatalf("SetLastReviewedCommit: %v", err)
+	}
+
+	// Read it back.
+	got, err := c.GetLastReviewedCommit(item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != hash {
+		t.Errorf("GetLastReviewedCommit = %q, want %q", got, hash)
+	}
+}
+
+func TestSetLastReviewedCommit_Overwrite(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+
+	if err := c.SetLastReviewedCommit(item.ID, "hash-old"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SetLastReviewedCommit(item.ID, "hash-new"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := c.GetLastReviewedCommit(item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "hash-new" {
+		t.Errorf("expected overwritten hash 'hash-new', got %q", got)
+	}
+}
+
+func TestGetLastReviewedCommit_PersistedInGet(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+
+	hash := "deadbeef00"
+	if err := c.SetLastReviewedCommit(item.ID, hash); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := c.Get(item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.LastReviewedCommit != hash {
+		t.Errorf("Droplet.LastReviewedCommit = %q, want %q", got.LastReviewedCommit, hash)
+	}
+}
+
+func TestStats_WithData(t *testing.T) {
+	c := testClient(t)
+
+	// Add 2 open (queued), 1 in_progress (flowing), 3 delivered, 1 stagnant.
+	c.Add("repo", "q1", "", 1, 3)
+	c.Add("repo", "q2", "", 1, 3)
+	item3, _ := c.Add("repo", "ip1", "", 1, 3)
+	item4, _ := c.Add("repo", "d1", "", 1, 3)
+	item5, _ := c.Add("repo", "d2", "", 1, 3)
+	item6, _ := c.Add("repo", "d3", "", 1, 3)
+	item7, _ := c.Add("repo", "s1", "", 1, 3)
+
+	c.UpdateStatus(item3.ID, "in_progress")
+	c.CloseItem(item4.ID)
+	c.CloseItem(item5.ID)
+	c.CloseItem(item6.ID)
+	c.Escalate(item7.ID, "stuck")
+
+	s, err := c.Stats()
+	if err != nil {
+		t.Fatalf("Stats: %v", err)
+	}
+	if s.Queued != 2 {
+		t.Errorf("Queued = %d, want 2", s.Queued)
+	}
+	if s.Flowing != 1 {
+		t.Errorf("Flowing = %d, want 1", s.Flowing)
+	}
+	if s.Delivered != 3 {
+		t.Errorf("Delivered = %d, want 3", s.Delivered)
+	}
+	if s.Stagnant != 1 {
+		t.Errorf("Stagnant = %d, want 1", s.Stagnant)
+	}
+}
+
+func TestSearch(t *testing.T) {
+	c := testClient(t)
+	c.Add("repo", "Fix login bug", "", 1, 3)
+	c.Add("repo", "Add dashboard feature", "", 2, 3)
+	c.Add("repo", "Fix signup flow", "", 1, 2)
+	ip, _ := c.Add("repo", "Refactor auth module", "", 3, 3)
+	c.UpdateStatus(ip.ID, "in_progress")
+
+	t.Run("empty query returns all", func(t *testing.T) {
+		results, err := c.Search("", "", 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(results) != 4 {
+			t.Fatalf("expected 4 results, got %d", len(results))
+		}
+	})
+
+	t.Run("query matches title substring case-insensitive", func(t *testing.T) {
+		results, err := c.Search("fix", "", 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(results) != 2 {
+			t.Fatalf("expected 2 results, got %d", len(results))
+		}
+		titles := map[string]bool{}
+		for _, r := range results {
+			titles[r.Title] = true
+		}
+		if !titles["Fix login bug"] {
+			t.Error("expected 'Fix login bug' in results")
+		}
+		if !titles["Fix signup flow"] {
+			t.Error("expected 'Fix signup flow' in results")
+		}
+	})
+
+	t.Run("status filter", func(t *testing.T) {
+		results, err := c.Search("", "in_progress", 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(results) != 1 {
+			t.Fatalf("expected 1 result, got %d", len(results))
+		}
+		if results[0].Title != "Refactor auth module" {
+			t.Errorf("expected 'Refactor auth module', got %q", results[0].Title)
+		}
+	})
+
+	t.Run("priority filter", func(t *testing.T) {
+		results, err := c.Search("", "", 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(results) != 2 {
+			t.Fatalf("expected 2 results, got %d", len(results))
+		}
+	})
+
+	t.Run("combined query and status", func(t *testing.T) {
+		results, err := c.Search("fix", "open", 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(results) != 2 {
+			t.Fatalf("expected 2 results, got %d", len(results))
+		}
+	})
+
+	t.Run("no matches returns empty slice", func(t *testing.T) {
+		results, err := c.Search("xyz-no-match", "", 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(results) != 0 {
+			t.Fatalf("expected 0 results, got %d", len(results))
+		}
+	})
+
+	t.Run("results ordered by priority then created_at", func(t *testing.T) {
+		results, err := c.Search("", "", 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Priority 1 items should come before priority 2 and 3.
+		if results[0].Priority > results[len(results)-1].Priority {
+			t.Errorf("results not ordered by priority: first=%d last=%d",
+				results[0].Priority, results[len(results)-1].Priority)
+		}
+	})
 }

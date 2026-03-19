@@ -17,14 +17,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MichielDean/cistern/internal/cistern"
 	"github.com/MichielDean/cistern/internal/aqueduct"
+	"github.com/MichielDean/cistern/internal/cistern"
 )
 
 // CisternClient is the interface for interacting with the work cistern.
 // *cistern.Client satisfies this interface.
 type CisternClient interface {
 	GetReady(repo string) (*cistern.Droplet, error)
+	GetReadyForAqueduct(repo, aqueductName string) (*cistern.Droplet, error)
+	SetAssignedAqueduct(id, aqueductName string) error
 	Assign(id, worker, step string) error
 
 	AddNote(id, step, content string) error
@@ -33,6 +35,10 @@ type CisternClient interface {
 	CloseItem(id string) error
 	List(repo, status string) ([]*cistern.Droplet, error)
 	Purge(olderThan time.Duration, dryRun bool) (int, error)
+	SetCataracta(id, cataracta string) error
+	// GetLastReviewedCommit returns the HEAD commit hash recorded when the last
+	// review diff was generated. Used to detect phantom commits.
+	GetLastReviewedCommit(dropletID string) (string, error)
 }
 
 // CataractaRunner executes a single workflow step.
@@ -49,7 +55,7 @@ type CataractaRequest struct {
 	Step       aqueduct.WorkflowCataracta
 	Workflow   *aqueduct.Workflow
 	RepoConfig aqueduct.RepoConfig
-	WorkerName string
+	AqueductName string
 	Notes      []cistern.CataractaNote // context from previous steps
 }
 
@@ -59,7 +65,7 @@ type Castellarius struct {
 	config            aqueduct.AqueductConfig
 	workflows         map[string]*aqueduct.Workflow
 	clients           map[string]CisternClient
-	pools             map[string]*WorkerPool
+	pools             map[string]*AqueductPool
 	runner            CataractaRunner
 	logger            *slog.Logger
 	pollInterval      time.Duration
@@ -99,7 +105,7 @@ func New(config aqueduct.AqueductConfig, dbPath string, runner CataractaRunner, 
 		config:            config,
 		workflows:         make(map[string]*aqueduct.Workflow),
 		clients:           make(map[string]CisternClient),
-		pools:             make(map[string]*WorkerPool),
+		pools:             make(map[string]*AqueductPool),
 		runner:            runner,
 		logger:            slog.Default(),
 		pollInterval:      10 * time.Second,
@@ -151,9 +157,9 @@ func New(config aqueduct.AqueductConfig, dbPath string, runner CataractaRunner, 
 
 		names := repo.Names
 		if len(names) == 0 {
-			names = defaultWorkerNames(repo.Cataractae)
+			names = defaultAqueductNames(repo.Cataractae)
 		}
-		s.pools[repo.Name] = NewWorkerPool(repo.Name, names)
+		s.pools[repo.Name] = NewAqueductPool(repo.Name, names)
 	}
 
 	return s, nil
@@ -171,7 +177,7 @@ func NewFromParts(
 		config:            config,
 		workflows:         workflows,
 		clients:           clients,
-		pools:             make(map[string]*WorkerPool),
+		pools:             make(map[string]*AqueductPool),
 		runner:            runner,
 		logger:            slog.Default(),
 		pollInterval:      10 * time.Second,
@@ -184,21 +190,42 @@ func NewFromParts(
 	for _, repo := range config.Repos {
 		names := repo.Names
 		if len(names) == 0 {
-			names = defaultWorkerNames(repo.Cataractae)
+			names = defaultAqueductNames(repo.Cataractae)
 		}
-		s.pools[repo.Name] = NewWorkerPool(repo.Name, names)
+		s.pools[repo.Name] = NewAqueductPool(repo.Name, names)
 	}
 
 	return s
 }
 
-func defaultWorkerNames(n int) []string {
+// romanAqueducts is the namepool for auto-assigned operators — real Roman aqueducts,
+// historically significant and thematically fitting for a water-metaphor pipeline.
+var romanAqueducts = []string{
+	"virgo",       // still flows today, feeds the Trevi Fountain
+	"marcia",      // considered Rome's finest water quality
+	"claudia",     // 69km, one of the most impressive engineering feats
+	"traiana",     // built by Trajan, served Trastevere
+	"julia",       // built by Agrippa under Augustus
+	"appia",       // oldest of Rome's aqueducts, 312 BC
+	"anio",        // two branches: Anio Vetus and Anio Novus
+	"tepula",      // warm spring water, 126 BC
+	"gier",        // 85km aqueduct serving Lyon, France
+	"eifel",       // 130km, one of the longest Roman aqueducts, Germany
+	"alexandrina", // last of Rome's great aqueducts, 3rd century AD
+	"barbegal",    // Arles — powered an ancient grain mill complex
+}
+
+func defaultAqueductNames(n int) []string {
 	if n <= 0 {
 		n = 1
 	}
 	names := make([]string, n)
 	for i := range names {
-		names[i] = fmt.Sprintf("worker-%d", i)
+		if i < len(romanAqueducts) {
+			names[i] = romanAqueducts[i]
+		} else {
+			names[i] = fmt.Sprintf("operator-%d", i)
+		}
 	}
 	return names
 }
@@ -209,6 +236,11 @@ func (s *Castellarius) Run(ctx context.Context) error {
 		"repos", len(s.config.Repos),
 		"cataractae", s.config.MaxCataractae,
 	)
+
+	// Integrity check: regenerate any missing or corrupt CLAUDE.md files before
+	// accepting work. A corrupted CLAUDE.md (e.g. "test\n\nold instructions") means
+	// the agent runs with no role instructions — silent and catastrophic.
+	s.ensureCataractaeIntegrity()
 
 	s.recoverInProgress()
 
@@ -350,9 +382,10 @@ func (s *Castellarius) observeRepo(_ context.Context, repo aqueduct.RepoConfig) 
 
 		step := currentCataracta(item, wf)
 
-		// Release the worker before routing so it can accept new work in dispatchRepo.
+		// Release the aqueduct so it can pick up its next droplet.
+		// With dedicated clones (no worktrees), no HEAD parking is needed.
 		if item.Assignee != "" {
-			if w := pool.FindWorkerByName(item.Assignee); w != nil {
+			if w := pool.FindByName(item.Assignee); w != nil {
 				pool.Release(w)
 			}
 		}
@@ -381,6 +414,28 @@ func (s *Castellarius) observeRepo(_ context.Context, repo aqueduct.RepoConfig) 
 			s.logger.Info("Droplet stagnant at cataracta", "droplet", item.ID, "cataracta", step.Name, "outcome", item.Outcome)
 		}
 
+		// Phantom commit prevention: when implement passes, verify that HEAD has
+		// advanced since the last review. If not, the implementer signed pass without
+		// committing — auto-recirculate with a diagnostic message.
+		if result == ResultPass && step.Name == "implement" {
+			if lastCommit, err := client.GetLastReviewedCommit(item.ID); err == nil && lastCommit != "" {
+				sandboxDir := filepath.Join(s.sandboxRoot, repo.Name, item.Assignee)
+				if head, err := sandboxHead(sandboxDir); err == nil && head == lastCommit {
+					note := fmt.Sprintf(
+						"Implement pass rejected: HEAD has not advanced since last review (commit: %s). No new commits were found. You must commit your changes before signaling pass.",
+						lastCommit,
+					)
+					s.logger.Warn("Phantom commit detected — recirculating to implement",
+						"droplet", item.ID, "commit", lastCommit)
+					_ = client.AddNote(item.ID, "scheduler", note)
+					if err := client.Assign(item.ID, "", "implement"); err != nil {
+						s.logger.Error("observe: phantom commit recirculate failed", "droplet", item.ID, "error", err)
+					}
+					continue
+				}
+			}
+		}
+
 		var next string
 		if recirculateTo != "" {
 			// Agent specified an explicit target step (e.g. recirculate:implement).
@@ -402,8 +457,8 @@ func (s *Castellarius) observeRepo(_ context.Context, repo aqueduct.RepoConfig) 
 		skipSteps := wf.SkipCataractaeForLevel(item.Complexity)
 		next = advanceSkippedCataractae(next, wf, skipSteps)
 
-		// For critical droplets, insert a human gate before merge.
-		if wf.Complexity.RequireHumanForLevel(item.Complexity) && next == "merge" {
+		// For critical droplets, insert a human gate before delivery.
+		if wf.Complexity.RequireHumanForLevel(item.Complexity) && next == "delivery" {
 			next = "human"
 		}
 
@@ -429,7 +484,7 @@ func (s *Castellarius) dispatchRepo(ctx context.Context, repo aqueduct.RepoConfi
 	wf := s.workflows[repo.Name]
 
 	for {
-		worker := pool.AvailableWorker()
+		worker := pool.AvailableAqueduct()
 		if worker == nil {
 			return
 		}
@@ -438,18 +493,29 @@ func (s *Castellarius) dispatchRepo(ctx context.Context, repo aqueduct.RepoConfi
 			return
 		}
 
-		item, err := client.GetReady(repo.Name)
+		// Sticky dispatch: only pick up droplets that are either unassigned or
+		// already assigned to this aqueduct. This ensures a droplet never moves
+		// between aqueducts once it enters one.
+		item, err := client.GetReadyForAqueduct(repo.Name, worker.Name)
 		if err != nil {
 			s.logger.Error("poll failed", "repo", repo.Name, "error", err)
+			pool.Release(worker)
 			return
 		}
 		if item == nil {
+			pool.Release(worker)
 			return
+		}
+
+		// Pin the aqueduct on first dispatch (no-op if already set).
+		if err := client.SetAssignedAqueduct(item.ID, worker.Name); err != nil {
+			s.logger.Error("set assigned_aqueduct failed", "droplet", item.ID, "error", err)
 		}
 
 		step := currentCataracta(item, wf)
 		if step == nil {
 			s.logger.Error("no step found", "repo", repo.Name, "droplet", item.ID)
+			pool.Release(worker)
 			return
 		}
 
@@ -478,7 +544,7 @@ func (s *Castellarius) dispatchRepo(ctx context.Context, repo aqueduct.RepoConfi
 			Step:       *step,
 			Workflow:   wf,
 			RepoConfig: repo,
-			WorkerName: worker.Name,
+			AqueductName: worker.Name,
 			Notes:      notes,
 		}
 
@@ -491,7 +557,7 @@ func (s *Castellarius) dispatchRepo(ctx context.Context, repo aqueduct.RepoConfi
 					"cataracta", req.Step.Name,
 					"error", err,
 				)
-				// Reset to open so the item can be re-dispatched.
+				// Reset to open so the item can be re-dispatched to same aqueduct.
 				if err2 := client.Assign(req.Item.ID, "", req.Step.Name); err2 != nil {
 					s.logger.Error("reset after spawn failure",
 						"droplet", req.Item.ID, "error", err2)
@@ -507,7 +573,7 @@ func (s *Castellarius) dispatchRepo(ctx context.Context, repo aqueduct.RepoConfi
 func (s *Castellarius) totalBusy() int {
 	total := 0
 	for _, pool := range s.pools {
-		total += pool.BusyCount()
+		total += pool.FlowingCount()
 	}
 	return total
 }
@@ -615,6 +681,11 @@ func (s *Castellarius) handleTerminal(client CisternClient, itemID, terminal, fr
 		if err := client.Escalate(itemID, reason); err != nil {
 			s.logger.Error("escalate at terminal failed", "droplet", itemID, "error", err)
 		}
+		if strings.ToLower(terminal) == "human" {
+			if err := client.SetCataracta(itemID, "human"); err != nil {
+				s.logger.Error("set cataracta human failed", "droplet", itemID, "error", err)
+			}
+		}
 	}
 }
 
@@ -691,12 +762,10 @@ func (s *Castellarius) heartbeatRepo(_ context.Context, repo aqueduct.RepoConfig
 			continue
 		}
 
-		// Items whose worker is currently busy in memory — still running normally.
-		if item.Assignee != "" && pool.IsWorkerBusy(item.Assignee) {
-			continue
-		}
-
-		// Check if the tmux session is still alive.
+		// Check if the tmux session is still alive — this is the authoritative
+		// liveness signal. Do NOT rely on pool.IsWorkerBusy: the in-memory busy
+		// state is never cleared when a tmux server crash kills the session, so
+		// an item can stay "busy" in memory indefinitely while the agent is dead.
 		if item.Assignee != "" {
 			sessionID := repo.Name + "-" + item.Assignee
 			if isTmuxAlive(sessionID) {
@@ -710,7 +779,7 @@ func (s *Castellarius) heartbeatRepo(_ context.Context, repo aqueduct.RepoConfig
 			"repo", repo.Name, "droplet", item.ID, "cataracta", item.CurrentCataracta)
 
 		if item.Assignee != "" {
-			if w := pool.FindWorkerByName(item.Assignee); w != nil {
+			if w := pool.FindByName(item.Assignee); w != nil {
 				pool.Release(w)
 			}
 		}
@@ -724,6 +793,17 @@ func (s *Castellarius) heartbeatRepo(_ context.Context, repo aqueduct.RepoConfig
 // isTmuxAlive returns true if a tmux session with the given name is running.
 func isTmuxAlive(sessionID string) bool {
 	return exec.Command("tmux", "has-session", "-t", sessionID).Run() == nil
+}
+
+// sandboxHead returns the current HEAD commit hash in the given directory.
+func sandboxHead(dir string) (string, error) {
+	cmd := exec.Command("git", "rev-parse", "HEAD")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("git rev-parse HEAD in %s: %w", dir, err)
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 // WriteContext writes a CONTEXT.md file with notes from previous steps.
@@ -744,4 +824,46 @@ func WriteContext(dir string, notes []cistern.CataractaNote) error {
 	}
 
 	return os.WriteFile(filepath.Join(dir, "CONTEXT.md"), b, 0o644)
+}
+
+// parkWorktree detaches HEAD in a worker's sandbox so the feature branch is
+// ensureCataractaeIntegrity checks each agent cataracta's CLAUDE.md for the
+// sentinel string that proves it was generated from the YAML (not corrupted).
+// If any file is missing or lacks the sentinel, it is regenerated automatically.
+// This runs at Castellarius startup so corrupted prompts never silently persist.
+func (s *Castellarius) ensureCataractaeIntegrity() {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	cataractaeDir := filepath.Join(home, ".cistern", "cataractae")
+	sentinel := "ct droplet pass" // present in every correctly-generated CLAUDE.md
+
+	needsRegen := false
+	// Collect all unique identities across all repo workflows.
+	seen := map[string]bool{}
+	for _, wf := range s.workflows {
+		for _, step := range wf.Cataractae {
+			if step.Identity == "" || seen[step.Identity] {
+				continue
+			}
+			seen[step.Identity] = true
+			claudePath := filepath.Join(cataractaeDir, step.Identity, "CLAUDE.md")
+			content, err := os.ReadFile(claudePath)
+			if err != nil || !strings.Contains(string(content), sentinel) {
+				s.logger.Warn("CLAUDE.md missing or corrupt — will regenerate",
+					"identity", step.Identity, "path", claudePath)
+				needsRegen = true
+			}
+		}
+	}
+
+	if needsRegen {
+		s.logger.Info("Regenerating cataractae CLAUDE.md files")
+		if err := hookCataractaeGenerate(&s.config, s.logger); err != nil {
+			s.logger.Error("Failed to regenerate CLAUDE.md files", "error", err)
+		} else {
+			s.logger.Info("Cataractae CLAUDE.md files regenerated successfully")
+		}
+	}
 }

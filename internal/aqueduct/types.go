@@ -19,6 +19,20 @@ const (
 	ContextSpecOnly     ContextLevel = "spec_only"
 )
 
+// SkillRef references a locally installed skill by name.
+//
+// In-repo skills (e.g. a SKILL.md that lives in the same repo the agents work
+// on) may set Path to a repo-relative path — the runner copies it directly from
+// the agent's sandbox worktree without any network access.
+//
+// External skills must be installed ahead of time via `ct skills install <name>
+// <url>` and are referenced by name only. The runtime never fetches skills
+// automatically; it only reads from ~/.cistern/skills/<name>/SKILL.md.
+type SkillRef struct {
+	Name string `yaml:"name"`
+	Path string `yaml:"path,omitempty"` // repo-relative path (in-repo skills only)
+}
+
 // WorkflowCataracta defines a single step in an aqueduct.
 type WorkflowCataracta struct {
 	Name    string       `yaml:"name"`
@@ -27,12 +41,13 @@ type WorkflowCataracta struct {
 	Model   string       `yaml:"model,omitempty"`
 	Context ContextLevel `yaml:"context,omitempty"`
 
-	TimeoutMinutes int    `yaml:"timeout_minutes,omitempty"`
-	SkipFor        []int  `yaml:"skip_for,omitempty"` // complexity levels that skip this step
-	OnPass         string `yaml:"on_pass,omitempty"`
-	OnFail         string `yaml:"on_fail,omitempty"`
-	OnRecirculate  string `yaml:"on_recirculate,omitempty"`
-	OnEscalate     string `yaml:"on_escalate,omitempty"`
+	TimeoutMinutes int        `yaml:"timeout_minutes,omitempty"`
+	SkipFor        []int      `yaml:"skip_for,omitempty"` // complexity levels that skip this step
+	Skills         []SkillRef `yaml:"skills,omitempty"`
+	OnPass         string     `yaml:"on_pass,omitempty"`
+	OnFail         string     `yaml:"on_fail,omitempty"`
+	OnRecirculate  string     `yaml:"on_recirculate,omitempty"`
+	OnEscalate     string     `yaml:"on_escalate,omitempty"`
 }
 
 // CataractaDefinition defines an agent role in YAML.
@@ -122,16 +137,36 @@ type DroughtHook struct {
 	Timeout int    `yaml:"timeout_seconds,omitempty"` // default 30s
 }
 
+// RateLimitConfig configures rate limiting for the delivery cataracta API endpoint.
+// All limits apply within a sliding window. Zero values use the defaults noted below.
+type RateLimitConfig struct {
+	// PerIPRequests is the maximum number of requests allowed per source IP
+	// within Window. Default: 60.
+	PerIPRequests int `yaml:"per_ip_requests"`
+	// PerTokenRequests is the maximum number of requests allowed per auth token
+	// within Window. Default: 120.
+	PerTokenRequests int `yaml:"per_token_requests"`
+	// Window is the sliding window duration as a Go duration string (e.g. "1m",
+	// "30s"). Default: "1m".
+	Window string `yaml:"window"`
+}
+
 // AqueductConfig is the top-level configuration for a Cistern instance.
 type AqueductConfig struct {
-	Repos                 []RepoConfig  `yaml:"repos"`
-	MaxCataractae         int           `yaml:"max_cataractae"`
-	HandoffTokenThreshold int           `yaml:"handoff_token_threshold"`
-	RetentionDays         int           `yaml:"retention_days"`
-	CleanupInterval       string        `yaml:"cleanup_interval"`
+	Repos                 []RepoConfig     `yaml:"repos"`
+	MaxCataractae         int              `yaml:"max_cataractae"`
+	HandoffTokenThreshold int              `yaml:"handoff_token_threshold"`
+	RetentionDays         int              `yaml:"retention_days"`
+	CleanupInterval       string           `yaml:"cleanup_interval"`
 	// HeartbeatInterval controls how often the Castellarius scans in-progress
 	// droplets for orphaned or stalled sessions. Accepts Go duration strings
 	// (e.g. "30s", "1m"). Defaults to "30s" when empty.
-	HeartbeatInterval     string        `yaml:"heartbeat_interval,omitempty"`
-	DroughtHooks          []DroughtHook `yaml:"drought_hooks,omitempty"`
+	HeartbeatInterval     string           `yaml:"heartbeat_interval,omitempty"`
+	DroughtHooks          []DroughtHook    `yaml:"drought_hooks,omitempty"`
+	// RateLimit configures rate limiting for the delivery cataracta API endpoint.
+	// Omit to use the built-in defaults (60 req/min per IP, 120 req/min per token).
+	RateLimit             *RateLimitConfig `yaml:"rate_limit,omitempty"`
+	// DeliveryAddr is the TCP listen address for the delivery cataracta HTTP
+	// server (e.g. ":8080"). An empty string disables the HTTP server.
+	DeliveryAddr          string           `yaml:"delivery_addr,omitempty"`
 }

@@ -27,6 +27,14 @@ repos:
 max_cataractae: 4
 handoff_token_threshold: 100000
 
+# rate_limit configures the delivery cataracta API endpoint.
+# Limits are applied per source IP and per auth token within a sliding window.
+# Omit this section to use built-in defaults (60 req/min per IP, 120 req/min per token).
+# rate_limit:
+#   per_ip_requests: 60       # max requests per window per source IP
+#   per_token_requests: 120   # max requests per window per auth token
+#   window: 1m                # sliding window duration (Go duration string)
+
 # heartbeat_interval controls how often the Castellarius scans for orphaned or
 # stalled in-progress sessions and resets / re-adopts them. Accepts Go duration
 # strings. Shorter values make recovery faster; longer values reduce overhead.

@@ -36,8 +36,8 @@ type cisternInfo struct {
 	Total    int `json:"total"`
 	Flowing  int `json:"flowing"`
 	Queued   int `json:"queued"`
-	Stagnant int `json:"stagnant"`
-	Closed   int `json:"closed"`
+	Stagnant  int `json:"stagnant"`
+	Delivered int `json:"delivered"`
 }
 
 type dropletInfo struct {
@@ -49,6 +49,7 @@ type dropletInfo struct {
 	Stage          string    `json:"stage"`
 	Operator       string    `json:"operator"`
 	UpdatedAt      time.Time `json:"updated_at"`
+	BlockedBy      []string  `json:"blocked_by,omitempty"`
 }
 
 type recentEvent struct {
@@ -60,7 +61,7 @@ type recentEvent struct {
 type inspectOutput struct {
 	Cistern      cisternStateInfo `json:"cistern"`
 	Cataractae      []cataractaInfo     `json:"cataractae"`
-	Queue        cisternInfo      `json:"queue"`
+	Counts       cisternInfo      `json:"counts"`
 	Droplets     []dropletInfo    `json:"droplets"`
 	RecentEvents []recentEvent    `json:"recent_events"`
 }
@@ -135,11 +136,11 @@ func buildInspectOutput(cfgPath, dbPath string) (inspectOutput, error) {
 		case "open":
 			queueState.Queued++
 			queueState.Total++
-		case "escalated":
+		case "stagnant":
 			queueState.Stagnant++
 			queueState.Total++
-		case "closed":
-			queueState.Closed++
+		case "delivered":
+			queueState.Delivered++
 		}
 		if item.Assignee != "" {
 			assigneeMap[item.Assignee] = assignInfo{
@@ -150,7 +151,7 @@ func buildInspectOutput(cfgPath, dbPath string) (inspectOutput, error) {
 			}
 		}
 	}
-	out.Queue = queueState
+	out.Counts = queueState
 
 	// Build cataractae from config operators.
 	for _, repo := range cfg.Repos {
@@ -177,12 +178,12 @@ func buildInspectOutput(cfgPath, dbPath string) (inspectOutput, error) {
 		out.Cataractae = []cataractaInfo{}
 	}
 
-	// Build droplets (exclude closed).
+	// Build droplets (exclude delivered).
 	for _, item := range allItems {
-		if item.Status == "closed" {
+		if item.Status == "delivered" {
 			continue
 		}
-		out.Droplets = append(out.Droplets, dropletInfo{
+		di := dropletInfo{
 			ID:             item.ID,
 			Title:          item.Title,
 			Complexity:     item.Complexity,
@@ -191,7 +192,13 @@ func buildInspectOutput(cfgPath, dbPath string) (inspectOutput, error) {
 			Stage:          item.CurrentCataracta,
 			Operator:       item.Assignee,
 			UpdatedAt:      item.UpdatedAt,
-		})
+		}
+		if item.Status == "open" {
+			if blockedBy, err := c.GetBlockedBy(item.ID); err == nil && len(blockedBy) > 0 {
+				di.BlockedBy = blockedBy
+			}
+		}
+		out.Droplets = append(out.Droplets, di)
 	}
 	if out.Droplets == nil {
 		out.Droplets = []dropletInfo{}
@@ -219,24 +226,46 @@ func tmuxSessionAlive(name string) bool {
 func printInspectTable(out inspectOutput) error {
 	tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 	defer tw.Flush()
+
+	// Summary line.
+	summary := fmt.Sprintf("%s flowing · %s queued · %s delivered",
+		col(colorGreen, fmt.Sprintf("%d", out.Counts.Flowing)),
+		col(colorYellow, fmt.Sprintf("%d", out.Counts.Queued)),
+		col(colorDim, fmt.Sprintf("%d", out.Counts.Delivered)))
+	fmt.Fprintf(tw, "%s\n\n", summary)
+
 	fmt.Fprintf(tw, "Config:\t%s\n", out.Cistern.Config)
 	fmt.Fprintf(tw, "Running:\t%v\n", out.Cistern.Running)
-	fmt.Fprintf(tw, "\nQueue:\ttotal=%d  flowing=%d  queued=%d  stagnant=%d  closed=%d\n",
-		out.Queue.Total, out.Queue.Flowing, out.Queue.Queued, out.Queue.Stagnant, out.Queue.Closed)
+
 	if len(out.Cataractae) > 0 {
-		fmt.Fprintf(tw, "\\nCataractae:\n")
+		fmt.Fprintf(tw, "\nCataractae:\n")
 		for _, ch := range out.Cataractae {
-			session := "-"
-			if ch.Session != nil {
-				session = *ch.Session
+			if ch.DropletID != nil && *ch.DropletID != "" {
+				// Active: green row with progress indicator.
+				stage := ""
+				if ch.Stage != nil {
+					stage = *ch.Stage
+				}
+				elapsed := ""
+				if ch.ElapsedSeconds != nil {
+					elapsed = formatElapsed(time.Duration(*ch.ElapsedSeconds) * time.Second)
+				}
+				line := fmt.Sprintf("  %s\t→ %s\t[%s]\t%s\n", ch.Name, *ch.DropletID, stage, elapsed)
+				fmt.Fprint(tw, col(colorGreen, line))
+			} else {
+				// Idle: dim row.
+				line := fmt.Sprintf("  %s\t→ idle\t\t\n", ch.Name)
+				fmt.Fprint(tw, col(colorDim, line))
 			}
-			fmt.Fprintf(tw, "  %s\t%s\talive=%v\n", ch.Name, session, ch.SessionAlive)
 		}
 	}
+
 	if len(out.Droplets) > 0 {
 		fmt.Fprintf(tw, "\nDroplets:\n")
 		for _, d := range out.Droplets {
-			fmt.Fprintf(tw, "  %s\t%s\t[%s]\t%s\n", d.ID, d.Title, d.Status, d.Operator)
+			ds := displayStatus(d.Status)
+			statusStr := statusCell(ds, 12)
+			fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\n", d.ID, d.Title, statusStr, d.Operator)
 		}
 	}
 	return nil

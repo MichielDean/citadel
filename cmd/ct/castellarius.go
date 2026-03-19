@@ -38,8 +38,8 @@ var castellariusStartCmd = &cobra.Command{
 	Long: `Wake the Castellarius.
 
 The Castellarius is a pure state machine — no AI. It watches the cistern for
-droplets, assigns them to named operators, routes them through the configured
-aqueduct (implement → review → qa → merge), and resolves outcomes.
+droplets, routes them into named aqueducts, and advances each droplet through
+its cataractae (implement → review → qa → merge) until delivered.
 
 The Castellarius runs until Ctrl-C. As long as work is in the cistern it will
 keep dispatching droplets into aqueducts automatically.`,
@@ -95,8 +95,8 @@ keep dispatching droplets into aqueducts automatically.`,
 		for _, repo := range cfg.Repos {
 			w := workflows[repo.Name]
 			names := repoWorkerNames(repo)
-			fmt.Printf("  %s: aqueduct=%q (%d cataractae), operators=%d (%s)\n",
-				repo.Name, w.Name, len(w.Cataractae), repo.Cataractae, strings.Join(names, ", "))
+			fmt.Printf("  %s: aqueduct=%q (%d cataractae), aqueducts=%d (%s)\n",
+				repo.Name, w.Name, len(w.Cataractae), len(names), strings.Join(names, ", "))
 		}
 		fmt.Println("Ctrl-C to dismiss the Castellarius.")
 
@@ -109,11 +109,11 @@ keep dispatching droplets into aqueducts automatically.`,
 	},
 }
 
-// ct castellarius status — operator/worker-centric view
+// ct castellarius status — aqueduct-centric view
 
 var castellariusStatusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "Show operator assignments — who is working on what, and idle capacity",
+	Short: "Show aqueduct flow — which aqueducts are flowing, which are idle, and what droplet each carries",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfgPath := resolveConfigPath()
 		cfg, err := aqueduct.ParseAqueductConfig(cfgPath)
@@ -163,25 +163,25 @@ var castellariusStatusCmd = &cobra.Command{
 		for _, repo := range cfg.Repos {
 			totalWorkers += len(repoWorkerNames(repo))
 		}
-		fmt.Printf("\n%d of %d operators busy\n", totalBusy, totalWorkers)
+		fmt.Printf("\n%d of %d aqueducts flowing\n", totalBusy, totalWorkers)
 		return nil
 	},
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ct aqueduct — inspect and validate aqueduct definitions (workflows)
+// ct aqueduct — inspect and validate aqueduct definitions
 // ─────────────────────────────────────────────────────────────────────────────
 
 var aqueductCmd = &cobra.Command{
 	Use:   "aqueduct",
-	Short: "Inspect and validate aqueducts — the full pipeline from intake to delivery",
+	Short: "Inspect and validate aqueducts — cataracta chains, repo bindings, and config",
 }
 
-// ct aqueduct status — workflow definition view
+// ct aqueduct status — aqueduct definition view
 
 var aqueductStatusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "Show configured aqueducts — repos, workflows, and their cataracta step chains",
+	Short: "Show configured aqueducts — repos and their cataracta chains",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfgPath := resolveConfigPath()
 		cfg, err := aqueduct.ParseAqueductConfig(cfgPath)
@@ -195,7 +195,7 @@ var aqueductStatusCmd = &cobra.Command{
 		for _, repo := range cfg.Repos {
 			fmt.Printf("  %s\n", repo.Name)
 			fmt.Printf("    URL         : %s\n", repo.URL)
-			fmt.Printf("    Workflow    : %s\n", repo.WorkflowPath)
+			fmt.Printf("    Aqueduct    : %s\n", repo.WorkflowPath)
 
 			wfPath := repo.WorkflowPath
 			if !filepath.IsAbs(wfPath) {
@@ -206,24 +206,24 @@ var aqueductStatusCmd = &cobra.Command{
 				for i, s := range wf.Cataractae {
 					steps[i] = s.Name
 				}
-				fmt.Printf("    Steps       : %s\n", strings.Join(steps, " → "))
+				fmt.Printf("    Cataractae  : %s\n", strings.Join(steps, " → "))
 			} else {
-				fmt.Printf("    Steps       : (could not load: %v)\n", err)
+				fmt.Printf("    Cataractae  : (could not load: %v)\n", err)
 			}
 
 			names := repoWorkerNames(repo)
-			fmt.Printf("    Operators   : %d (%s)\n", len(names), strings.Join(names, ", "))
+			fmt.Printf("    Aqueducts   : %s\n", strings.Join(names, ", "))
 			fmt.Println()
 		}
 		return nil
 	},
 }
 
-// ct aqueduct validate — config and workflow validation
+// ct aqueduct validate — config and aqueduct definition validation
 
 var aqueductValidateCmd = &cobra.Command{
 	Use:   "validate [path]",
-	Short: "Validate cistern.yaml and all referenced workflow files",
+	Short: "Validate cistern.yaml and all referenced aqueduct definitions",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		path := resolveConfigPath()
@@ -280,7 +280,7 @@ var aqueductValidateCmd = &cobra.Command{
 
 var statusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "Overall system status — cistern level, operator assignments, and aqueduct info",
+	Short: "Overall system status — cistern level, aqueduct flow, and cataracta chains",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfgPath := resolveConfigPath()
 		cfg, err := aqueduct.ParseAqueductConfig(cfgPath)
@@ -301,6 +301,7 @@ var statusCmd = &cobra.Command{
 		}
 
 		flowing, queued, done := 0, 0, 0
+		var humanGated []*cistern.Droplet
 		assignee := map[string]*cistern.Droplet{}
 		for _, item := range allItems {
 			switch item.Status {
@@ -311,29 +312,68 @@ var statusCmd = &cobra.Command{
 				}
 			case "open":
 				queued++
-			case "closed":
+			case "delivered":
 				done++
+			}
+			if item.CurrentCataracta == "human" && (item.Status == "stagnant" || item.Status == "escalated") {
+				humanGated = append(humanGated, item)
 			}
 		}
 
-		// ── Cistern ──────────────────────────────────────────────────────────
-		fmt.Printf("Cistern     %d flowing  %d queued  %d done\n\n", flowing, queued, done)
+		// ── Cistern summary ───────────────────────────────────────────────────
+		summary := fmt.Sprintf("%s flowing · %s queued · %s delivered",
+			col(colorGreen, fmt.Sprintf("%d", flowing)),
+			col(colorYellow, fmt.Sprintf("%d", queued)),
+			col(colorDim, fmt.Sprintf("%d", done)))
+		fmt.Printf("%s\n\n", summary)
 
-		// ── Castellarius / operators ──────────────────────────────────────────
-		allWorkers := 0
-		for _, repo := range cfg.Repos {
-			allWorkers += len(repoWorkerNames(repo))
+		if len(humanGated) > 0 {
+			ids := make([]string, 0, len(humanGated))
+			for _, d := range humanGated {
+				ids = append(ids, d.ID)
+			}
+			fmt.Printf("%s %d droplet(s) awaiting human approval: %s\n\n",
+				col(colorYellow, "⏸"),
+				len(humanGated),
+				strings.Join(ids, ", "))
 		}
-		fmt.Printf("Castellarius  %d of %d operators busy\n", len(assignee), allWorkers)
+
+		// ── Castellarius / aqueducts ──────────────────────────────────────────
+		fmt.Printf("Castellarius  watching\n")
+
+		// Pre-load workflow step counts for progress indicators.
+		cfgDir := filepath.Dir(cfgPath)
+		wfSteps := map[string][]aqueduct.WorkflowCataracta{}
+		for _, repo := range cfg.Repos {
+			wfPath := repo.WorkflowPath
+			if !filepath.IsAbs(wfPath) {
+				wfPath = filepath.Join(cfgDir, wfPath)
+			}
+			if wf, wfErr := aqueduct.ParseWorkflow(wfPath); wfErr == nil {
+				wfSteps[repo.Name] = wf.Cataractae
+			}
+		}
 
 		tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 		for _, repo := range cfg.Repos {
+			steps := wfSteps[repo.Name]
 			for _, name := range repoWorkerNames(repo) {
 				if item, ok := assignee[name]; ok {
-					elapsed := int(time.Since(item.UpdatedAt).Minutes())
-					fmt.Fprintf(tw, "  %s\t%s\t[%s]\t%dm\n", name, item.ID, item.CurrentCataracta, elapsed)
+					elapsed := formatElapsed(time.Since(item.UpdatedAt))
+					stage := item.CurrentCataracta
+					idx := cataractaIndexInWorkflow(stage, steps)
+					total := len(steps)
+					var progress string
+					if idx > 0 && total > 0 {
+						progress = fmt.Sprintf("%s [%d/%d]", stage, idx, total)
+					} else {
+						progress = stage
+					}
+					line := fmt.Sprintf("  %s\t→ %s\t[%s]\t%s\n", name, item.ID, progress, elapsed)
+					fmt.Fprint(tw, col(colorGreen, line))
 				} else {
-					fmt.Fprintf(tw, "  %s\t—\tdry\t\n", name)
+					line := fmt.Sprintf("  %s\t→ idle\t\t\n", name)
+					fmt.Fprint(tw, col(colorDim, line))
 				}
 			}
 		}
@@ -341,18 +381,14 @@ var statusCmd = &cobra.Command{
 
 		// ── Aqueducts ─────────────────────────────────────────────────────────
 		fmt.Println()
-		cfgDir := filepath.Dir(cfgPath)
 		fmt.Printf("Aqueducts\n")
 		for _, repo := range cfg.Repos {
-			wfPath := repo.WorkflowPath
-			if !filepath.IsAbs(wfPath) {
-				wfPath = filepath.Join(cfgDir, wfPath)
-			}
+			steps := wfSteps[repo.Name]
 			stepCount := "?"
-			if wf, err := aqueduct.ParseWorkflow(wfPath); err == nil {
-				stepCount = fmt.Sprintf("%d", len(wf.Cataractae))
+			if len(steps) > 0 {
+				stepCount = fmt.Sprintf("%d", len(steps))
 			}
-			fmt.Printf("  %-20s  %s  (%s steps)\n", repo.Name, repo.WorkflowPath, stepCount)
+			fmt.Printf("  %-20s  %s  (%s cataractae)\n", repo.Name, repo.WorkflowPath, stepCount)
 		}
 
 		return nil
@@ -384,15 +420,15 @@ func resolveConfigPath() string {
 	return filepath.Join(home, ".cistern", "cistern.yaml")
 }
 
-// repoWorkerNames returns the configured worker names for a repo,
-// falling back to worker-0, worker-1, etc.
+// repoWorkerNames returns the configured aqueduct names for a repo,
+// falling back to aqueduct-0, aqueduct-1, etc.
 func repoWorkerNames(repo aqueduct.RepoConfig) []string {
 	if len(repo.Names) > 0 {
 		return repo.Names
 	}
 	names := make([]string, repo.Cataractae)
 	for i := range names {
-		names[i] = fmt.Sprintf("worker-%d", i)
+		names[i] = fmt.Sprintf("aqueduct-%d", i)
 	}
 	return names
 }

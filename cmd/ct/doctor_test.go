@@ -5,6 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/MichielDean/cistern/internal/aqueduct"
+	"github.com/MichielDean/cistern/internal/cistern"
 )
 
 // --- TestDoctorCmd_FixFlagRegistered ---
@@ -194,5 +197,335 @@ func TestDoctor_NoFix_FailsWhenConfigMissing(t *testing.T) {
 	err := doctorCmd.RunE(doctorCmd, nil)
 	if err == nil {
 		t.Fatal("expected error when config missing and --fix not set")
+	}
+}
+
+// --- TestCheckClaudeMdIntegrity ---
+
+func TestCheckClaudeMdIntegrity_MissingFile_ReturnsError(t *testing.T) {
+	err := checkClaudeMdIntegrity(filepath.Join(t.TempDir(), "nonexistent", "CLAUDE.md"))
+	if err == nil {
+		t.Error("expected error for missing CLAUDE.md")
+	}
+}
+
+func TestCheckClaudeMdIntegrity_FileMissingSentinel_ReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "CLAUDE.md")
+	if err := os.WriteFile(path, []byte("# Role: Implementer\n\nSome instructions without the sentinel."), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	err := checkClaudeMdIntegrity(path)
+	if err == nil {
+		t.Error("expected error for CLAUDE.md missing sentinel")
+	}
+}
+
+func TestCheckClaudeMdIntegrity_FileWithSentinel_ReturnsNil(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "CLAUDE.md")
+	content := "# Role: Implementer\n\nct droplet pass <id> --notes \"...\"\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	if err := checkClaudeMdIntegrity(path); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// --- TestCheckCastellariusProcess ---
+
+func TestCheckCastellariusProcess_NoCrash(t *testing.T) {
+	// Just verify the function doesn't panic. The Castellarius is not running
+	// in the test environment.
+	checkCastellariusProcess()
+}
+
+// --- TestCheckStalledDroplets ---
+
+func TestCheckStalledDroplets_NonExistentDB_NoCrash(t *testing.T) {
+	checkStalledDroplets(filepath.Join(t.TempDir(), "missing.db"))
+}
+
+func TestCheckStalledDroplets_EmptyDB_NoCrash(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "cistern.db")
+	c, err := cistern.New(dbPath, "ct")
+	if err != nil {
+		t.Fatalf("create db: %v", err)
+	}
+	c.Close()
+
+	// Should not panic or crash with an empty database.
+	checkStalledDroplets(dbPath)
+}
+
+func TestCheckStalledDroplets_RecentDroplets_NoCrash(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "cistern.db")
+	c, err := cistern.New(dbPath, "ct")
+	if err != nil {
+		t.Fatalf("create db: %v", err)
+	}
+	// Add a droplet and mark it in_progress (recent — should not be flagged).
+	item, err := c.Add("repo", "Test droplet", "desc", 2, 3)
+	if err != nil {
+		t.Fatalf("add droplet: %v", err)
+	}
+	if _, err := c.GetReady("repo"); err != nil {
+		t.Fatalf("get ready: %v", err)
+	}
+	_ = item
+	c.Close()
+
+	checkStalledDroplets(dbPath)
+}
+
+// --- TestRunDoctorExtendedChecks ---
+
+// minimalWorkflowYAML is a valid minimal workflow for testing.
+const minimalWorkflowYAML = `name: test
+cataractae:
+  - name: implement
+    type: agent
+    identity: tester
+    on_pass: done
+`
+
+// minimalCisternConfigYAML is a valid config pointing to a test workflow.
+const minimalCisternConfigYAML = `repos:
+  - name: testrepo
+    url: https://github.com/example/testrepo
+    workflow_path: aqueduct/workflow.yaml
+    cataractae: 1
+    prefix: ct
+max_cataractae: 1
+`
+
+func TestRunDoctorExtendedChecks_PassesWithValidSetup(t *testing.T) {
+	home := t.TempDir()
+
+	// Set up ~/.cistern directory structure.
+	cisternDir := filepath.Join(home, ".cistern")
+	aqueductDir := filepath.Join(cisternDir, "aqueduct")
+	cataractaeDir := filepath.Join(cisternDir, "cataractae")
+	skillsDir := filepath.Join(cisternDir, "skills")
+	for _, d := range []string{aqueductDir, cataractaeDir, skillsDir} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", d, err)
+		}
+	}
+
+	// Write workflow.yaml.
+	wfPath := filepath.Join(aqueductDir, "workflow.yaml")
+	if err := os.WriteFile(wfPath, []byte(minimalWorkflowYAML), 0o644); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+
+	// Write config.
+	cfgPath := filepath.Join(cisternDir, "cistern.yaml")
+	if err := os.WriteFile(cfgPath, []byte(minimalCisternConfigYAML), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	// Write CLAUDE.md for the "tester" identity.
+	testerDir := filepath.Join(cataractaeDir, "tester")
+	if err := os.MkdirAll(testerDir, 0o755); err != nil {
+		t.Fatalf("mkdir tester: %v", err)
+	}
+	claudeContent := "# Role: Tester\n\nct droplet pass <id> --notes \"...\"\n"
+	if err := os.WriteFile(filepath.Join(testerDir, "CLAUDE.md"), []byte(claudeContent), 0o644); err != nil {
+		t.Fatalf("write CLAUDE.md: %v", err)
+	}
+
+	cfg, err := aqueduct.ParseAqueductConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("parse config: %v", err)
+	}
+
+	dbPath := filepath.Join(cisternDir, "cistern.db")
+	result := runDoctorExtendedChecks(cfg, cfgPath, home, dbPath)
+	if !result {
+		t.Error("expected extended checks to pass with valid setup")
+	}
+}
+
+func TestRunDoctorExtendedChecks_FailsWhenClaudeMdMissing(t *testing.T) {
+	home := t.TempDir()
+
+	cisternDir := filepath.Join(home, ".cistern")
+	aqueductDir := filepath.Join(cisternDir, "aqueduct")
+	for _, d := range []string{aqueductDir, filepath.Join(cisternDir, "cataractae"), filepath.Join(cisternDir, "skills")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", d, err)
+		}
+	}
+
+	wfPath := filepath.Join(aqueductDir, "workflow.yaml")
+	if err := os.WriteFile(wfPath, []byte(minimalWorkflowYAML), 0o644); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+
+	cfgPath := filepath.Join(cisternDir, "cistern.yaml")
+	if err := os.WriteFile(cfgPath, []byte(minimalCisternConfigYAML), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := aqueduct.ParseAqueductConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("parse config: %v", err)
+	}
+
+	// CLAUDE.md is NOT written — check should fail.
+	dbPath := filepath.Join(cisternDir, "cistern.db")
+	result := runDoctorExtendedChecks(cfg, cfgPath, home, dbPath)
+	if result {
+		t.Error("expected extended checks to fail when CLAUDE.md is missing")
+	}
+}
+
+func TestRunDoctorExtendedChecks_FixRegeneratesClaudeMd(t *testing.T) {
+	home := t.TempDir()
+
+	cisternDir := filepath.Join(home, ".cistern")
+	aqueductDir := filepath.Join(cisternDir, "aqueduct")
+	cataractaeDir := filepath.Join(cisternDir, "cataractae")
+	for _, d := range []string{aqueductDir, cataractaeDir, filepath.Join(cisternDir, "skills")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", d, err)
+		}
+	}
+
+	// Workflow with cataracta_definitions so GenerateCataractaFiles can write CLAUDE.md.
+	workflowWithDefs := `name: test
+cataracta_definitions:
+  tester:
+    name: Tester
+    description: "Test role."
+    instructions: |
+      ct droplet pass <id> --notes "done"
+cataractae:
+  - name: implement
+    type: agent
+    identity: tester
+    on_pass: done
+`
+	wfPath := filepath.Join(aqueductDir, "workflow.yaml")
+	if err := os.WriteFile(wfPath, []byte(workflowWithDefs), 0o644); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+
+	cfgPath := filepath.Join(cisternDir, "cistern.yaml")
+	if err := os.WriteFile(cfgPath, []byte(minimalCisternConfigYAML), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := aqueduct.ParseAqueductConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("parse config: %v", err)
+	}
+
+	doctorFix = true
+	defer func() { doctorFix = false }()
+
+	// CLAUDE.md is absent — fix should regenerate it, then check should pass.
+	dbPath := filepath.Join(cisternDir, "cistern.db")
+	result := runDoctorExtendedChecks(cfg, cfgPath, home, dbPath)
+	if !result {
+		t.Error("expected extended checks to pass after fix regenerates CLAUDE.md")
+	}
+
+	// Verify the file was created.
+	generatedPath := filepath.Join(cataractaeDir, "tester", "CLAUDE.md")
+	if _, err := os.Stat(generatedPath); os.IsNotExist(err) {
+		t.Error("CLAUDE.md was not created by fix")
+	}
+}
+
+func TestRunDoctorExtendedChecks_FailsWhenSkillMissing(t *testing.T) {
+	home := t.TempDir()
+
+	cisternDir := filepath.Join(home, ".cistern")
+	aqueductDir := filepath.Join(cisternDir, "aqueduct")
+	cataractaeDir := filepath.Join(cisternDir, "cataractae")
+	for _, d := range []string{aqueductDir, cataractaeDir, filepath.Join(cisternDir, "skills")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", d, err)
+		}
+	}
+
+	// Workflow with a skill reference.
+	workflowWithSkill := `name: test
+cataractae:
+  - name: implement
+    type: agent
+    identity: tester
+    skills:
+      - name: missing-skill
+    on_pass: done
+`
+	wfPath := filepath.Join(aqueductDir, "workflow.yaml")
+	if err := os.WriteFile(wfPath, []byte(workflowWithSkill), 0o644); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+
+	cfgPath := filepath.Join(cisternDir, "cistern.yaml")
+	if err := os.WriteFile(cfgPath, []byte(minimalCisternConfigYAML), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	// Write CLAUDE.md for tester so that check passes.
+	testerDir := filepath.Join(cataractaeDir, "tester")
+	if err := os.MkdirAll(testerDir, 0o755); err != nil {
+		t.Fatalf("mkdir tester: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(testerDir, "CLAUDE.md"), []byte("ct droplet pass"), 0o644); err != nil {
+		t.Fatalf("write CLAUDE.md: %v", err)
+	}
+
+	cfg, err := aqueduct.ParseAqueductConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("parse config: %v", err)
+	}
+
+	// "missing-skill" is not installed — check should fail.
+	dbPath := filepath.Join(cisternDir, "cistern.db")
+	result := runDoctorExtendedChecks(cfg, cfgPath, home, dbPath)
+	if result {
+		t.Error("expected extended checks to fail when skill is not installed")
+	}
+}
+
+func TestRunDoctorExtendedChecks_FailsWhenWorkflowInvalid(t *testing.T) {
+	home := t.TempDir()
+
+	cisternDir := filepath.Join(home, ".cistern")
+	aqueductDir := filepath.Join(cisternDir, "aqueduct")
+	for _, d := range []string{aqueductDir, filepath.Join(cisternDir, "cataractae"), filepath.Join(cisternDir, "skills")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", d, err)
+		}
+	}
+
+	// Write an invalid (unparseable) workflow YAML.
+	wfPath := filepath.Join(aqueductDir, "workflow.yaml")
+	if err := os.WriteFile(wfPath, []byte(":::invalid yaml:::"), 0o644); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+
+	cfgPath := filepath.Join(cisternDir, "cistern.yaml")
+	if err := os.WriteFile(cfgPath, []byte(minimalCisternConfigYAML), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := aqueduct.ParseAqueductConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("parse config: %v", err)
+	}
+
+	dbPath := filepath.Join(cisternDir, "cistern.db")
+	result := runDoctorExtendedChecks(cfg, cfgPath, home, dbPath)
+	if result {
+		t.Error("expected extended checks to fail when workflow YAML is invalid")
 	}
 }

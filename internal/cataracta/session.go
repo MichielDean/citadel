@@ -64,6 +64,9 @@ func (s *Session) spawn() error {
 	if tok := os.Getenv("GH_TOKEN"); tok != "" {
 		args = append(args, "-e", "GH_TOKEN="+tok)
 	}
+	if s.Identity != "" {
+		args = append(args, "-e", "CT_CATARACTA_NAME="+s.Identity)
+	}
 	args = append(args, claudeCmd)
 	cmd := exec.Command("tmux", args...)
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -74,18 +77,54 @@ func (s *Session) spawn() error {
 	return nil
 }
 
-// buildPrompt constructs the directive prompt for Claude.
+// baseCataractaPrompt is the constitutional layer — hardcoded in the binary,
+// cannot be corrupted by YAML edits or file changes. It establishes the
+// non-negotiable contract for every cataracta session.
+const baseCataractaPrompt = `You are a Cataracta operating within the Cistern agentic pipeline.
+
+Cistern is an automated software delivery system. The Castellarius (a pure state
+machine) watches the cistern and routes droplets (units of work) into named
+aqueducts. You are one cataracta — one gate — in that aqueduct. You receive a
+droplet, complete your assigned role, and signal your outcome so the droplet
+continues flowing.
+
+THE CASTELLARIUS WATCHES THE CISTERN, ROUTES DROPLETS INTO AVAILABLE AQUEDUCTS.
+EACH AQUEDUCT FLOWS THE DROPLET THROUGH ITS CATARACTAE.
+
+## Your contract — non-negotiable
+
+1. Read CONTEXT.md before doing anything else. It contains your droplet ID,
+   requirements, and all revision notes from prior cycles.
+2. Adopt the persona described in your role instructions below.
+3. Complete your work according to that persona.
+4. Signal your outcome before exiting. You MUST call one of:
+     ct droplet pass <id> --notes "..."
+     ct droplet recirculate <id> --notes "..."
+     ct droplet block <id> --notes "..."
+   A cataracta that exits without signaling leaves the droplet stranded.
+
+Your role persona and skill instructions follow.
+`
+
+// buildPrompt constructs the full agent prompt: constitutional base + persona + skills.
 func (s *Session) buildPrompt() string {
-	identityInstr := ""
+	// Layer 1: Constitutional base (immutable — hardcoded in binary)
+	prompt := baseCataractaPrompt
+
+	// Layer 2: Persona (from CLAUDE.md / cataracta_definitions YAML)
 	if s.Identity != "" {
 		identityPath := s.resolveIdentityPath()
-		identityInstr = "Read " + identityPath + " for your detailed instructions and protocol. "
+		if content, err := os.ReadFile(identityPath); err == nil {
+			prompt += "\n## Your Role\n\n" + string(content)
+		} else {
+			// File missing/unreadable — fall back to pointer so agent can try to find it
+			prompt += "\nRead " + identityPath + " for your role instructions. "
+		}
 	}
-	return "You are a Cistern agent. " +
-		"Read CONTEXT.md in this directory — it contains your assignment and the exact ct commands to signal completion. " +
-		identityInstr +
-		"Complete the work described fully. " +
-		"Signal your outcome with the ct commands shown in CONTEXT.md when done."
+
+	// Layer 3: Skills are injected via CONTEXT.md available_skills block (see context.go)
+
+	return prompt
 }
 
 // resolveIdentityPath returns the path to the cataracta identity's CLAUDE.md file.

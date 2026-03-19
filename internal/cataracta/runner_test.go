@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/MichielDean/cistern/internal/cistern"
@@ -553,6 +554,239 @@ func TestPrepareContext_DiffOnly_Isolation(t *testing.T) {
 	// Verify no source files leaked.
 	if _, err := os.Stat(filepath.Join(ctxDir, "main.go")); err == nil {
 		t.Error("diff_only context should NOT contain source files")
+	}
+}
+
+func TestWriteContextFile_AvailableSkillsBlock(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "CONTEXT.md")
+
+	// Write a fake cached SKILL.md so skillDescription can read it.
+	skillCacheDir := filepath.Join(dir, ".cistern", "skills", "my-skill")
+	if err := os.MkdirAll(skillCacheDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillCacheDir, "SKILL.md"),
+		[]byte("# My Skill\n\nDoes awesome things.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", dir)
+
+	item := &cistern.Droplet{ID: "sk-1", Title: "Skill test", Status: "open", Priority: 1}
+	step := &aqueduct.WorkflowCataracta{
+		Name:     "implement",
+		Type:     "agent",
+		Identity: "implementer",
+		Context:  "full_codebase",
+		Skills: []aqueduct.SkillRef{
+			{Name: "my-skill"},
+		},
+	}
+
+	err := writeContextFile(path, ContextParams{
+		Level:      "full_codebase",
+		SandboxDir: dir,
+		Item:       item,
+		Step:       step,
+	})
+	if err != nil {
+		t.Fatalf("writeContextFile: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read CONTEXT.md: %v", err)
+	}
+
+	content := string(data)
+	checks := []string{
+		"<available_skills>",
+		"<name>my-skill</name>",
+		"<description>Does awesome things.</description>",
+		"<location>.claude/skills/my-skill/SKILL.md</location>",
+		"</available_skills>",
+	}
+	for _, want := range checks {
+		if !contains(content, want) {
+			t.Errorf("CONTEXT.md missing %q\nfull content:\n%s", want, content)
+		}
+	}
+}
+
+func TestWriteContextFile_XMLEscapedDescription(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "CONTEXT.md")
+
+	// Write a fake cached SKILL.md whose first description line contains XML
+	// special characters — this should be escaped in the output, not injected.
+	skillCacheDir := filepath.Join(dir, ".cistern", "skills", "evil-skill")
+	if err := os.MkdirAll(skillCacheDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillCacheDir, "SKILL.md"),
+		[]byte("# Evil Skill\n\n<script>alert('xss')</script>\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", dir)
+
+	item := &cistern.Droplet{ID: "xss-1", Title: "XSS test", Status: "open", Priority: 1}
+	step := &aqueduct.WorkflowCataracta{
+		Name:    "implement",
+		Type:    "agent",
+		Context: "full_codebase",
+		Skills: []aqueduct.SkillRef{
+			{Name: "evil-skill"},
+		},
+	}
+
+	err := writeContextFile(path, ContextParams{
+		Level:      "full_codebase",
+		SandboxDir: dir,
+		Item:       item,
+		Step:       step,
+	})
+	if err != nil {
+		t.Fatalf("writeContextFile: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read CONTEXT.md: %v", err)
+	}
+
+	content := string(data)
+	// Raw script tag must NOT appear — that would be a prompt injection.
+	if contains(content, "<script>") {
+		t.Error("CONTEXT.md contains raw <script> tag — prompt injection not escaped")
+	}
+	// XML-escaped version must be present.
+	if !contains(content, "&lt;script&gt;") {
+		t.Error("CONTEXT.md missing XML-escaped description (&lt;script&gt;)")
+	}
+}
+
+func TestWriteContextFile_NoSkillsBlock_WhenEmpty(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "CONTEXT.md")
+
+	item := &cistern.Droplet{ID: "no-skill", Title: "No skills", Status: "open", Priority: 1}
+	step := &aqueduct.WorkflowCataracta{
+		Name:    "implement",
+		Type:    "agent",
+		Context: "full_codebase",
+		// Skills intentionally empty
+	}
+
+	err := writeContextFile(path, ContextParams{
+		Level:      "full_codebase",
+		SandboxDir: dir,
+		Item:       item,
+		Step:       step,
+	})
+	if err != nil {
+		t.Fatalf("writeContextFile: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read CONTEXT.md: %v", err)
+	}
+
+	if contains(string(data), "<available_skills>") {
+		t.Error("CONTEXT.md should not contain <available_skills> when step has no skills")
+	}
+}
+
+func TestYAMLRoundTrip_SkillsField(t *testing.T) {
+	// Test that Skills field round-trips through YAML unmarshal.
+	raw := `
+name: feature
+cataractae:
+  - name: implement
+    type: agent
+    skills:
+      - name: my-skill
+        url: https://raw.githubusercontent.com/example/repo/main/SKILL.md
+`
+	w, err := aqueduct.ParseWorkflowBytes([]byte(raw))
+	if err != nil {
+		t.Fatalf("ParseWorkflowBytes: %v", err)
+	}
+	if len(w.Cataractae) != 1 {
+		t.Fatalf("expected 1 cataracta, got %d", len(w.Cataractae))
+	}
+	impl := w.Cataractae[0]
+	if len(impl.Skills) != 1 {
+		t.Fatalf("expected 1 skill, got %d", len(impl.Skills))
+	}
+	if impl.Skills[0].Name != "my-skill" {
+		t.Errorf("skill name = %q, want %q", impl.Skills[0].Name, "my-skill")
+	}
+	// URL field removed — skills are name-only in YAML, installed separately.
+	if impl.Skills[0].Path != "" {
+		t.Errorf("expected no path for externally installed skill, got %q", impl.Skills[0].Path)
+	}
+}
+
+func TestYAMLRoundTrip_SkillsOmittedWhenEmpty(t *testing.T) {
+	// A step with no skills field should parse fine (omitempty).
+	raw := `
+name: feature
+cataractae:
+  - name: implement
+    type: agent
+    on_pass: done
+`
+	w, err := aqueduct.ParseWorkflowBytes([]byte(raw))
+	if err != nil {
+		t.Fatalf("ParseWorkflowBytes: %v", err)
+	}
+	if len(w.Cataractae[0].Skills) != 0 {
+		t.Errorf("expected no skills, got %v", w.Cataractae[0].Skills)
+	}
+}
+
+// TestCurrentHead verifies that currentHead() returns the HEAD commit hash
+// for a git repo. It sets up a minimal repo with one commit.
+func TestCurrentHead(t *testing.T) {
+	dir := t.TempDir()
+
+	mustRun(t, gitCmd(dir, "init"))
+	mustRun(t, gitCmd(dir, "config", "user.email", "test@test.com"))
+	mustRun(t, gitCmd(dir, "config", "user.name", "Test"))
+
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("init\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	mustRun(t, gitCmd(dir, "add", "."))
+	mustRun(t, gitCmd(dir, "commit", "-m", "initial"))
+
+	// Get expected HEAD via git directly.
+	out, err := exec.Command("git", "-C", dir, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatalf("git rev-parse HEAD: %v", err)
+	}
+	expected := strings.TrimSpace(string(out))
+
+	got, err := currentHead(dir)
+	if err != nil {
+		t.Fatalf("currentHead: %v", err)
+	}
+	if got != expected {
+		t.Errorf("currentHead = %q, want %q", got, expected)
+	}
+	// SHA-1 hashes are 40 hex chars; SHA-256 are 64 hex chars. Either way ≥ 40.
+	if len(got) < 40 {
+		t.Errorf("currentHead hash too short: %q (len=%d)", got, len(got))
+	}
+}
+
+// TestCurrentHead_NotARepo verifies that currentHead() returns an error for
+// a directory that is not a git repository.
+func TestCurrentHead_NotARepo(t *testing.T) {
+	_, err := currentHead(t.TempDir())
+	if err == nil {
+		t.Error("expected error for non-repo directory")
 	}
 }
 

@@ -1,17 +1,12 @@
 package main
 
 import (
-	"context"
 	"fmt"
-	"html"
 	"io"
-	"net/http"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"sort"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/MichielDean/cistern/internal/cistern"
@@ -21,10 +16,9 @@ import (
 )
 
 const (
-	dashboardInnerWidth      = 56 // inner content width (between ║ borders)
 	refreshInterval          = 2 * time.Second
 	recentEventLimit         = 5
-	defaultDashboardHTMLPort = 5737
+
 
 	// ANSI color codes
 	colorGreen  = "\033[32m"
@@ -37,37 +31,31 @@ const (
 	clearScreen = "\033[2J\033[H"
 )
 
-const dashboardEasterEggText = `Four letters guard the gate you seek,
-Each one counted in a way that’s unique.
-Not by their place in the alphabet’s line,
-But by where they stand among numbers prime.
 
-Take each letter’s secret prime,
-Then trim away what’s second in time.
-What’s left behind, when placed in a row,
-Reveals the port where you must go.`
 
-// CataractaInfo describes the state of a single cataracta (operator).
+// CataractaInfo describes the state of a single aqueduct — its name, which droplet it carries, and where in the cataracta chain that droplet is.
 type CataractaInfo struct {
-	Name       string
-	DropletID  string
-	Step       string
-	Elapsed    time.Duration
-	CataractaIndex  int // 1-based index of current step; 0 if unknown
+	Name            string
+	DropletID       string
+	Step            string
+	Steps           []string // workflow step names in order
+	Elapsed         time.Duration
+	CataractaIndex  int // 1-based index of current cataracta; 0 if unknown
 	TotalCataractae int
 }
 
 // DashboardData holds all data required to render the dashboard.
 type DashboardData struct {
-	CataractaCount  int
-	FlowingCount int
-	QueuedCount  int
-	DoneCount    int
-	Cataractae      []CataractaInfo
-	CisternItems []*cistern.Droplet // flowing + queued
-	RecentItems  []*cistern.Droplet // recently closed/escalated
-	FarmRunning  bool
-	FetchedAt    time.Time
+	CataractaCount int
+	FlowingCount   int
+	QueuedCount    int
+	DoneCount      int
+	Cataractae     []CataractaInfo
+	CisternItems   []*cistern.Droplet // flowing + queued
+	RecentItems    []*cistern.Droplet // recently closed/escalated
+	BlockedByMap   map[string]string  // droplet ID -> first blocking dep ID
+	FarmRunning    bool
+	FetchedAt      time.Time
 }
 
 // fetchDashboardData loads config and queue state into a DashboardData.
@@ -82,7 +70,7 @@ func fetchDashboardData(cfgPath, dbPath string) *DashboardData {
 		return data
 	}
 
-	// Build cataracta list and load workflow steps for each repo.
+	// Build aqueduct list and load cataracta chain for each repo.
 	type cataractaEntry struct {
 		name string
 		repo string
@@ -106,12 +94,16 @@ func fetchDashboardData(cfgPath, dbPath string) *DashboardData {
 		}
 	}
 
-	// Open queue — if it fails, show cataractae as dry.
+	// Open queue — if it fails, show aqueducts as idle.
 	c, err := cistern.New(dbPath, "")
 	if err != nil {
 		cataractae := make([]CataractaInfo, len(configCataractae))
 		for i, ch := range configCataractae {
-			cataractae[i] = CataractaInfo{Name: ch.name}
+			ci := CataractaInfo{Name: ch.name}
+			if wf, ok := allSteps[ch.repo]; ok {
+				ci.Steps = stepNames(wf)
+			}
+			cataractae[i] = ci
 		}
 		data.Cataractae = cataractae
 		return data
@@ -122,7 +114,11 @@ func fetchDashboardData(cfgPath, dbPath string) *DashboardData {
 	if err != nil {
 		cataractae := make([]CataractaInfo, len(configCataractae))
 		for i, ch := range configCataractae {
-			cataractae[i] = CataractaInfo{Name: ch.name}
+			ci := CataractaInfo{Name: ch.name}
+			if wf, ok := allSteps[ch.repo]; ok {
+				ci.Steps = stepNames(wf)
+			}
+			cataractae[i] = ci
 		}
 		data.Cataractae = cataractae
 		return data
@@ -139,7 +135,7 @@ func fetchDashboardData(cfgPath, dbPath string) *DashboardData {
 			}
 		case "open":
 			data.QueuedCount++
-		case "closed":
+		case "delivered":
 			data.DoneCount++
 		}
 	}
@@ -148,6 +144,9 @@ func fetchDashboardData(cfgPath, dbPath string) *DashboardData {
 	cataractae := make([]CataractaInfo, len(configCataractae))
 	for i, ch := range configCataractae {
 		ci := CataractaInfo{Name: ch.name}
+		if wf, ok := allSteps[ch.repo]; ok {
+			ci.Steps = stepNames(wf)
+		}
 		if item, ok := assigneeMap[ch.name]; ok {
 			ci.DropletID = item.ID
 			ci.Step = item.CurrentCataracta
@@ -160,17 +159,23 @@ func fetchDashboardData(cfgPath, dbPath string) *DashboardData {
 	}
 	data.Cataractae = cataractae
 
-	// Cistern: in_progress and open items.
+	// Cistern: in_progress and open items; build blocked-by map.
+	data.BlockedByMap = map[string]string{}
 	for _, item := range allItems {
 		if item.Status == "in_progress" || item.Status == "open" {
 			data.CisternItems = append(data.CisternItems, item)
 		}
+		if item.Status == "open" {
+			if blockedBy, err := c.GetBlockedBy(item.ID); err == nil && len(blockedBy) > 0 {
+				data.BlockedByMap[item.ID] = blockedBy[0]
+			}
+		}
 	}
 
-	// Recent flow: most recently updated closed/escalated items.
+	// Recent flow: most recently updated delivered/stagnant items.
 	var recent []*cistern.Droplet
 	for _, item := range allItems {
-		if item.Status == "closed" || item.Status == "escalated" {
+		if item.Status == "delivered" || item.Status == "stagnant" {
 			recent = append(recent, item)
 		}
 	}
@@ -194,6 +199,15 @@ func cataractaIndexInWorkflow(stepName string, cataractae []aqueduct.WorkflowCat
 		}
 	}
 	return 0
+}
+
+// stepNames extracts step names from a workflow cataracta slice.
+func stepNames(wf []aqueduct.WorkflowCataracta) []string {
+	names := make([]string, len(wf))
+	for i, s := range wf {
+		names[i] = s.Name
+	}
+	return names
 }
 
 // progressBar renders a filled/empty progress bar of barWidth characters.
@@ -232,124 +246,288 @@ func padRight(s string, width int) string {
 	return s + strings.Repeat(" ", width-len(r))
 }
 
-// borderLine returns a full-width double-line separator "╠═...═╣".
-func borderLine() string {
-	return "╠" + strings.Repeat("═", dashboardInnerWidth+2) + "╣"
+// renderAqueductRow renders a single aqueduct as a Roman aqueduct arch diagram.
+// Each cataracta is an arch pier. The channel on top carries the flowing droplet.
+// Returns a multi-line string (7 lines) suitable for the TUI dashboard.
+//
+// Example output (active in green, idle piers dim):
+//
+//	virgo  ╔════════════════════════════════════════════════════════╗
+//	       ║ ≈ ≈ ≈  ci-pqz1q  implement  2m 14s  ████░░░░  ≈ ≈ ≈  ║
+//	       ╚════════╤═══════════════╤═══════════════╤══════════════╝
+//	                │               │               │               │
+//	             ╔══╧══╗         ╔══╧══╗         ╔══╧══╗        ╔══╧══╗
+//	             ║  ●  ║         ║  ○  ║         ║  ○  ║        ║  ○  ║
+//	             ╚═════╝         ╚═════╝         ╚═════╝        ╚═════╝
+//	           implement      adv-review            qa          delivery
+func renderAqueductRow(ch CataractaInfo) string {
+	const (
+		colW    = 15 // visual width per cataracta column (label + spacing)
+		pierInW = 5  // inner width of pier box: "  ●  " or " impl"
+		nameW   = 10 // left label column width
+	)
+
+	steps := ch.Steps
+	if len(steps) == 0 {
+		steps = []string{"(empty)"}
+	}
+	n := len(steps)
+
+	// Channel total inner width = n columns of colW, separated by ┬ joints.
+	chanW := n*colW - 1
+
+	// ── Line 1: channel top ────────────────────────────────────────────────
+	prefix := "  " + padRight(ch.Name, nameW) + "  "
+	indent := strings.Repeat(" ", len([]rune(prefix)))
+
+	chanTop := prefix + colorDim + "╔" + strings.Repeat("═", chanW) + "╗" + colorReset
+
+	// ── Line 2: water / droplet info ───────────────────────────────────────
+	var waterInner string
+	if ch.DropletID != "" {
+		bar := progressBar(ch.CataractaIndex, ch.TotalCataractae, 8)
+		content := fmt.Sprintf(" ≈ ≈  %s  %s  %s  ≈ ≈ ", ch.DropletID, formatElapsed(ch.Elapsed), bar)
+		waterInner = padOrTruncCenter(content, chanW)
+		waterInner = colorGreen + waterInner + colorReset
+	} else {
+		waterInner = colorDim + padOrTruncCenter(" — idle — ", chanW) + colorReset
+	}
+	chanMid := indent + colorDim + "║" + colorReset + waterInner + colorDim + "║" + colorReset
+
+	// ── Line 3: channel bottom with ┬ connectors at each pier ──────────────
+	var chanBot strings.Builder
+	chanBot.WriteString(indent)
+	chanBot.WriteString(colorDim + "╚" + colorReset)
+	for i := range steps {
+		half := (colW - 1) / 2
+		rest := colW - 1 - half
+		if i == 0 {
+			chanBot.WriteString(colorDim + strings.Repeat("═", half) + "╤" + strings.Repeat("═", rest-1) + colorReset)
+		} else {
+			chanBot.WriteString(colorDim + strings.Repeat("═", half) + "╤" + strings.Repeat("═", rest-1) + colorReset)
+		}
+	}
+	chanBot.WriteString(colorDim + "═╝" + colorReset)
+
+	// ── Line 4: vertical stems from channel to pier caps ───────────────────
+	var stems strings.Builder
+	stems.WriteString(indent)
+	for range steps {
+		half := (colW - 1) / 2
+		stems.WriteString(strings.Repeat(" ", half))
+		stems.WriteString(colorDim + "│" + colorReset)
+		stems.WriteString(strings.Repeat(" ", colW-half-1))
+	}
+
+	// ── Line 5: pier tops ╔══╧══╗ ─────────────────────────────────────────
+	var pierTop strings.Builder
+	pierTop.WriteString(indent)
+	for i, step := range steps {
+		half := (colW - 1) / 2
+		pad := half - (pierInW/2 + 1)
+		pierTop.WriteString(strings.Repeat(" ", pad))
+		active := step == ch.Step && ch.DropletID != ""
+		box := "╔" + strings.Repeat("═", pierInW) + "╗"
+		if active {
+			pierTop.WriteString(colorGreen + box + colorReset)
+		} else {
+			pierTop.WriteString(colorDim + box + colorReset)
+		}
+		_ = i
+		pierTop.WriteString(strings.Repeat(" ", colW-pad-pierInW-2))
+	}
+
+	// ── Line 6: pier middle ║  ●  ║ ─────────────────────────────────────
+	var pierMid strings.Builder
+	pierMid.WriteString(indent)
+	for _, step := range steps {
+		half := (colW - 1) / 2
+		pad := half - (pierInW/2 + 1)
+		pierMid.WriteString(strings.Repeat(" ", pad))
+		active := step == ch.Step && ch.DropletID != ""
+		sym := "  ○  "
+		if active {
+			sym = "  ●  "
+		}
+		var body string
+		if active {
+			body = colorGreen + "║" + sym + "║" + colorReset
+		} else {
+			body = colorDim + "║" + sym + "║" + colorReset
+		}
+		pierMid.WriteString(body)
+		pierMid.WriteString(strings.Repeat(" ", colW-pad-pierInW-2))
+	}
+
+	// ── Line 7: pier bottoms ╚═════╝ ─────────────────────────────────────
+	var pierBot strings.Builder
+	pierBot.WriteString(indent)
+	for _, step := range steps {
+		half := (colW - 1) / 2
+		pad := half - (pierInW/2 + 1)
+		pierBot.WriteString(strings.Repeat(" ", pad))
+		active := step == ch.Step && ch.DropletID != ""
+		box := "╚" + strings.Repeat("═", pierInW) + "╝"
+		if active {
+			pierBot.WriteString(colorGreen + box + colorReset)
+		} else {
+			pierBot.WriteString(colorDim + box + colorReset)
+		}
+		pierBot.WriteString(strings.Repeat(" ", colW-pad-pierInW-2))
+	}
+
+	// ── Line 8: labels ────────────────────────────────────────────────────
+	var labels strings.Builder
+	labels.WriteString(indent)
+	for _, step := range steps {
+		lbl := step
+		if len([]rune(lbl)) > colW-1 {
+			runes := []rune(lbl)
+			lbl = string(runes[:colW-2]) + "…"
+		}
+		active := step == ch.Step && ch.DropletID != ""
+		centered := padOrTruncCenter(lbl, colW)
+		if active {
+			labels.WriteString(colorGreen + centered + colorReset)
+		} else {
+			labels.WriteString(colorDim + centered + colorReset)
+		}
+	}
+
+	return strings.Join([]string{
+		chanTop,
+		chanMid,
+		chanBot.String(),
+		stems.String(),
+		pierTop.String(),
+		pierMid.String(),
+		pierBot.String(),
+		labels.String(),
+	}, "\n")
 }
 
-// contentLine wraps content in ║ borders, padded to dashboardInnerWidth.
-func contentLine(content string) string {
-	return "║ " + padRight(content, dashboardInnerWidth) + " ║"
+// padOrTruncCenter centers s within width w, padding with spaces.
+// Truncates with … if s is too long.
+func padOrTruncCenter(s string, w int) string {
+	runes := []rune(s)
+	if len(runes) > w {
+		return string(runes[:w-1]) + "…"
+	}
+	total := w - len(runes)
+	left := total / 2
+	right := total - left
+	return strings.Repeat(" ", left) + s + strings.Repeat(" ", right)
+}
+
+// renderFlowGraphRow is kept for tests; the TUI now uses renderAqueductRow.
+func renderFlowGraphRow(ch CataractaInfo) (graphLine, infoLine string) {
+	const namePad = 12
+	namePfx := padRight(ch.Name, namePad)
+	const pfxWidth = namePad + 4
+
+	if len(ch.Steps) == 0 {
+		if ch.DropletID == "" {
+			return "  " + namePfx + "  " + colorDim + "(idle)" + colorReset, ""
+		}
+		return "  " + colorGreen + namePfx + colorReset + "  " + ch.Step, ""
+	}
+
+	var g strings.Builder
+	g.WriteString("  ")
+	g.WriteString(colorDim + namePfx + colorReset)
+	g.WriteString("  ")
+	activeCol := -1
+	visualCol := pfxWidth
+
+	for i, step := range ch.Steps {
+		if i > 0 {
+			if step == ch.Step && ch.DropletID != "" {
+				g.WriteString(colorDim + " ──" + colorReset + colorGreen + "●" + colorReset + colorDim + "──▶ " + colorReset)
+			} else {
+				g.WriteString(colorDim + " ──○──▶ " + colorReset)
+			}
+			visualCol += 8
+		}
+		if step == ch.Step && ch.DropletID != "" {
+			g.WriteString(colorGreen + step + colorReset)
+			activeCol = visualCol
+		} else {
+			g.WriteString(colorDim + step + colorReset)
+		}
+		visualCol += len([]rune(step))
+	}
+
+	graphLine = g.String()
+	if activeCol >= 0 {
+		bar := progressBar(ch.CataractaIndex, ch.TotalCataractae, 8)
+		infoLine = strings.Repeat(" ", activeCol) + "↑ " + ch.Name + " · " + ch.DropletID + "  " + formatElapsed(ch.Elapsed) + "  " + bar
+	}
+	return
 }
 
 // renderDashboard produces the full dashboard string for the given data.
 func renderDashboard(data *DashboardData) string {
 	var sb strings.Builder
-	totalWidth := dashboardInnerWidth + 4 // "║ " + content + " ║"
+	sep := strings.Repeat("─", 70)
 
-	// Header.
-	title := " CISTERN "
-	padTotal := totalWidth - 2 - len(title)
-	leftPad := padTotal / 2
-	rightPad := padTotal - leftPad
-	sb.WriteString("╔" + strings.Repeat("═", leftPad) + title + strings.Repeat("═", rightPad) + "╗\n")
-
-	// Summary line.
-	summary := fmt.Sprintf("%d cataractae open  •  %d flowing  •  %d queued  •  %d done",
-		data.CataractaCount, data.FlowingCount, data.QueuedCount, data.DoneCount)
-	sb.WriteString(contentLine(summary) + "\n")
-
-	// SLUICES section.
-	sb.WriteString(borderLine() + "\n")
-	sb.WriteString(contentLine("SLUICES") + "\n")
-
+	// Aqueduct arch visualization — one arch diagram per aqueduct.
 	if len(data.Cataractae) == 0 {
-		sb.WriteString(contentLine("  Aqueducts closed") + "\n")
+		sb.WriteString("  No aqueducts configured\n")
 	} else {
-		for _, ch := range data.Cataractae {
-			sb.WriteString(contentLine(renderCataractaLine(ch)) + "\n")
+		for i, ch := range data.Cataractae {
+			if i > 0 {
+				sb.WriteString("\n")
+			}
+			sb.WriteString(renderAqueductRow(ch))
+			sb.WriteString("\n")
 		}
 	}
+	sb.WriteString(sep + "\n")
 
-	// CISTERN section.
-	sb.WriteString(borderLine() + "\n")
-	sb.WriteString(contentLine("CISTERN") + "\n")
+	// Cistern counts.
+	sb.WriteString(fmt.Sprintf("  ● %d flowing  ○ %d queued  ✓ %d delivered\n",
+		data.FlowingCount, data.QueuedCount, data.DoneCount))
+	sb.WriteString(sep + "\n")
 
-	if len(data.CisternItems) == 0 {
-		sb.WriteString(contentLine("  Cistern dry.") + "\n")
-	} else {
-		for _, item := range data.CisternItems {
-			sb.WriteString(contentLine(renderCisternLine(item)) + "\n")
+	// Cistern — queued droplets.
+	sb.WriteString("  CISTERN\n")
+	var queued []*cistern.Droplet
+	for _, item := range data.CisternItems {
+		if item.Status == "open" {
+			queued = append(queued, item)
 		}
 	}
+	if len(queued) == 0 {
+		sb.WriteString("  Cistern is empty.\n")
+	} else {
+		for _, item := range queued {
+			age := time.Since(item.CreatedAt).Round(time.Minute)
+			blocked := ""
+			if dep, ok := data.BlockedByMap[item.ID]; ok {
+				blocked = fmt.Sprintf(" [blocked by %s]", dep)
+			}
+			sb.WriteString(fmt.Sprintf("  ○ %-10s  %s  %s%s\n",
+				item.ID, formatElapsed(age), item.Title, blocked))
+		}
+	}
+	sb.WriteString(sep + "\n")
 
-	// RECENT FLOW section.
-	sb.WriteString(borderLine() + "\n")
-	sb.WriteString(contentLine("RECENT FLOW") + "\n")
-
+	// Recent flow.
+	sb.WriteString("  RECENT FLOW\n")
 	if len(data.RecentItems) == 0 {
-		sb.WriteString(contentLine("  No recent flow.") + "\n")
+		sb.WriteString("  No recent flow.\n")
 	} else {
 		for _, item := range data.RecentItems {
-			sb.WriteString(contentLine(renderRecentLine(item)) + "\n")
+			sb.WriteString("  " + renderRecentLine(item) + "\n")
 		}
 	}
+	sb.WriteString(sep + "\n")
 
 	// Footer.
-	sb.WriteString("╚" + strings.Repeat("═", dashboardInnerWidth+2) + "╝\n")
 	sb.WriteString(fmt.Sprintf("  q to quit  •  r to refresh  •  last update: %s\n",
 		data.FetchedAt.Format("15:04:05")))
 
 	return sb.String()
-}
-
-// renderCataractaLine builds the cataracta row string (without borders).
-func renderCataractaLine(ch CataractaInfo) string {
-	if ch.DropletID == "" {
-		// Dry cataracta.
-		name := padRight(ch.Name, 10)
-		return colorDim + "  " + name + "—         dry" + colorReset
-	}
-
-	name := padRight(ch.Name, 10)
-	id := padRight(ch.DropletID, 10)
-	step := "[" + ch.Step + "]"
-	elapsed := formatElapsed(ch.Elapsed)
-	bar := progressBar(ch.CataractaIndex, ch.TotalCataractae, 6)
-
-	// Line: "  name  id  [step]  elapsed  bar"
-	line := fmt.Sprintf("%s%s%s  %-18s  %-8s  %s%s",
-		colorGreen, "  "+name+id, colorReset, step, elapsed, bar, colorReset)
-	return line
-}
-
-// renderCisternLine builds a cistern row string.
-func renderCisternLine(item *cistern.Droplet) string {
-	id := padRight(item.ID, 10)
-	cx := padRight(complexityName(item.Complexity), 9)
-	status := displayStatus(item.Status)
-	step := item.CurrentCataracta
-	if step == "" {
-		step = "—"
-	}
-
-	var statusColor string
-	switch item.Status {
-	case "in_progress":
-		statusColor = colorGreen
-	case "open":
-		statusColor = colorYellow
-	case "escalated":
-		statusColor = colorRed
-	default:
-		statusColor = colorDim
-	}
-
-	return fmt.Sprintf("  %s%s%s%s%-10s  %s%s%s%s",
-		colorDim, id, colorReset,
-		cx,
-		statusColor, status, colorReset,
-		"   "+step, "")
 }
 
 // renderRecentLine builds a recent-flow row string.
@@ -364,15 +542,15 @@ func renderRecentLine(item *cistern.Droplet) string {
 
 	var icon string
 	switch item.Status {
-	case "closed":
+	case "delivered":
 		icon = colorGreen + "✓" + colorReset
-	case "escalated":
+	case "stagnant":
 		icon = colorRed + "✗" + colorReset
 	default:
 		icon = "·"
 	}
 
-	return fmt.Sprintf("  %s  %s  %-16s  %s  %s",
+	return fmt.Sprintf("  %s  %s  %-20s  %s  %s",
 		t, id, step, icon, status)
 }
 
@@ -457,179 +635,14 @@ var feedCmd = &cobra.Command{
 	RunE:  runDashboard,
 }
 
-var dashboardHTML bool
-var dashboardPort int
-
-func dashboardListenAddr(port int) string {
-	return fmt.Sprintf(":%d", port)
-}
-
-func renderDashboardHTML(snapshot inspectOutput) string {
-	var sb strings.Builder
-	sb.WriteString("<!doctype html><html><head><meta charset=\"utf-8\">")
-	sb.WriteString("<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">")
-	sb.WriteString("<meta http-equiv=\"refresh\" content=\"2\">")
-	sb.WriteString("<title>CT Dashboard</title>")
-	sb.WriteString(`<style>
-body{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;margin:0;background:#0b1020;color:#d6deeb}
-.wrap{max-width:980px;margin:24px auto;padding:0 16px}
-.card{background:#121a2b;border:1px solid #25314f;border-radius:12px;padding:14px 16px;margin-bottom:12px}
-.muted{color:#8fa1c7}.ok{color:#57d57a}.warn{color:#f0c86b}
-table{width:100%;border-collapse:collapse}th,td{padding:6px 8px;border-bottom:1px solid #22304d;text-align:left}
-h1,h2{margin:0 0 10px}h1{font-size:20px}h2{font-size:15px;color:#9db1db}
-#easter-egg{position:fixed;right:10px;bottom:8px;opacity:.28;cursor:default;user-select:none;font-size:11px}
-#easter-egg .hint{display:none;position:absolute;right:0;bottom:16px;white-space:pre-line;width:300px;padding:10px;border-radius:8px;background:#0f1728;border:1px solid #31436b;color:#ced9f0;opacity:.96}
-#easter-egg:hover .hint{display:block}
-</style></head><body>`)
-	sb.WriteString(`<div class="wrap">`)
-	sb.WriteString(`<div class="card"><h1>CT Dashboard</h1>`)
-	sb.WriteString(fmt.Sprintf(`<div class="muted">%d cataractae open • <span class="ok">%d flowing</span> • <span class="warn">%d queued</span> • %d done</div>`,
-		len(snapshot.Cataractae), snapshot.Queue.Flowing, snapshot.Queue.Queued, snapshot.Queue.Closed))
-	sb.WriteString(fmt.Sprintf(`<div class="muted" style="margin-top:6px">last update: %s</div>`, time.Now().Format("15:04:05")))
-	sb.WriteString(`</div>`)
-
-	sb.WriteString(`<div class="card"><h2>Cataractae</h2><table><thead><tr><th>Name</th><th>Droplet</th><th>Stage</th><th>Elapsed</th></tr></thead><tbody>`)
-	if len(snapshot.Cataractae) == 0 {
-		sb.WriteString(`<tr><td colspan="4" class="muted">Aqueducts closed</td></tr>`)
-	} else {
-		for _, ch := range snapshot.Cataractae {
-			droplet := "-"
-			stage := "dry"
-			elapsed := "-"
-			if ch.DropletID != nil {
-				droplet = html.EscapeString(*ch.DropletID)
-			}
-			if ch.Stage != nil {
-				stage = html.EscapeString(*ch.Stage)
-			}
-			if ch.ElapsedSeconds != nil {
-				elapsed = formatElapsed(time.Duration(*ch.ElapsedSeconds) * time.Second)
-			}
-			sb.WriteString(fmt.Sprintf(`<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>`,
-				html.EscapeString(ch.Name), droplet, stage, elapsed))
-		}
-	}
-	sb.WriteString(`</tbody></table></div>`)
-
-	sb.WriteString(`<div class="card"><h2>Cistern</h2><table><thead><tr><th>Droplet</th><th>Status</th><th>Stage</th></tr></thead><tbody>`)
-	if len(snapshot.Droplets) == 0 {
-		sb.WriteString(`<tr><td colspan="3" class="muted">Cistern dry.</td></tr>`)
-	} else {
-		for _, d := range snapshot.Droplets {
-			step := d.Stage
-			if step == "" {
-				step = "-"
-			}
-			sb.WriteString(fmt.Sprintf(`<tr><td>%s</td><td>%s</td><td>%s</td></tr>`,
-				html.EscapeString(d.ID), html.EscapeString(displayStatus(d.Status)), html.EscapeString(step)))
-		}
-	}
-	sb.WriteString(`</tbody></table></div>`)
-
-	sb.WriteString(`<div class="card"><h2>Recent Flow</h2><table><thead><tr><th>Time</th><th>Droplet</th><th>Event</th></tr></thead><tbody>`)
-	if len(snapshot.RecentEvents) == 0 {
-		sb.WriteString(`<tr><td colspan="3" class="muted">No recent flow.</td></tr>`)
-	} else {
-		for _, evt := range snapshot.RecentEvents {
-			sb.WriteString(fmt.Sprintf(`<tr><td>%s</td><td>%s</td><td>%s</td></tr>`,
-				html.EscapeString(evt.Time.Format("15:04")), html.EscapeString(evt.Droplet), html.EscapeString(evt.Event)))
-		}
-	}
-	sb.WriteString(`</tbody></table></div></div>`)
-
-	sb.WriteString(`<div id="easter-egg" aria-hidden="true">◈<span class="hint">`)
-	sb.WriteString(html.EscapeString(dashboardEasterEggText))
-	sb.WriteString(`</span></div>`)
-	sb.WriteString(`</body></html>`)
-
-	return sb.String()
-}
-
-func runDashboardHTML(cfgPath, dbPath string, out io.Writer) error {
-	addr := dashboardListenAddr(dashboardPort)
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		snapshot, err := buildInspectOutput(cfgPath, dbPath)
-		if err != nil {
-			http.Error(w, "failed to build dashboard snapshot", http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = io.WriteString(w, renderDashboardHTML(snapshot))
-	})
-
-	srv := &http.Server{
-		Addr:              addr,
-		Handler:           mux,
-		ReadHeaderTimeout: 5 * time.Second,
-	}
-
-	errCh := make(chan error, 1)
-	go func() {
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			errCh <- err
-		}
-	}()
-
-	fmt.Fprintf(out, "Dashboard available at http://localhost:%d\n", dashboardPort)
-	fmt.Fprintln(out, "Press Ctrl-C to stop.")
-
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-
-	select {
-	case err := <-errCh:
-		if err != nil {
-			return err
-		}
-		return nil
-	case <-sigCh:
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		return srv.Shutdown(ctx)
-	}
-}
-
 func runDashboard(cmd *cobra.Command, args []string) error {
 	cfgPath := resolveConfigPath()
 	dbPath := resolveDBPath()
 
-	if dashboardHTML {
-		return runDashboardHTML(cfgPath, dbPath, os.Stdout)
-	}
-
-	// Forward SIGINT to the input channel as Ctrl-C byte.
-	inputCh := startKeyboardReader()
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-
-	merged := make(chan byte, 8)
-	go func() {
-		defer close(merged)
-		for {
-			select {
-			case b, ok := <-inputCh:
-				if !ok {
-					return
-				}
-				merged <- b
-			case <-sigCh:
-				merged <- 3 // Ctrl-C
-				return
-			}
-		}
-	}()
-
-	return RunDashboard(cfgPath, dbPath, merged, os.Stdout)
+	return RunDashboardTUI(cfgPath, dbPath)
 }
 
 func init() {
-	dashboardCmd.Flags().BoolVar(&dashboardHTML, "html", false, "serve dashboard as HTML instead of terminal UI")
-	dashboardCmd.Flags().IntVar(&dashboardPort, "port", defaultDashboardHTMLPort, "port for --html dashboard server")
-	feedCmd.Flags().BoolVar(&dashboardHTML, "html", false, "serve dashboard as HTML instead of terminal UI")
-	feedCmd.Flags().IntVar(&dashboardPort, "port", defaultDashboardHTMLPort, "port for --html dashboard server")
-
 	rootCmd.AddCommand(dashboardCmd)
 	rootCmd.AddCommand(feedCmd)
 }
