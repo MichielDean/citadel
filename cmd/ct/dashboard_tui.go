@@ -267,25 +267,35 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaInfo) []string {
 
 	cStyle := dim
 	l1     := prefix + chanPad + cStyle.Render(strings.Repeat("▀", chanW))
+	// waveSegment renders a short flowing-water motif using block chars + ≈.
+	// Looks like: ░▒▓≈▒░  — density fades from core outward.
+	waveSegment := wfDim.Render("░") + wfMid.Render("▒") + wfBright.Render("▓") +
+		wfMid.Render("≈") + wfMid.Render("▒") + wfDim.Render("░")
+	const waveViz = 6 // visual width of one waveSegment (no ANSI codes)
+
 	var water string
 	if ch.DropletID != "" {
 		bar     := progressBar(ch.CataractaIndex, ch.TotalCataractae, 8)
-		// Build water content with blue ripples flanking the active droplet info.
-		infoStr  := fmt.Sprintf(" %s  %s  %s ", ch.DropletID, formatElapsed(ch.Elapsed), bar)
-		ripple   := wfBright.Render("≈≈")
-		info     := wfMid.Render(infoStr)
-		inner    := " " + ripple + info + ripple + " "
-		// Visual width of inner (ANSI-free count): 1 + 2 + len(infoStr) + 2 + 1
-		innerViz := 6 + len([]rune(infoStr))
-		padL     := (chanW - 2 - innerViz) / 2
+		infoStr := fmt.Sprintf("  %s  %s  %s  ", ch.DropletID, formatElapsed(ch.Elapsed), bar)
+		info    := wfMid.Render(infoStr)
+		inner   := waveSegment + info + waveSegment
+		innerViz := waveViz*2 + len([]rune(infoStr))
+		padL := (chanW - 2 - innerViz) / 2
 		if padL < 0 { padL = 0 }
-		padR     := chanW - 2 - innerViz - padL
+		padR := chanW - 2 - innerViz - padL
 		if padR < 0 { padR = 0 }
 		water = strings.Repeat(" ", padL) + inner + strings.Repeat(" ", padR)
 	} else {
-		// Idle: show gently flowing water — no dead "— idle —" text.
-		idleRipple := "≈    ≈    ≈    ≈    ≈    ≈    ≈    ≈    ≈    ≈    ≈    ≈    ≈    ≈"
-		water = wfDim.Render(padOrTruncCenter(idleRipple, chanW-2))
+		// Idle: tile the wave motif across the full channel width.
+		tiles := (chanW - 2) / waveViz
+		rem   := chanW - 2 - tiles*waveViz
+		var wb strings.Builder
+		for range tiles {
+			wb.WriteString(waveSegment)
+		}
+		// Fill any remainder with dim chars so width is exact.
+		wb.WriteString(wfDim.Render(strings.Repeat("░", rem)))
+		water = wb.String()
 	}
 
 	// Eight pre-built waterfall row strings — one per arch sub-row (0=mort lr=0 … 7=brick lr=3).
