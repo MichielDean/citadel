@@ -43,8 +43,11 @@ heartbeat_interval: 30s
 
 # Drought protocols — run automatically when the Cistern is idle
 drought_hooks:
+  - name: sync-workflow
+    action: git_sync            # Pull latest aqueduct.yaml from origin/main → auto-deploys new cataractae
+
   - name: sync-cataractae
-    action: cataractae_generate # Regenerate role files when workflow YAML is newer
+    action: cataractae_generate # Regenerate CLAUDE.md files from updated workflow YAML
 
   - name: prune-worktrees
     action: worktree_prune      # Prune stale aqueduct registrations

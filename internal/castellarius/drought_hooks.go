@@ -1,6 +1,7 @@
 package castellarius
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
@@ -23,6 +24,8 @@ func RunDroughtHooks(hooks []aqueduct.DroughtHook, cfg *aqueduct.AqueductConfig,
 		logger.Info("drought hook starting", "hook", hook.Name, "action", hook.Action)
 		var err error
 		switch hook.Action {
+		case "git_sync":
+			err = hookGitSync(cfg, sandboxRoot, logger)
 		case "cataractae_generate":
 			err = hookCataractaeGenerate(cfg, logger)
 		case "worktree_prune":
@@ -45,6 +48,88 @@ func RunDroughtHooks(hooks []aqueduct.DroughtHook, cfg *aqueduct.AqueductConfig,
 			logger.Info("drought hook completed", "hook", hook.Name)
 		}
 	}
+}
+
+// hookGitSync fetches the latest workflow YAML from origin/main for each repo and
+// updates the deployed copy under ~/.cistern/aqueduct/ if anything changed.
+// Uses `git fetch` + `git show origin/main:<path>` — safe to run while agents are
+// on feature branches because it never touches the working tree.
+// Must run before cataractae_generate so roles are rebuilt from the freshest YAML.
+func hookGitSync(cfg *aqueduct.AqueductConfig, sandboxRoot string, logger *slog.Logger) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("git_sync: home dir: %w", err)
+	}
+
+	for _, repo := range cfg.Repos {
+		if repo.WorkflowPath == "" {
+			continue
+		}
+
+		// Find any sandbox clone for this repo (first one with a .git dir).
+		repoSandboxDir := filepath.Join(sandboxRoot, repo.Name)
+		entries, err := os.ReadDir(repoSandboxDir)
+		if err != nil {
+			logger.Warn("git_sync: no sandbox dir", "repo", repo.Name, "error", err)
+			continue
+		}
+		var cloneDir string
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			candidate := filepath.Join(repoSandboxDir, e.Name())
+			if _, err := os.Stat(filepath.Join(candidate, ".git")); err == nil {
+				cloneDir = candidate
+				break
+			}
+		}
+		if cloneDir == "" {
+			logger.Warn("git_sync: no clone found", "repo", repo.Name)
+			continue
+		}
+
+		// Fetch latest refs without touching the working tree.
+		if out, err := exec.Command("git", "-C", cloneDir, "fetch", "origin").CombinedOutput(); err != nil {
+			logger.Warn("git_sync: fetch failed", "repo", repo.Name, "error", err, "output", string(out))
+			continue
+		}
+
+		// Repo-relative workflow path: aqueduct/<filename>.
+		wfFilename := filepath.Base(repo.WorkflowPath)
+		repoRelPath := "aqueduct/" + wfFilename
+
+		// Extract the file from origin/main — does NOT modify the working tree.
+		newContent, err := exec.Command("git", "-C", cloneDir, "show", "origin/main:"+repoRelPath).Output()
+		if err != nil {
+			logger.Warn("git_sync: cannot read from origin/main", "repo", repo.Name, "path", repoRelPath, "error", err)
+			continue
+		}
+
+		// Resolve deployed path (may be absolute or relative to ~/.cistern/).
+		deployedPath := repo.WorkflowPath
+		if !filepath.IsAbs(deployedPath) {
+			deployedPath = filepath.Join(home, ".cistern", deployedPath)
+		}
+
+		// Skip write if content is identical.
+		existing, _ := os.ReadFile(deployedPath)
+		if bytes.Equal(existing, newContent) {
+			logger.Info("git_sync: workflow up to date", "repo", repo.Name)
+			continue
+		}
+
+		if err := os.MkdirAll(filepath.Dir(deployedPath), 0o755); err != nil {
+			logger.Warn("git_sync: mkdir failed", "path", deployedPath, "error", err)
+			continue
+		}
+		if err := os.WriteFile(deployedPath, newContent, 0o644); err != nil {
+			logger.Warn("git_sync: write failed", "path", deployedPath, "error", err)
+			continue
+		}
+		logger.Info("git_sync: workflow updated", "repo", repo.Name, "path", deployedPath)
+	}
+	return nil
 }
 
 // hookCataractaeGenerate checks if any workflow YAML mtime is newer than the oldest
