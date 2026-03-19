@@ -125,8 +125,15 @@ func runStart(cmd *cobra.Command, args []string) error {
 	}
 }
 
-// cisternAdder adapts *cistern.Client to the delivery.DropletAdder interface.
-type cisternAdder struct{ c *cistern.Client }
+// cisternClient is the subset of cistern.Client used by cisternAdder.
+// Extracted as an interface so the parameter-mapping in Add can be unit-tested
+// without a real database.
+type cisternClient interface {
+	Add(repo, title, description string, priority, complexity int, deps ...string) (*cistern.Droplet, error)
+}
+
+// cisternAdder adapts cisternClient to the delivery.DropletAdder interface.
+type cisternAdder struct{ c cisternClient }
 
 // Add adapts the delivery DropletAdder convention (title, repo, ...) to the
 // cistern.Client convention (repo, title, ...). The swap is intentional.

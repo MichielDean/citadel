@@ -305,9 +305,13 @@ func TestHandler_UntrustedProxyHeadersIgnored(t *testing.T) {
 func TestHandler_BodyTooLarge(t *testing.T) {
 	h := newTestHandler(t, &fakeAdder{id: "ct-abc12"}, 100, 100)
 
-	// Send a body larger than maxBodyBytes (1 MiB + 1 byte).
-	large := make([]byte, maxBodyBytes+1)
-	req := httptest.NewRequest(http.MethodPost, "/droplets", strings.NewReader(string(large)))
+	// Build valid JSON whose total size exceeds maxBodyBytes (1 MiB).
+	// Using null/zero bytes would cause json.Decode to fail before MaxBytesReader
+	// is ever consulted, giving a false pass. A valid JSON string field ensures
+	// the decoder reads far enough into the body to trigger the size limit.
+	desc := strings.Repeat("x", maxBodyBytes)
+	body := `{"title":"t","repo":"r","description":"` + desc + `"}`
+	req := httptest.NewRequest(http.MethodPost, "/droplets", strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer tok-a")
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
