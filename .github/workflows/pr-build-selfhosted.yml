@@ -9,20 +9,19 @@ on:
 
 jobs:
   build:
-    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, linux, x64]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
           persist-credentials: true
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          # use the module's Go version to avoid drift
           go-version-file: go.mod
 
       - name: Cache Go modules
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/go-build
