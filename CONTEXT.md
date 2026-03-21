@@ -18,21 +18,13 @@ Add ability to observe any active cataractae session in real-time without intera
 - Clear label: 'Observing — read only'
 - Falls back gracefully if aqueduct is idle or tmux session not found
 
-## Current Step: implement
+## Current Step: simplify
 
 - **Type:** agent
-- **Role:** implementer
+- **Role:** simplifier
 - **Context:** full_codebase
 
 ## Recent Step Notes
-
-### From: manual
-
-Phase 2: dashboard_web_test.go readWSTextFrame case 127 — the 8-byte extended payload length is parsed as only the lower 32 bits (ext[4]<<24 | ext[5]<<16 | ext[6]<<8 | ext[7]); ext[0]–ext[3] (the high 32 bits) are silently discarded, violating RFC 6455 §5.2. Fix: length = int(ext[0])<<56 | int(ext[1])<<48 | int(ext[2])<<40 | int(ext[3])<<32 | int(ext[4])<<24 | int(ext[5])<<16 | int(ext[6])<<8 | int(ext[7]). Dead code in current tests (all payloads <126 bytes) but wrong by spec and would silently produce a bad length for any future large-frame test. No other issues found.
-
-### From: manual
-
-Fixed readWSTextFrame case 127 in dashboard_web_test.go: 8-byte extended payload length was only using low 32 bits (ext[4]–ext[7]); corrected to include all 8 bytes per RFC 6455 §5.2. All 9 packages pass.
 
 ### From: manual
 
@@ -42,6 +34,14 @@ Fixed readWSTextFrame case 127: 8-byte extended length now correctly combines al
 
 Implement pass rejected: HEAD has not advanced since last review (commit: adf8afd900b608cb93db0d1d6b0998ddde882e2d). No new commits were found. You must commit your changes before signaling pass.
 
+### From: manual
+
+Fixed readWSTextFrame case 127: 8-byte extended payload length now correctly combines all 8 bytes per RFC 6455 §5.2 (was silently discarding high 32 bits ext[0]-ext[3]). All 9 packages pass. Committed bdab760.
+
+### From: manual
+
+Fixed readWSTextFrame case 127 RFC 6455 §5.2 compliance. All 9 packages pass.
+
 <available_skills>
   <skill>
     <name>cistern-droplet-state</name>
@@ -49,9 +49,9 @@ Implement pass rejected: HEAD has not advanced since last review (commit: adf8af
     <location>.claude/skills/cistern-droplet-state/SKILL.md</location>
   </skill>
   <skill>
-    <name>github-workflow</name>
-    <description>---</description>
-    <location>.claude/skills/github-workflow/SKILL.md</location>
+    <name>code-simplifier</name>
+    <description>code-simplifier</description>
+    <location>.claude/skills/code-simplifier/SKILL.md</location>
   </skill>
 </available_skills>
 

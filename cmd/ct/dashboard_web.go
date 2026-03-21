@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -84,11 +85,11 @@ func wsSendText(w *bufio.Writer, data string) error {
 	case n < 126:
 		header = append(header, byte(n))
 	case n < 65536:
-		header = append(header, 0x7E, byte(n>>8), byte(n&0xFF))
+		header = append(header, 0x7E)
+		header = binary.BigEndian.AppendUint16(header, uint16(n))
 	default:
-		header = append(header, 0x7F,
-			byte(n>>56), byte(n>>48), byte(n>>40), byte(n>>32),
-			byte(n>>24), byte(n>>16), byte(n>>8), byte(n&0xFF))
+		header = append(header, 0x7F)
+		header = binary.BigEndian.AppendUint64(header, uint64(n))
 	}
 	if _, err := w.Write(header); err != nil {
 		return err
