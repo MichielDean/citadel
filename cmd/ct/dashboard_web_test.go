@@ -594,6 +594,74 @@ func TestWsPeek_SuccessfulStreamActive(t *testing.T) {
 	}
 }
 
+// TestDashboardHTML_ArchIsCSSBased verifies the web dashboard uses CSS-based
+// rendering for the aqueduct arch section, not block characters.
+func TestDashboardHTML_ArchIsCSSBased(t *testing.T) {
+	html := dashboardHTML
+
+	checks := []struct {
+		want string
+		desc string
+	}{
+		{`id="arch-section"`, "arch-section element"},
+		{"wave-scroll", "wave-scroll CSS animation"},
+		{"wf-fall", "wf-fall CSS animation"},
+		{"aq-pier", "aq-pier CSS class"},
+		{"aq-channel", "aq-channel CSS class"},
+		{"aq-labels", "aq-labels CSS class"},
+		{"buildActiveArch", "buildActiveArch JS function"},
+		{"renderArchSection", "renderArchSection JS function"},
+		{"buildIdleRow", "buildIdleRow JS function"},
+	}
+	for _, c := range checks {
+		if !strings.Contains(html, c.want) {
+			t.Errorf("HTML must contain %s (%q)", c.desc, c.want)
+		}
+	}
+}
+
+// TestDashboardHTML_NoBlockCharArch verifies the static HTML template does not
+// contain the old block-character arch-rendering JavaScript.
+func TestDashboardHTML_NoBlockCharArch(t *testing.T) {
+	html := dashboardHTML
+
+	removed := []struct {
+		token string
+		desc  string
+	}{
+		{"COL_W=", "COL_W arch constant"},
+		{"ARCH_TOP=", "ARCH_TOP arch constant"},
+		{"function aqRow(", "aqRow char-based arch function"},
+		{"function buildWfRows(", "buildWfRows char-based waterfall function"},
+	}
+	for _, r := range removed {
+		if strings.Contains(html, r.token) {
+			t.Errorf("HTML must NOT contain %s (%q)", r.desc, r.token)
+		}
+	}
+}
+
+// TestDashboardHTML_ResponsiveBreakpoint verifies the CSS includes a responsive
+// breakpoint for narrow (mobile) viewports.
+func TestDashboardHTML_ResponsiveBreakpoint(t *testing.T) {
+	html := dashboardHTML
+	if !strings.Contains(html, "max-width:480px") && !strings.Contains(html, "max-width: 480px") {
+		t.Error("HTML must contain responsive CSS breakpoint for 480px viewports")
+	}
+	if !strings.Contains(html, `name="viewport"`) {
+		t.Error("HTML must contain viewport meta tag")
+	}
+}
+
+// TestDashboardHTML_TouchTargets verifies interactive elements meet the minimum
+// 44px touch-target height for mobile usability.
+func TestDashboardHTML_TouchTargets(t *testing.T) {
+	html := dashboardHTML
+	if !strings.Contains(html, "min-height:44px") && !strings.Contains(html, "min-height: 44px") {
+		t.Error("HTML must specify min-height:44px touch target for interactive elements")
+	}
+}
+
 // readWSTextFrame reads one unmasked WebSocket text frame from br and returns the payload.
 func readWSTextFrame(br *bufio.Reader) (string, error) {
 	header := make([]byte, 2)

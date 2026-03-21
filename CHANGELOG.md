@@ -10,12 +10,19 @@
 - Branch lifecycle is now owned by the Castellarius: feature branches (`feat/<id>`) are created and cleaned up by the scheduler, not the runner. Agents do not manage branches directly.
 - Non-terminal routes (pass to next step, recirculate) preserve the feature branch so the next cycle can resume incrementally. Terminal routes (deliver, block, escalate) clean up the branch.
 
+### Web dashboard: responsive CSS arch diagram (ci-jvgk7)
+- Arch section replaced block-character rendering with CSS flexbox/grid — readable on mobile (375 px viewport and up)
+- CSS `wave-scroll` animation (linear-gradient) replaces `░▒▓≈` scrolling characters; `wf-fall` animation replaces block-char waterfall shimmer
+- Responsive breakpoint at 480 px: piers wrap to two-column grid on narrow screens, aqueducts stack vertically
+- Touch targets on peek buttons minimum 44 px tall; labels use `rem` units (minimum `0.875rem`)
+- Active aqueduct shows droplet ID, elapsed, and progress bar in text — no character art; idle aqueducts remain as a single compact dim row
+- TUI dashboard block-char rendering is unchanged; only the web dashboard is affected
+
 ### Web dashboard
 - `ct dashboard --web` starts a Go HTTP server on port 5737 (no ttyd, no terminal emulator required)
 - `GET /api/dashboard` returns `DashboardData` as JSON
 - Server-sent events (SSE) at `/api/dashboard/stream` push live updates every 2 seconds
-- `<pre>`-based monospace render: faithful visual port of the TUI dashboard (`dashboard_tui.go`)
-- Animated wave channels (░▒▓≈ scrolling), Roman arch masonry with semicircle archCrown, animated waterfall (8 sub-rows brightness cycling), 150 ms animation loop
+- Aqueduct arch section uses CSS-based rendering; remaining sections (current flow, cistern, recent flow) use `<pre>`-formatted HTML matching the TUI colour palette
 - Active aqueducts show full arch diagram with droplet ID, elapsed, progress bar, and repo name; idle aqueducts collapse to a single compact dim row
 - CURRENT FLOW section with relative timestamps; CISTERN queue with priority icons (↑ · ↓)
 - `--addr` flag sets listen address (default `:5737`)

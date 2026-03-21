@@ -301,8 +301,10 @@ func RunDashboardWeb(cfgPath, dbPath, addr string) error {
 	}
 }
 
-// dashboardHTML is the single-page web dashboard — a faithful pre-based port
-// of the TUI (dashboard_tui.go). Animation loop runs at 150ms (animInterval).
+// dashboardHTML is the single-page web dashboard. The aqueduct arch section
+// uses CSS-based rendering (flexbox, CSS animations) for responsive mobile
+// support. The remaining sections (current flow, cistern, recent flow) use
+// pre-formatted HTML identical to the TUI colour palette.
 const dashboardHTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -311,17 +313,63 @@ const dashboardHTML = `<!DOCTYPE html>
 <title>Cistern</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{background:#0d1117;color:#e6edf3;font-family:'Cascadia Code','Courier New',Courier,monospace;font-size:13px;line-height:1.3;padding:0}
+body{background:#0d1117;color:#e6edf3;font-family:'Cascadia Code','Courier New',Courier,monospace;font-size:13px;line-height:1.3}
 #conn{font-size:11px;padding:3px 8px;color:#e06c75}
 #conn.live{color:#4bb96e}
-#screen{padding:4px 8px 8px;white-space:pre;overflow-x:auto;cursor:default}
+#header,#screen{padding:0 8px;white-space:pre;overflow-x:auto;cursor:default}
+#header{padding-top:4px}
+/* ── CSS Arch Section ─────────────────────────────────────────────────────── */
+#arch-section{padding:0 8px}
+.aq-block{margin-bottom:4px}
+.aq-active{border:1px solid #30363d;border-radius:4px;overflow:hidden}
+.aq-hdr{padding:3px 8px;background:#161b22;display:flex;gap:10px;align-items:baseline;border-bottom:1px solid #30363d;flex-wrap:wrap}
+.aq-name{color:#e6edf3;font-weight:bold;font-size:0.875rem;min-width:8ch}
+.aq-repo{color:#46465a;font-size:0.75rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.aq-channel-row{display:flex;height:44px;border-bottom:1px solid #30363d;overflow:hidden}
+.aq-channel{flex:1;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center;min-width:0}
+.aq-channel.clickable{cursor:pointer}
+.aq-wave{position:absolute;inset:0;background:linear-gradient(90deg,transparent,#0891b2,transparent);background-size:200% 100%;animation:wave-scroll 2s linear infinite;opacity:0.55}
+.aq-info{position:relative;z-index:1;display:flex;align-items:center;gap:8px;padding:0 12px;font-size:0.8125rem;white-space:nowrap;overflow:hidden}
+.aq-info.idle{color:#46465a}
+.aq-info.revised{color:#f0c86b}
+.aq-droplet-id{color:#e6edf3;font-weight:bold}
+.aq-elapsed{color:#9db1db}
+.aq-revised-mark{color:#f0c86b}
+.aq-pbar{height:8px;width:80px;background:#1c2128;border-radius:2px;overflow:hidden;flex-shrink:0;border:1px solid #30363d}
+.aq-pbar-fill{height:100%;background:#4bb96e}
+.aq-waterfall{width:16px;flex-shrink:0;background:linear-gradient(to bottom,transparent,#0891b2 40%,#1a7a96 60%,transparent) 0 0/100% 24px;animation:wf-fall 0.8s linear infinite}
+.aq-piers{display:flex}
+.aq-pier{flex:1;min-height:40px;min-width:0;border-right:1px solid #30363d;border-bottom:1px solid #30363d}
+.aq-pier:last-child{border-right:none}
+.aq-pier.active{background:rgba(75,185,110,0.08);box-shadow:inset 0 0 0 1px #4bb96e}
+.aq-labels{display:flex}
+.aq-lbl{flex:1;min-width:0;text-align:center;font-size:0.875rem;color:#46465a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:3px 2px 4px}
+.aq-lbl.active{color:#4bb96e;font-weight:bold}
+.aq-idle-section{margin-top:2px}
+.aq-idle{display:flex;gap:8px;padding:2px 4px;align-items:center;font-size:0.875rem;color:#46465a}
+.aq-idle-name{min-width:10ch;flex-shrink:0}
+.aq-idle-repo{min-width:14ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.aq-idle-dot{flex-shrink:0}
+.aq-empty{color:#46465a;padding:4px 0;font-size:0.875rem}
+@keyframes wave-scroll{from{background-position:200% 0}to{background-position:-200% 0}}
+@keyframes wf-fall{from{background-position:0 -24px}to{background-position:0 0}}
+@media(max-width:480px){
+.aq-piers,.aq-labels{flex-wrap:wrap}
+.aq-pier,.aq-lbl{flex:0 0 50%}
+.aq-pier:nth-child(2n){border-right:none}
+.aq-pier{border-bottom:1px solid #30363d}
+.aq-info{font-size:0.75rem;gap:6px}
+.aq-pbar{width:60px}
+.aq-channel-row{height:48px}
+}
+/* ── Peek overlay ─────────────────────────────────────────────────────────── */
 .peek-overlay{position:fixed;inset:0;background:rgba(0,0,0,.65);display:none;z-index:100;align-items:center;justify-content:center}
 .peek-overlay.open{display:flex}
 .peek-panel{background:#161b22;border:1px solid #30363d;border-radius:4px;width:90vw;max-width:900px;height:70vh;display:flex;flex-direction:column;overflow:hidden}
 .peek-hdr{padding:6px 10px;border-bottom:1px solid #30363d;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .peek-ro-label{color:#4bb96e;font-size:11px;font-weight:bold;white-space:nowrap}
 .peek-title{flex:1;font-size:12px;color:#7d8590;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.peek-btn{background:none;border:1px solid #30363d;color:#7d8590;font-size:11px;padding:2px 6px;cursor:pointer;border-radius:3px;font-family:inherit}
+.peek-btn{background:none;border:1px solid #30363d;color:#7d8590;font-size:11px;padding:2px 6px;cursor:pointer;border-radius:3px;font-family:inherit;min-height:44px}
 .peek-btn:hover{color:#e6edf3;border-color:#7d8590}
 .peek-content{flex:1;overflow-y:auto;padding:8px;font-size:12px;white-space:pre-wrap;word-break:break-all;color:#e6edf3;background:#0d1117}
 .peek-footer{padding:3px 10px;border-top:1px solid #30363d;font-size:11px;color:#7d8590}
@@ -329,6 +377,8 @@ body{background:#0d1117;color:#e6edf3;font-family:'Cascadia Code','Courier New',
 </head>
 <body>
 <div id="conn">&#x25CB; connecting&#x2026;</div>
+<pre id="header"></pre>
+<div id="arch-section"></div>
 <pre id="screen"></pre>
 <div id="peek-overlay" class="peek-overlay">
   <div class="peek-panel">
@@ -343,17 +393,15 @@ body{background:#0d1117;color:#e6edf3;font-family:'Cascadia Code','Courier New',
   </div>
 </div>
 <script>
+var headerEl=document.getElementById('header');
+var archSectionEl=document.getElementById('arch-section');
 var screenEl=document.getElementById('screen');
 var connEl=document.getElementById('conn');
 
 // TUI palette — mirrors dashboard_tui.go style vars exactly.
 var cDim='#46465a',cGreen='#4bb96e',cYellow='#f0c86b',cRed='#e06c75';
 var cHeader='#9db1db',cFoot='#36364a';
-var wfBr='#a8eeff',wfMd='#3ec8e8',wfDm='#1a7a96';
 
-// Arch constants — must match dashboard_tui.go tuiAqueductRow constants.
-var COL_W=20,ARCH_TOP=10,TAPER=3,PIER_ROWS=1,BRICK=4,NAME_W=10;
-var PIER_W=ARCH_TOP-TAPER*2; // 4
 var SCR_W=120; // screen width (chars)
 
 function esc(s){
@@ -383,12 +431,6 @@ function padC(s,w){
   if(r.length>w)return r.slice(0,w-1).join('')+'\u2026';
   var tot=w-r.length,l=Math.floor(tot/2),ri=tot-l;
   return' '.repeat(l)+s+' '.repeat(ri);
-}
-
-function pbar(idx,tot,w){
-  if(tot<=0||idx<=0)return'\u2591'.repeat(w);
-  var f=Math.min(Math.floor(idx*w/tot),w);
-  return'\u2588'.repeat(f)+'\u2591'.repeat(w-f);
 }
 
 function fmtNs(ns){
@@ -426,206 +468,84 @@ function firstLine(txt){
   return(txt||'').trim();
 }
 
-// ── Wave animation ────────────────────────────────────────────────────────────
-// waveCells mirrors the waveCells slice in tuiAqueductRow.
-var WV=[
-  {ch:'\u2591',col:wfDm},{ch:'\u2592',col:wfMd},{ch:'\u2593',col:wfBr},
-  {ch:'\u2248',col:wfMd},{ch:'\u2592',col:wfMd},{ch:'\u2591',col:wfDm}
-];
-// renderWave mirrors renderWave() closure in tuiAqueductRow.
-function renderWave(n,fr){
-  var s='',len=WV.length;
-  for(var i=0;i<n;i++){
-    var c=WV[((i-fr%len)+len*1000)%len];
-    s+=sp(c.col,c.ch);
-  }
-  return s;
-}
-
-// chanWater mirrors buildChanWater() closure in tuiAqueductRow.
-function chanWater(info,iCol,cW,fr){
-  var iv=Array.from(info).length;
-  var sw=Math.floor((cW-2-iv)/2);if(sw<0)sw=0;
-  var rw=cW-2-iv-sw;if(rw<0)rw=0;
-  return renderWave(sw,fr)+sp(iCol,info)+renderWave(rw,fr);
-}
-
-// ── Arch crown (semicircle formula) ──────────────────────────────────────────
-// Mirrors archCrownAtT() closure in tuiAqueductRow.
-function archCrown(t,gW){
-  if(gW<=0)return[0,0,0];
-  var r=gW/2,oh=r*Math.sin(Math.PI/2*t),fe=r-oh;
-  var full=Math.floor(fe),frac=fe-full;
-  var haunch=frac>0.25&&gW>2;
-  var lf=full+(haunch?1:0),rf=lf,og=gW-lf-rf;
-  if(og<0){og=0;lf=Math.floor(gW/2);rf=gW-lf;}
-  return[lf,og,rf];
-}
-
-// ── Waterfall (Option C: spill & curtain) ────────────────────────────────────
-// wfCol mirrors wfA() closure in tuiAqueductRow (brightness rotates with frame).
-function wfCol(sub,fr){
-  switch((sub+fr)%3){case 0:return wfBr;case 1:return wfMd;default:return wfDm;}
-}
-
-// buildWfRows mirrors the wfRows [8]string array in tuiAqueductRow.
-function buildWfRows(fr){
-  var p=' ',pp='  ';
-  return[
-    sp(wfMd,'\u2592')+sp(wfCol(0,fr),'\u2593')+sp(wfMd,'\u2592')+sp(wfDm,'\u2591'),
-    sp(wfDm,'\u2591')+sp(wfCol(1,fr),'\u2593')+sp(wfMd,'\u2592'),
-    p+sp(wfMd,'\u2592')+sp(wfCol(2,fr),'\u2593')+sp(wfMd,'\u2592'),
-    p+sp(wfDm,'\u2591')+sp(wfCol(0,fr),'\u2593')+sp(wfMd,'\u2592'),
-    pp+sp(wfCol(1,fr),'\u2593')+sp(wfMd,'\u2592'),
-    pp+sp(wfCol(2,fr),'\u2593')+sp(wfMd,'\u2592'),
-    pp+sp(wfDm,'\u2591')+sp(wfMd,'\u2592')+sp(wfCol(0,fr),'\u2593')+sp(wfMd,'\u2592')+sp(wfDm,'\u2591'),
-    sp(wfDm,'\u2591\u2248')+sp(wfMd,'\u2592\u2592')+sp(wfCol(1,fr),'\u2593\u2593')+sp(wfMd,'\u2592\u2592')+sp(wfDm,'\u2248\u2591')
-  ];
-}
-
-// ── Active aqueduct: full Roman arch diagram ──────────────────────────────────
-// Mirrors tuiAqueductRow() in dashboard_tui.go exactly.
-// Returns an array of HTML line strings (l1, l2, arch sub-rows..., label).
-function aqRow(ch,fr){
+// ── CSS Arch Section ──────────────────────────────────────────────────────────
+// buildActiveArch renders one active aqueduct as a CSS flexbox card.
+// Channel row: scrolling gradient animation. Piers: CSS boxes with borders.
+// Waterfall: CSS gradient strip with falling animation. Labels below piers.
+function buildActiveArch(ch){
   var steps=(ch.steps&&ch.steps.length)?ch.steps:['\u2014'];
   var n=steps.length;
-  function actv(s){return s===ch.step&&!!ch.droplet_id;}
+  function isAct(s){return s===ch.step&&!!ch.droplet_id;}
 
-  var pTxt='  '+padR(ch.name,NAME_W)+'  ';
-  var indent=' '.repeat(pTxt.length);
-  var repo=trunc(ch.repo_name||'',NAME_W);
-  var pRepo='  '+sp(cDim,padR(repo,NAME_W))+'  ';
-
-  var cW=n*COL_W;
-
-  // l1: aqueduct name (unstyled white) + mortar cap row (dim).
-  // Mirrors: prefix + cStyle.Render(strings.Repeat("\u2580", chanW))
-  var l1=esc(pTxt)+sp(cDim,'\u2580'.repeat(cW));
-
-  // Water content for l2.
-  var water;
+  var infoClass='aq-info',infoHTML='';
   if(ch.droplet_id){
-    var bar=pbar(ch.cataractae_index,ch.total_cataractae,8);
-    if(ch.note_count>0){
-      water=chanWater('  \u267b '+ch.droplet_id+'  '+fmtNs(ch.elapsed)+'  '+bar+'  ',cYellow,cW,fr);
-    }else{
-      water=chanWater('  '+ch.droplet_id+'  '+fmtNs(ch.elapsed)+'  '+bar+'  ',wfMd,cW,fr);
-    }
+    if(ch.note_count>0)infoClass+=' revised';
+    var pct=ch.total_cataractae>0?Math.min(100,Math.floor(ch.cataractae_index*100/ch.total_cataractae)):0;
+    var rev=ch.note_count>0?'<span class="aq-revised-mark">\u267b</span> ':'';
+    infoHTML=rev
+      +'<span class="aq-droplet-id">'+esc(ch.droplet_id)+'</span>'
+      +'<span class="aq-elapsed">'+esc(fmtNs(ch.elapsed))+'</span>'
+      +'<div class="aq-pbar"><div class="aq-pbar-fill" style="width:'+pct+'%"></div></div>';
   }else{
-    water=chanWater('  \u2014 idle \u2014  ',cDim,cW,fr);
+    infoClass+=' idle';
+    infoHTML='\u2014 idle \u2014';
   }
 
-  var wfR=buildWfRows(fr);
-  // wfExit mirrors: wfDim.Render("\u2591")+wfMid.Render("\u2592")+wfA(0).Render("\u2593\u2593")
-  var wfExit=sp(wfDm,'\u2591')+sp(wfMd,'\u2592')+sp(wfCol(0,fr),'\u2593\u2593');
+  var chanAttrs=ch.droplet_id
+    ?' class="aq-channel clickable" data-aqname="'+esc(ch.name)+'"'
+    :' class="aq-channel"';
 
-  // l2: repo prefix + channel wall + water + channel wall + waterfall exit.
-  // Channel row is clickable when active (opens peek).
-  var l2chan=sp(cDim,'\u2588')+water+sp(cDim,'\u2588')+wfExit;
-  var l2;
-  if(ch.droplet_id){
-    l2=pRepo+'<span data-aqname="'+esc(ch.name)+'" style="cursor:pointer">'+l2chan+'</span>';
-  }else{
-    l2=pRepo+l2chan;
+  var piersHTML='',labelsHTML='';
+  for(var i=0;i<n;i++){
+    var step=steps[i],act=isAct(step);
+    piersHTML+='<div class="aq-pier'+(act?' active':'')+'"></div>';
+    labelsHTML+='<div class="aq-lbl'+(act?' active':'')+'">' +esc(trunc(step,18))+'</div>';
   }
 
-  // Arch + pier rows: TAPER*2 + PIER_ROWS*2 rendered sub-rows.
-  // Each logical row lr produces a mortar sub-row and a brick sub-row.
-  var archLines=[];
-  for(var lr=0;lr<TAPER+PIER_ROWS;lr++){
-    var bW=Math.max(ARCH_TOP-lr*2,PIER_W);
-    var rPL=Math.floor((COL_W-bW)/2);
-    var gW=COL_W-bW;
-
-    var tM=Math.min(lr/TAPER,1.0);
-    var crM=(lr<TAPER)?archCrown(tM,gW):[0,gW,0];
-    var tB=Math.min(lr+0.5,TAPER)/TAPER;
-    var crB=(lr<TAPER)?archCrown(tB,gW):[0,gW,0];
-    var lfM=crM[0],ogM=crM[1],rfM=crM[2];
-    var lfB=crB[0],ogB=crB[1],rfB=crB[2];
-
-    var mSB=indent,bSB=indent;
-    // Brick offset alternates rows for staggered courses.
-    var off=Math.floor(BRICK/2)*(lr%2);
-
-    // Left abutment.
-    var aM='\u2580'.repeat(rPL),aB='';
-    for(var cc=0;cc<rPL;cc++)aB+=((cc+off)%(BRICK+1)===BRICK)?'\u258c':'\u2588';
-    mSB+=sp(cDim,aM);bSB+=sp(cDim,aB);
-
-    for(var i=0;i<n;i++){
-      var step=steps[i],pC=actv(step)?cGreen:cDim;
-      // Pier mortar sub-row.
-      mSB+=sp(pC,'\u2580'.repeat(bW));
-      // Pier brick sub-row: staggered joint positions.
-      var bd='';
-      for(var cc=0;cc<bW;cc++)bd+=((cc+off)%(BRICK+1)===BRICK)?'\u258c':'\u2588';
-      bSB+=sp(pC,bd);
-
-      // Inter-pier span: arch crown fill with per-side colour attribution.
-      if(i<n-1){
-        var lC=actv(step)?cGreen:cDim,rC=actv(steps[i+1])?cGreen:cDim;
-        // Mortar sub-row arch crown.
-        if(lfM>0)mSB+=sp(lC,'\u2580'.repeat(lfM));
-        if(ogM>0)mSB+=' '.repeat(ogM);
-        if(rfM>0)mSB+=sp(rC,'\u2580'.repeat(rfM));
-        // Brick sub-row arch crown with haunch details.
-        if(lfB>0){if(lfB>1)bSB+=sp(lC,'\u2588'.repeat(lfB-1));bSB+=sp(lC,'\u258c');}
-        if(ogB>0)bSB+=' '.repeat(ogB);
-        if(rfB>0){bSB+=sp(rC,'\u2590');if(rfB>1)bSB+=sp(rC,'\u2588'.repeat(rfB-1));}
-      }
-    }
-
-    // Right abutment (same as left).
-    mSB+=sp(cDim,aM);bSB+=sp(cDim,aB);
-
-    // Append waterfall sub-row pair.
-    var sr=lr*2;
-    mSB+=wfR[sr];bSB+=wfR[sr+1];
-    archLines.push(mSB,bSB);
-  }
-
-  // Label line: step names centred under each pier column.
-  var lbl=indent;
-  for(var i=0;i<steps.length;i++){
-    var step=steps[i],lb=trunc(step,COL_W-1);
-    lbl+=actv(step)?sp(cGreen,padC(lb,COL_W),true):sp(cDim,padC(lb,COL_W));
-  }
-
-  var res=[l1,l2];
-  res=res.concat(archLines);
-  res.push(lbl);
-  return res;
+  return'<div class="aq-block">'
+    +'<div class="aq-active">'
+    +'<div class="aq-hdr">'
+    +'<span class="aq-name">'+esc(ch.name)+'</span>'
+    +'<span class="aq-repo">'+esc(ch.repo_name||'')+'</span>'
+    +'</div>'
+    +'<div class="aq-channel-row">'
+    +'<div'+chanAttrs+'>'
+    +'<div class="aq-wave"></div>'
+    +'<div class="'+infoClass+'">'+infoHTML+'</div>'
+    +'</div>'
+    +'<div class="aq-waterfall"></div>'
+    +'</div>'
+    +'<div class="aq-piers">'+piersHTML+'</div>'
+    +'<div class="aq-labels">'+labelsHTML+'</div>'
+    +'</div>'
+    +'</div>';
 }
 
-// ── Idle aqueduct: compact single dim line ────────────────────────────────────
-// Mirrors viewIdleAqueductRow() in dashboard_tui.go.
-function idleRow(ch){
-  var nW=12,rW=18;
-  return'  '+sp(cDim,padR(ch.name,nW))+'  '+sp(cDim,padR(ch.repo_name||'',rW))+'  '+sp(cDim,'\u00b7  idle');
+// buildIdleRow renders one idle aqueduct as a compact single-line CSS row.
+function buildIdleRow(ch){
+  return'<div class="aq-idle">'
+    +'<span class="aq-idle-name">'+esc(ch.name)+'</span>'
+    +'<span class="aq-idle-repo">'+esc(ch.repo_name||'')+'</span>'
+    +'<span class="aq-idle-dot">\u00b7 idle</span>'
+    +'</div>';
 }
 
-// ── Aqueduct section ──────────────────────────────────────────────────────────
-// Mirrors viewAqueductArches(): active arches first, then compact idle rows.
-function viewArches(d,fr){
+// renderArchSection rebuilds the #arch-section div from dashboard data.
+// Called only when SSE data changes (CSS animations run independently).
+function renderArchSection(d){
   var chs=d.cataractae||[];
-  if(!chs.length)return[sp(cDim,'  No aqueducts configured')];
-  var active=[],idle=[];
-  for(var i=0;i<chs.length;i++){
-    (chs[i].droplet_id?active:idle).push(chs[i]);
-  }
-  var lines=[];
-  for(var i=0;i<active.length;i++){
-    if(i>0)lines.push('');
-    var rows=aqRow(active[i],fr);
-    for(var j=0;j<rows.length;j++)lines.push(rows[j]);
-  }
+  if(!chs.length){archSectionEl.innerHTML='<div class="aq-empty">No aqueducts configured</div>';return;}
+  var html='',active=[],idle=[];
+  for(var i=0;i<chs.length;i++)(chs[i].droplet_id?active:idle).push(chs[i]);
+  for(var i=0;i<active.length;i++)html+=buildActiveArch(active[i]);
   if(idle.length){
-    if(active.length)lines.push('');
-    for(var i=0;i<idle.length;i++)lines.push(idleRow(idle[i]));
+    html+='<div class="aq-idle-section">';
+    for(var i=0;i<idle.length;i++)html+=buildIdleRow(idle[i]);
+    html+='</div>';
   }
-  return lines;
+  archSectionEl.innerHTML=html;
 }
+
 
 // ── CURRENT FLOW with relative timestamps ────────────────────────────────────
 // Mirrors viewCurrentFlow() in dashboard_tui.go.
@@ -691,27 +611,29 @@ function viewRecent(d){
 }
 
 // ── Main render ───────────────────────────────────────────────────────────────
-var dashData=null,animFr=0;
+var dashData=null;
 function sepLine(){return sp(cDim,'\u2500'.repeat(SCR_W));}
 
+// renderHeader populates the #header pre once (static content).
+function renderHeader(){
+  var lines=[];
+  lines.push(sp(cDim,'\u2593'.repeat(SCR_W)));
+  lines.push(sp(cHeader,padC('\u25c8  C I S T E R N  \u25c8',SCR_W),true));
+  lines.push(sp(cDim,'\u2593'.repeat(SCR_W)));
+  lines.push(sepLine());
+  headerEl.innerHTML=lines.join('\n');
+}
+
+// render updates #screen with the status bar and text sections.
+// The arch section (#arch-section) is updated separately by renderArchSection.
 function render(){
   if(!dashData){screenEl.innerHTML=sp(cDim,'  Loading\u2026');return;}
   var d=dashData;
   var lines=[];
 
-  // Logo header — mirrors viewLogo().
-  lines.push(sp(cDim,'\u2593'.repeat(SCR_W)));
-  lines.push(sp(cHeader,padC('\u25c8  C I S T E R N  \u25c8',SCR_W),true));
-  lines.push(sp(cDim,'\u2593'.repeat(SCR_W)));
-  lines.push(sepLine());
-
-  // Aqueduct arch diagrams.
-  var aqL=viewArches(d,animFr);
-  for(var i=0;i<aqL.length;i++)lines.push(aqL[i]);
-  lines.push(sepLine());
-
   // Status bar — mirrors viewStatusBar().
   var ts=d.fetched_at?new Date(d.fetched_at).toLocaleTimeString():'';
+  lines.push(sepLine());
   lines.push('  '+sp(cGreen,'\u25cf '+(d.flowing_count||0)+' flowing')+'  '+sp(cYellow,'\u25cb '+(d.queued_count||0)+' queued')+'  '+sp(cGreen,'\u2713 '+(d.done_count||0)+' delivered')+'  '+sp(cDim,'\u2014 last update '+ts));
   lines.push(sepLine());
 
@@ -737,15 +659,20 @@ function render(){
   screenEl.innerHTML=lines.join('\n');
 }
 
-// Animation loop at 150ms — matches TUI animInterval constant.
-setInterval(function(){animFr++;render();},150);
+// Render header once (static content), then poll every 150ms for text sections.
+// The CSS wave/waterfall animations run independently of this loop.
+renderHeader();
+setInterval(render,150);
 
-// SSE connection.
+// SSE connection — rebuilds arch section on each data update.
 function connect(){
   connEl.className='';connEl.innerHTML='&#x25CB; connecting&#x2026;';
   var es=new EventSource('/api/dashboard/events');
   es.onopen=function(){connEl.className='live';connEl.innerHTML='&#x25CF; live';};
-  es.onmessage=function(e){try{dashData=JSON.parse(e.data);}catch(err){console.error('cistern:',err);}};
+  es.onmessage=function(e){
+    try{dashData=JSON.parse(e.data);renderArchSection(dashData);}
+    catch(err){console.error('cistern:',err);}
+  };
   es.onerror=function(){connEl.className='';connEl.innerHTML='&#x25CB; reconnecting&#x2026;';es.close();setTimeout(connect,3000);};
 }
 connect();
@@ -801,7 +728,8 @@ function peekConnect(name){
 }
 
 document.getElementById('peek-overlay').addEventListener('click',function(e){if(e.target===this)peekClose();});
-screenEl.addEventListener('click',function(e){
+// Peek clicks originate from the CSS arch section (data-aqname on channel divs).
+archSectionEl.addEventListener('click',function(e){
   var el=e.target.closest&&e.target.closest('[data-aqname]');
   if(el)peekOpen(el.dataset.aqname);
 });
