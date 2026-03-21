@@ -12,6 +12,14 @@
 - `cistern-web.service` systemd user service starts the web dashboard automatically
 - TUI dashboard (`ct dashboard` without `--web`) continues to work unchanged
 
+### Peek panel (web dashboard)
+- Click any active aqueduct arch to open a live read-only peek panel showing the agent's tmux session output
+- Panel is clearly labelled **Observing — read only**; no keyboard input is forwarded
+- Auto-scrolls to bottom; click **pin scroll** to lock the scroll position
+- `GET /api/aqueducts/{name}/peek` — snapshot of current pane content as plain text; `?lines=N` sets capture depth (default 100)
+- `WS /ws/aqueducts/{name}/peek` — WebSocket stream; polls tmux every 500 ms and sends diffs to the client
+- Graceful fallback: panel shows "session not active" when the aqueduct is idle or the tmux session is not found
+
 ## v1.0.0 — 2026-03-18
 
 First stable release of Cistern — a Mad Max–themed agentic workflow orchestrator for software development.

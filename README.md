@@ -256,6 +256,7 @@ ct castellarius status         Show aqueduct flow — which are flowing, which a
 # Dashboard
 ct dashboard                   Live TUI aqueduct arch diagram with cistern and recent flow
 ct dashboard --web             HTTP web dashboard (responsive, SSE live updates, port 5737)
+                               # Click an active arch to open a read-only live peek panel (WebSocket)
 ct dashboard --web --addr :8080  Custom listen address for web dashboard
 ct feed                        Alias for dashboard
 
