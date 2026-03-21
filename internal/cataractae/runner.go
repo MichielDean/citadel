@@ -34,8 +34,6 @@ type Runner struct {
 	queue    *cistern.Client
 
 	workers          []*Worker
-	sharedCloneDir   string // ~/.cistern/sandboxes/<repo>/ — single shared git clone
-	sandboxBase      string // kept for compat; same as sharedCloneDir
 	handoffThreshold int
 
 	mu sync.Mutex
@@ -83,12 +81,16 @@ func New(cfg Config) (*Runner, error) {
 		return nil, err
 	}
 
-	// Ensure each aqueduct has its own dedicated clone.
+	// Ensure the primary clone (shared object store) and per-aqueduct worktrees exist.
 	// SkipInitialClone is set in tests that use fake repo URLs.
 	if !cfg.SkipInitialClone {
+		primaryDir := filepath.Join(repoSandboxDir, "_primary")
+		if err := EnsurePrimaryClone(primaryDir, cfg.Repo.URL); err != nil {
+			return nil, fmt.Errorf("cataractae: primary clone for %q: %w", cfg.Repo.Name, err)
+		}
 		for _, w := range workers {
-			if err := EnsureDedicatedClone(w.SandboxDir, cfg.Repo.URL); err != nil {
-				return nil, fmt.Errorf("cataractae: initial clone for %q/%s: %w", cfg.Repo.Name, w.Name, err)
+			if err := EnsureWorktree(primaryDir, w.SandboxDir); err != nil {
+				return nil, fmt.Errorf("cataractae: worktree for %q/%s: %w", cfg.Repo.Name, w.Name, err)
 			}
 		}
 	}
@@ -98,8 +100,6 @@ func New(cfg Config) (*Runner, error) {
 		workflow:         cfg.Workflow,
 		queue:            cfg.CisternClient,
 		workers:          workers,
-		sharedCloneDir:   repoSandboxDir,
-		sandboxBase:      repoSandboxDir,
 		handoffThreshold: handoff,
 	}, nil
 }
@@ -185,17 +185,8 @@ func (r *Runner) findWorkerByName(name string) *Worker {
 func (r *Runner) SpawnStep(w *Worker, item *cistern.Droplet, step *aqueduct.WorkflowCataractae) error {
 	log.Printf("cataractae: %s/%s: spawning step %q for item %s", r.repo.Name, w.Name, step.Name, item.ID)
 
-		// 1. Position the dedicated clone on the item's feature branch.
-	// PrepareBranch fetches latest origin/main and creates or resumes the branch.
-	if step.Context == aqueduct.ContextFullCodebase || step.Context == "" {
-		if step.Type == aqueduct.CataractaeTypeAgent {
-			if err := PrepareBranch(w.SandboxDir, item.ID); err != nil {
-				return fmt.Errorf("sandbox branch: %w", err)
-			}
-		}
-	}
-
-	// 2. Prepare context directory and CONTEXT.md.
+	// 1. Prepare context directory and CONTEXT.md.
+	// Branch setup is owned by the Castellarius and happens before this call.
 	notes, err := r.queue.GetNotes(item.ID)
 	if err != nil {
 		log.Printf("cataractae: warning: could not fetch notes for %s: %v", item.ID, err)
@@ -219,7 +210,7 @@ func (r *Runner) SpawnStep(w *Worker, item *cistern.Droplet, step *aqueduct.Work
 		return fmt.Errorf("context: %w", err)
 	}
 
-	// 3. Verify skills are installed in ~/.cistern/skills/. Claude reads them
+	// 2. Verify skills are installed in ~/.cistern/skills/. Claude reads them
 	// directly via --add-dir ~/.cistern/skills (injected in session.go) using
 	// the absolute paths written into CONTEXT.md by context.go. No file copying.
 	for _, skill := range step.Skills {
@@ -228,7 +219,7 @@ func (r *Runner) SpawnStep(w *Worker, item *cistern.Droplet, step *aqueduct.Work
 		}
 	}
 
-	// 4. Spawn Claude Code session in tmux. Returns immediately.
+	// 3. Spawn Claude Code session in tmux. Returns immediately.
 	sess := &Session{
 		ID:             w.SessionID,
 		WorkDir:        ctxDir,
@@ -255,12 +246,6 @@ func (r *Runner) SpawnStep(w *Worker, item *cistern.Droplet, step *aqueduct.Work
 			cleanup()
 		}()
 	}
-
-	// Park the worktree so it's not left "in use by another worktree" in the event
-	// the agent exits without the scheduler noticing for a long time.
-	// Note: ParkWorktree is called on exit from this goroutine context by the
-	// caller (adapter/scheduler) after the step is fully complete. We do NOT park
-	// here because the agent's session is still running.
 
 	return nil
 }
