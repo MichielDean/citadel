@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Sandbox worktree optimization (ci-6al33)
+- **Reduced disk cost**: N aqueducts per repo now share a single primary clone object store. Each aqueduct gets a lightweight git worktree (~4.7 MB working tree) instead of a full independent clone (~16 MB). At 100 aqueducts this drops sandbox disk cost from ~1.6 GB to ~490 MB.
+- Primary clone lives at `~/.cistern/sandboxes/<repo>/_primary/`. Aqueduct worktrees remain at `~/.cistern/sandboxes/<repo>/<aqueduct>/` — same paths as before, no migration required.
+- On startup, stale worktree registrations are pruned automatically before adding new ones, preventing `already in use` errors after unexpected exits.
+- Legacy dedicated clones at aqueduct paths are automatically replaced by worktrees on next startup.
+- Branch lifecycle is now owned by the Castellarius: feature branches (`feat/<id>`) are created and cleaned up by the scheduler, not the runner. Agents do not manage branches directly.
+- Non-terminal routes (pass to next step, recirculate) preserve the feature branch so the next cycle can resume incrementally. Terminal routes (deliver, block, escalate) clean up the branch.
+
 ### Web dashboard
 - `ct dashboard --web` starts a Go HTTP server on port 5737 (no ttyd, no terminal emulator required)
 - `GET /api/dashboard` returns `DashboardData` as JSON

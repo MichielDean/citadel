@@ -1,25 +1,59 @@
 # Context
 
-## Item: ci-xilu9
+## Item: ci-6al33
 
-**Title:** Bug: in-repo skills not available in non-cistern repo sandboxes
+**Title:** Reduce sandbox disk multiplier: shared object store via git --local clone or proper worktrees
 **Status:** in_progress
 **Priority:** 2
 
 ### Description
 
-When aqueducts run against ScaledTest or PortfolioWebsite sandboxes, skills defined as in-repo paths (e.g. path: skills/cistern-droplet-state/SKILL.md) fail to copy because those paths only exist in the cistern repo, not in ScaledTest or PortfolioWebsite.
+Current: N aqueducts per repo = N full independent clones. For a large repo with 5 aqueducts, the disk cost multiplies 5×. At 100 aqueducts this becomes prohibitive.
 
-Root cause: internal/cataractae/runner.go resolves skill.Path relative to w.SandboxDir. For ScaledTest sandboxes, w.SandboxDir is ~/.cistern/sandboxes/ScaledTest/julia — which doesn't contain skills/cistern-droplet-state/.
+## Root cause of original worktree failures (commit 60216f8)
+The failure was NOT an inherent git worktree limitation. It was two specific bugs:
+1. Branch contention: two aqueducts could check out the same branch, causing 'already in use' errors
+2. Stale worktree registrations: paths that no longer existed were still registered
 
-Fix options:
-1. Treat skills with path: as external skills if the path doesn't exist in the sandbox, falling back to ~/.cistern/skills/<name>/SKILL.md
-2. When ct repo add creates new sandboxes, copy the cistern repo's skills/ directory into each new sandbox
-3. Change aqueduct.yaml to use external skill references (no path:) for universal skills like cistern-droplet-state, and install them to ~/.cistern/skills/ during ct init
+Both are fixable. The switch to dedicated clones over-corrected.
 
-Option 1 is the most robust — graceful fallback means it works regardless of how the sandbox was created.
+## Research results (tested)
 
-Affected: every ScaledTest and PortfolioWebsite aqueduct run logs 'warning: copy skill cistern-droplet-state' and agents run without their state management skill.
+### Option A: git worktrees with --detach (RECOMMENDED)
+One primary clone per repo. Each aqueduct slot gets a worktree added with --detach:
+  git worktree add --detach ~/.cistern/sandboxes/<repo>/<aqueduct>
+
+Working tree is isolated. Branches are checked out per-step (feat/<droplet-id>). No two worktrees ever share a branch. Object store is shared — no duplication.
+
+Disk cost measured:
+- Primary clone (ScaledTest): 16 MB (objects + working tree)
+- Each additional worktree: 4.7 MB (working tree only — objects shared)
+- 100 aqueducts: 16 MB + 100×4.7 MB = ~487 MB (vs current 100×16 MB = 1.6 GB)
+
+Startup fix needed: git worktree prune --expire=0 on every startup to clear stale registrations before adding new ones.
+
+### Option B: git clone --local (object hardlinks)
+One reference clone per repo. Additional clones via git clone --local (hardlinks, not copies):
+  git clone --local ~/.cistern/sandboxes/<repo>/_ref ~/.cistern/sandboxes/<repo>/<aqueduct>
+
+Disk cost: identical to Option A (4.7 MB per aqueduct). Advantage: completely independent .git dirs — no worktree registration issues. Disadvantage: aqueduct clones must fetch from remote (not reference) because hardlinks are point-in-time, not live.
+
+## Recommended implementation: Option A (worktrees with --detach)
+
+Changes to internal/cataractae/sandbox.go:
+1. EnsureDedicatedClone → EnsurePrimaryClone: ensure ~/.cistern/sandboxes/<repo>/_primary/ exists (full clone)
+2. EnsureWorktree: ACTUALLY implement this — git worktree add --detach <path> if not already registered; git worktree prune --expire=0 first to clear stale entries
+3. PrepareBranch: unchanged — checkout feat/<droplet-id> in the worktree as before
+4. On startup in runner.go: prune stale worktrees before registering new ones
+
+Changes to runner.go:
+- Replace EnsureDedicatedClone(w.SandboxDir) with EnsurePrimaryClone + EnsureWorktree
+- Primary clone dir: filepath.Join(sandboxBase, '_primary')
+- Worktree dirs: filepath.Join(sandboxBase, workerName) — same paths as current
+
+Migration: existing dedicated clones at ~/.cistern/sandboxes/<repo>/<aqueduct>/ can stay as-is. On next startup, runner detects no primary clone and converts: treats first aqueduct's existing clone as primary, worktree-adds the rest. Or simpler: just delete sandboxes and let them re-clone. Doctor can detect and suggest migration.
+
+This is backward compatible — worktree directories have the same paths as current dedicated clone directories.
 
 ## Current Step: simplify
 
@@ -29,37 +63,21 @@ Affected: every ScaledTest and PortfolioWebsite aqueduct run logs 'warning: copy
 
 ## Recent Step Notes
 
-### From: scheduler
+### From: manual
 
-Implement pass rejected: HEAD has not advanced since last review (commit: 49299a429ca39f61358609292752e65b6909b32d). No new commits were found. You must commit your changes before signaling pass.
+Committed the 9 test files (sandbox_test.go, branch_lifecycle_test.go) that were written but untracked. All 9 packages pass. HEAD now at 90a5ff8.
 
 ### From: manual
 
-Committed existing fixes (os.UserHomeDir error check, shell-quoting skillsDir, buildClaudeCmd extraction + 5 tests in session_test.go). All 9 packages pass. HEAD advanced to d1b3ca6.
+Simplified: inlined ensureClone into EnsurePrimaryClone — removed a single-caller indirection layer with a misleading 'shared implementation' comment. Tests: all 9 packages pass.
 
 ### From: manual
 
-FINAL APPROACH: symlinks instead of copies.
-
-Replace the file copy in runner.go with symlink creation:
-
-1. internal/cataractae/runner.go — instead of copyFile(src, dest), use os.Symlink(src, dest):
-   - For in-repo skills that don't exist in the sandbox, symlink from ~/.cistern/skills/<name>/SKILL.md
-   - For external skills, symlink from ~/.cistern/skills/<name>/SKILL.md  
-   - Check if symlink/file already exists before creating (idempotent)
-   - If src doesn't exist in sandbox AND doesn't exist in ~/.cistern/skills/, log warning and skip
-
-2. Result: ~/.cistern/skills/ is the single source of truth. Sandboxes contain symlinks pointing there. No copying, always current, deterministic.
-
-3. ct init: seed ~/.cistern/skills/ with all built-in skills.
-4. ct doctor: verify all aqueduct.yaml-referenced skills exist in ~/.cistern/skills/.
-5. ct repo add: no sandbox seeding needed — symlinks are created at job start by the runner.
-
-The <location> in CONTEXT.md stays as .claude/skills/<name>/SKILL.md (relative to sandbox). Claude reads the symlink transparently.
+scheduler.go:369 — cleanupBranchInSandbox runs every time an aqueduct is released (observeRepo, 'if item.Assignee \!= ""' block). It unconditionally deletes feat/<item.ID> from the worktree after each step completes, recirculates, or blocks. prepareBranchInSandbox (scheduler.go:441-448) has a resume path that checks whether the branch already exists and checks it out to preserve prior commits — but that path can never execute in production: the branch is always deleted by cleanup before the next dispatch cycle. TestPrepareBranchInSandbox_ResumeBranch (branch_lifecycle_test.go:279-316) tests a code path that is dead in normal operation. Consequence: multi-revision cycles (recirculate → implement again) always start fresh from origin/main, discarding all prior agent commits. Fix: cleanupBranchInSandbox should only run when the droplet reaches a truly terminal state (final pass through the pipeline), not on every aqueduct release. Or: remove the resume logic and the test, and document that each revision cycle always starts from origin/main (but then the git identity configure + branch-exists check is wasted work on every dispatch).
 
 ### From: manual
 
-All three review issues resolved and committed (d1b3ca6): (1) os.UserHomeDir() error checked — spawn returns error if HOME unset; (2) skillsDir shell-quoted via shellQuote() helper; (3) buildClaudeCmd() extracted as testable method with 5 tests in session_test.go. All 9 packages pass.
+Fixed cleanupBranchInSandbox to only run at terminal states. Separated pool worker release (always unconditional) from branch cleanup (terminal-only: isTerminal routes + no-route escalation). Non-terminal routes (recirculate, pass-to-next-step) now preserve the feature branch so the same aqueduct can resume incrementally. The resume path in prepareBranchInSandbox is now reachable in production. All 9 packages pass. HEAD: 509aee7.
 
 <available_skills>
   <skill>
@@ -79,16 +97,16 @@ All three review issues resolved and committed (d1b3ca6): (1) os.UserHomeDir() e
 When your work is done, signal your outcome using the `ct` CLI:
 
 **Pass (work complete, move to next step):**
-    ct droplet pass ci-xilu9
+    ct droplet pass ci-6al33
 
 **Recirculate (needs rework — send back upstream):**
-    ct droplet recirculate ci-xilu9
-    ct droplet recirculate ci-xilu9 --to implement
+    ct droplet recirculate ci-6al33
+    ct droplet recirculate ci-6al33 --to implement
 
 **Block (genuinely blocked, cannot proceed):**
-    ct droplet block ci-xilu9
+    ct droplet block ci-6al33
 
 Add notes before signaling:
-    ct droplet note ci-xilu9 "What you did / found"
+    ct droplet note ci-6al33 "What you did / found"
 
 The `ct` binary is on your PATH.

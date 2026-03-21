@@ -459,11 +459,22 @@ func (s *Castellarius) observeRepo(_ context.Context, repo aqueduct.RepoConfig) 
 		}
 
 		step := currentCataracta(item, wf)
+		assignee := item.Assignee
 
-		// Release the aqueduct so it can pick up its next droplet.
-		// With dedicated clones (no worktrees), no HEAD parking is needed.
-		if item.Assignee != "" {
-			if w := pool.FindByName(item.Assignee); w != nil {
+		// cleanupBranch detaches HEAD and deletes feat/<id> in the assignee's sandbox.
+		// Called at terminal states and no-route escalation — non-terminal routes keep
+		// the branch so the next dispatch cycle can resume incrementally.
+		cleanupBranch := func() {
+			if assignee != "" && s.sandboxRoot != "" {
+				sandboxDir := filepath.Join(s.sandboxRoot, repo.Name, assignee)
+				cleanupBranchInSandbox(sandboxDir, "feat/"+item.ID)
+			}
+		}
+
+		// Release the aqueduct worker unconditionally — it is free for other droplets
+		// regardless of where this one routes next.
+		if assignee != "" {
+			if w := pool.FindByName(assignee); w != nil {
 				pool.Release(w)
 			}
 		}
@@ -497,7 +508,7 @@ func (s *Castellarius) observeRepo(_ context.Context, repo aqueduct.RepoConfig) 
 		// committing — auto-recirculate with a diagnostic message.
 		if result == ResultPass && step.Name == "implement" {
 			if lastCommit, err := client.GetLastReviewedCommit(item.ID); err == nil && lastCommit != "" {
-				sandboxDir := filepath.Join(s.sandboxRoot, repo.Name, item.Assignee)
+				sandboxDir := filepath.Join(s.sandboxRoot, repo.Name, assignee)
 				if head, err := sandboxHead(sandboxDir); err == nil && head == lastCommit {
 					note := fmt.Sprintf(
 						"Implement pass rejected: HEAD has not advanced since last review (commit: %s). No new commits were found. You must commit your changes before signaling pass.",
@@ -525,6 +536,7 @@ func (s *Castellarius) observeRepo(_ context.Context, repo aqueduct.RepoConfig) 
 		if next == "" {
 			reason := fmt.Sprintf("no route from step %q for outcome %q", step.Name, item.Outcome)
 			s.logger.Warn("observe: no route", "droplet", item.ID)
+			cleanupBranch()
 			if err := client.Escalate(item.ID, reason); err != nil {
 				s.logger.Error("observe: escalate failed", "droplet", item.ID, "error", err)
 			}
@@ -541,11 +553,13 @@ func (s *Castellarius) observeRepo(_ context.Context, repo aqueduct.RepoConfig) 
 		}
 
 		if isTerminal(next) {
+			cleanupBranch()
 			s.handleTerminal(client, item.ID, next, step.Name)
 			continue
 		}
 
 		// Advance item to next step (open for the next dispatch cycle).
+		// The feature branch is kept so the next cycle can resume incrementally.
 		if err := client.Assign(item.ID, "", next); err != nil {
 			s.logger.Error("observe: advance step failed", "droplet", item.ID, "next", next, "error", err)
 		}
@@ -572,7 +586,7 @@ func (s *Castellarius) dispatchRepo(ctx context.Context, repo aqueduct.RepoConfi
 		}
 
 		// Each repo has its own pool — just get the next ready droplet for this repo.
-		// No sticky aqueduct matching needed: each aqueduct has its own dedicated clone,
+		// No sticky aqueduct matching needed: each aqueduct has its own worktree,
 		// so any aqueduct in the pool can work on any droplet in the repo.
 		item, err := client.GetReady(repo.Name)
 		if err != nil {
@@ -623,6 +637,27 @@ func (s *Castellarius) dispatchRepo(ctx context.Context, repo aqueduct.RepoConfi
 
 		w := worker // capture for goroutine
 		go func() {
+			// Prepare the feature branch before spawning the agent.
+			// Castellarius owns branch lifecycle — agents never call git checkout -b.
+			// Skipped when sandboxRoot is unset (test environments without real repos).
+			if s.sandboxRoot != "" &&
+				req.Step.Type == aqueduct.CataractaeTypeAgent &&
+				(req.Step.Context == aqueduct.ContextFullCodebase || req.Step.Context == "") {
+				sandboxDir := filepath.Join(s.sandboxRoot, req.RepoConfig.Name, w.Name)
+				if err := prepareBranchInSandbox(sandboxDir, req.Item.ID); err != nil {
+					s.logger.Error("prepare branch failed",
+						"repo", req.RepoConfig.Name,
+						"droplet", req.Item.ID,
+						"error", err,
+					)
+					if err2 := client.Assign(req.Item.ID, "", req.Step.Name); err2 != nil {
+						s.logger.Error("reset after branch failure", "droplet", req.Item.ID, "error", err2)
+					}
+					pool.Release(w)
+					return
+				}
+			}
+
 			if err := s.runner.Spawn(ctx, req); err != nil {
 				s.logger.Error("spawn failed",
 					"repo", repo.Name,
@@ -877,6 +912,84 @@ func sandboxHead(dir string) (string, error) {
 		return "", fmt.Errorf("git rev-parse HEAD in %s: %w", dir, err)
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// prepareBranchInSandbox creates or resumes the feature branch for a droplet
+// in the given sandbox (worktree) directory. Castellarius calls this before
+// spawning an agent — agents never manage branches directly.
+func prepareBranchInSandbox(dir, itemID string) error {
+	branch := "feat/" + itemID
+
+	// Configure git identity so commits don't fail.
+	for _, args := range [][]string{
+		{"git", "config", "user.name", "Cistern Agent"},
+		{"git", "config", "user.email", "agent@cistern.local"},
+	} {
+		c := exec.Command(args[0], args[1:]...)
+		c.Dir = dir
+		if out, err := c.CombinedOutput(); err != nil {
+			return fmt.Errorf("%v in %s: %w: %s", args, dir, err, out)
+		}
+	}
+
+	// Check whether the branch already exists locally.
+	listCmd := exec.Command("git", "branch", "--list", branch)
+	listCmd.Dir = dir
+	out, err := listCmd.Output()
+	if err != nil {
+		return fmt.Errorf("git branch --list in %s: %w", dir, err)
+	}
+
+	if strings.TrimSpace(string(out)) != "" {
+		// Branch exists — check it out to resume incrementally.
+		checkout := exec.Command("git", "checkout", branch)
+		checkout.Dir = dir
+		if co, err := checkout.CombinedOutput(); err != nil {
+			return fmt.Errorf("git checkout %s in %s: %w: %s", branch, dir, err, co)
+		}
+		return nil
+	}
+
+	// New branch — fetch and start from a clean origin/main.
+	fetch := exec.Command("git", "fetch", "origin")
+	fetch.Dir = dir
+	if fo, err := fetch.CombinedOutput(); err != nil {
+		return fmt.Errorf("git fetch in %s: %w: %s", dir, err, fo)
+	}
+
+	reset := exec.Command("git", "reset", "--hard", "origin/main")
+	reset.Dir = dir
+	if ro, err := reset.CombinedOutput(); err != nil {
+		return fmt.Errorf("git reset in %s: %w: %s", dir, err, ro)
+	}
+
+	clean := exec.Command("git", "clean", "-fdx")
+	clean.Dir = dir
+	if co, err := clean.CombinedOutput(); err != nil {
+		return fmt.Errorf("git clean in %s: %w: %s", dir, err, co)
+	}
+
+	create := exec.Command("git", "checkout", "-b", branch)
+	create.Dir = dir
+	if co, err := create.CombinedOutput(); err != nil {
+		return fmt.Errorf("git checkout -b %s in %s: %w: %s", branch, dir, err, co)
+	}
+
+	return nil
+}
+
+// cleanupBranchInSandbox detaches HEAD in the worktree and deletes the feature
+// branch. Called by the Castellarius after a droplet completes or recirculates.
+// Errors are ignored — this is best-effort cleanup.
+func cleanupBranchInSandbox(dir, branch string) {
+	// Detach HEAD so we can delete the branch.
+	detach := exec.Command("git", "checkout", "--detach", "HEAD")
+	detach.Dir = dir
+	_ = detach.Run()
+
+	del := exec.Command("git", "branch", "-D", branch)
+	del.Dir = dir
+	_ = del.Run()
 }
 
 // WriteContext writes a CONTEXT.md file with notes from previous steps.

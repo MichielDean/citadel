@@ -143,7 +143,7 @@ repos:
       - marcia
 ```
 
-Each aqueduct runs its own isolated git sandbox clone. Each tmux session is named `<repo>-<aqueduct>`. Every `tmux ls` shows the cistern in motion:
+Each aqueduct runs its own isolated git worktree, backed by a shared primary clone at `~/.cistern/sandboxes/<repo>/_primary/`. Objects are shared — only the working tree is duplicated per aqueduct, reducing disk cost roughly 3× at scale. Each tmux session is named `<repo>-<aqueduct>`. Every `tmux ls` shows the cistern in motion:
 
 ```
 myproject-virgo: 1 windows (adversarial-review)
