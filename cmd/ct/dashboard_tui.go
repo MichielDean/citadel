@@ -34,13 +34,15 @@ const animInterval = 150 * time.Millisecond // water animation speed
 // --- Model ---
 
 type dashboardTUIModel struct {
-	cfgPath string
-	dbPath  string
-	data    *DashboardData
-	frame   int  // animation frame counter — increments every animInterval
-	scrollY int  // scroll offset in lines (0 = top)
-	width   int
-	height  int
+	cfgPath    string
+	dbPath     string
+	data       *DashboardData
+	frame      int  // animation frame counter — increments every animInterval
+	scrollY    int  // scroll offset in lines (0 = top)
+	width      int
+	height     int
+	peekActive bool
+	peek       peekModel
 }
 
 func newDashboardTUIModel(cfgPath, dbPath string) dashboardTUIModel {
@@ -76,6 +78,35 @@ func (m dashboardTUIModel) fetchDataCmd() tea.Cmd {
 }
 
 func (m dashboardTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// When peek overlay is active, route most messages to the peek model.
+	if m.peekActive {
+		switch msg := msg.(type) {
+		case tea.WindowSizeMsg:
+			m.width = msg.Width
+			m.height = msg.Height
+			updated, cmd := m.peek.Update(msg)
+			m.peek = updated.(peekModel)
+			return m, cmd
+		case tea.KeyMsg:
+			switch msg.String() {
+			case "q", "esc":
+				m.peekActive = false
+				return m, nil
+			case "ctrl+c":
+				return m, tea.Quit
+			default:
+				updated, cmd := m.peek.Update(msg)
+				m.peek = updated.(peekModel)
+				return m, cmd
+			}
+		case peekTickMsg, peekContentMsg:
+			updated, cmd := m.peek.Update(msg)
+			m.peek = updated.(peekModel)
+			return m, cmd
+		}
+		return m, nil
+	}
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -99,6 +130,22 @@ func (m dashboardTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "r", "R":
 			return m, m.fetchDataCmd()
+		case "p", "enter":
+			// Open peek on the first active aqueduct.
+			if m.data != nil {
+				for _, ch := range m.data.Cataractae {
+					if ch.DropletID != "" {
+						session := ch.RepoName + "-" + ch.Name
+						header := fmt.Sprintf("[%s] %s — flowing %s", ch.DropletID, ch.Step, formatElapsed(ch.Elapsed))
+						pk := newPeekModel(defaultCapturer, session, header, 0)
+						pk.width = m.width
+						pk.height = m.height
+						m.peek = pk
+						m.peekActive = true
+						return m, m.peek.Init()
+					}
+				}
+			}
 		case "up", "k":
 			if m.scrollY > 0 {
 				m.scrollY--
@@ -131,6 +178,10 @@ func (m dashboardTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m dashboardTUIModel) View() string {
+	if m.peekActive {
+		return m.peek.View()
+	}
+
 	if m.data == nil {
 		return "  Loading…\n"
 	}
@@ -166,7 +217,7 @@ func (m dashboardTUIModel) View() string {
 	parts = append(parts, sep)
 
 	// 5. Footer — always pinned at the bottom (not scrolled).
-	footer := tuiStyleFooter.Render("  q quit  r refresh  ↑↓/jk scroll  g/G top/bottom")
+	footer := tuiStyleFooter.Render("  q quit  r refresh  ↑↓/jk scroll  g/G top/bottom  p peek")
 
 	// Apply scroll: render full content, slice visible window.
 	full  := strings.Join(parts, "\n")
