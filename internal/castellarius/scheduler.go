@@ -459,15 +459,12 @@ func (s *Castellarius) observeRepo(_ context.Context, repo aqueduct.RepoConfig) 
 		}
 
 		step := currentCataracta(item, wf)
+		assignee := item.Assignee
 
-		// Clean up the feature branch and release the aqueduct.
-		// Branch cleanup is skipped when sandboxRoot is unset (test environments).
-		if item.Assignee != "" {
-			if s.sandboxRoot != "" {
-				sandboxDir := filepath.Join(s.sandboxRoot, repo.Name, item.Assignee)
-				cleanupBranchInSandbox(sandboxDir, "feat/"+item.ID)
-			}
-			if w := pool.FindByName(item.Assignee); w != nil {
+		// Release the aqueduct worker unconditionally — it is free for other droplets
+		// regardless of where this one routes next.
+		if assignee != "" {
+			if w := pool.FindByName(assignee); w != nil {
 				pool.Release(w)
 			}
 		}
@@ -501,7 +498,7 @@ func (s *Castellarius) observeRepo(_ context.Context, repo aqueduct.RepoConfig) 
 		// committing — auto-recirculate with a diagnostic message.
 		if result == ResultPass && step.Name == "implement" {
 			if lastCommit, err := client.GetLastReviewedCommit(item.ID); err == nil && lastCommit != "" {
-				sandboxDir := filepath.Join(s.sandboxRoot, repo.Name, item.Assignee)
+				sandboxDir := filepath.Join(s.sandboxRoot, repo.Name, assignee)
 				if head, err := sandboxHead(sandboxDir); err == nil && head == lastCommit {
 					note := fmt.Sprintf(
 						"Implement pass rejected: HEAD has not advanced since last review (commit: %s). No new commits were found. You must commit your changes before signaling pass.",
@@ -529,6 +526,10 @@ func (s *Castellarius) observeRepo(_ context.Context, repo aqueduct.RepoConfig) 
 		if next == "" {
 			reason := fmt.Sprintf("no route from step %q for outcome %q", step.Name, item.Outcome)
 			s.logger.Warn("observe: no route", "droplet", item.ID)
+			if assignee != "" && s.sandboxRoot != "" {
+				sandboxDir := filepath.Join(s.sandboxRoot, repo.Name, assignee)
+				cleanupBranchInSandbox(sandboxDir, "feat/"+item.ID)
+			}
 			if err := client.Escalate(item.ID, reason); err != nil {
 				s.logger.Error("observe: escalate failed", "droplet", item.ID, "error", err)
 			}
@@ -545,11 +546,19 @@ func (s *Castellarius) observeRepo(_ context.Context, repo aqueduct.RepoConfig) 
 		}
 
 		if isTerminal(next) {
+			// Clean up the feature branch only at terminal states. Non-terminal routes
+			// (recirculate, pass-to-next-step) keep the branch so the next dispatch
+			// cycle can resume incrementally on the same aqueduct.
+			if assignee != "" && s.sandboxRoot != "" {
+				sandboxDir := filepath.Join(s.sandboxRoot, repo.Name, assignee)
+				cleanupBranchInSandbox(sandboxDir, "feat/"+item.ID)
+			}
 			s.handleTerminal(client, item.ID, next, step.Name)
 			continue
 		}
 
 		// Advance item to next step (open for the next dispatch cycle).
+		// The feature branch is kept so the next cycle can resume incrementally.
 		if err := client.Assign(item.ID, "", next); err != nil {
 			s.logger.Error("observe: advance step failed", "droplet", item.ID, "next", next, "error", err)
 		}
