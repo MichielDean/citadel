@@ -1,50 +1,46 @@
 # Context
 
-## Item: ci-vlpsw
+## Item: ci-0vm8f
 
-**Title:** Add docs cataracta between QA and delivery
+**Title:** Cataractae peek: read-only live observer for active aqueduct sessions
 **Status:** in_progress
 **Priority:** 2
 
 ### Description
 
-Add a documentation writer cataracta that runs between qa and delivery. Reviews the diff, finds documentation gaps, updates or creates docs in the repo.
+Add ability to observe any active cataractae session in real-time without interacting with it. Requirements:
+- GET /api/aqueducts/{name}/peek returns current tmux pane content as text
+- WebSocket endpoint /ws/aqueducts/{name}/peek streams live pane output (poll tmux every 500ms, send diffs)
+- Web UI: clicking an active aqueduct arch opens a peek panel/modal showing live session output
+- Read-only: no keyboard input forwarded, no interaction possible, purely observational
+- Shows last N lines of pane (configurable, default 100)
+- Auto-scrolls to bottom, toggle to pin scroll position
+- Clear label: 'Observing — read only'
+- Falls back gracefully if aqueduct is idle or tmux session not found
 
-Changes required:
-
-1. cataractae_definitions: add docs_writer role. Instructions: read CONTEXT.md; run git diff main...HEAD; find all .md files; for each changed area (CLI, config, pipeline, architecture) check if docs exist and are accurate; if no user-visible changes pass with 'No documentation updates required'; otherwise update outdated sections, add missing docs, commit with '<id>: docs: update documentation for changes'; signal pass with file list or recirculate with specific ambiguity.
-
-2. cataractae list: insert docs step between qa and delivery. Fields: name=docs, type=agent, identity=docs_writer, model=sonnet, context=full_codebase, skills=[cistern-droplet-state], timeout_minutes=20, skip_for=[1], on_pass=delivery, on_fail=implement, on_recirculate=implement, on_escalate=human
-
-3. Routing: qa on_pass changes delivery -> docs. Trivial complexity skip_cataractae gains docs.
-
-4. Mirror: copy updated aqueduct/feature.yaml to cmd/ct/assets/aqueduct/feature.yaml - both identical.
-
-5. Tests: update any tests referencing cataracta list or pipeline step names.
-
-## Current Step: implement
+## Current Step: simplify
 
 - **Type:** agent
-- **Role:** implementer
+- **Role:** simplifier
 - **Context:** full_codebase
 
 ## Recent Step Notes
 
 ### From: manual
 
-All requirements verified complete: docs_writer definition in aqueduct.yaml, docs step with on_escalate=human, qa on_pass=docs, trivial skip_cataractae includes docs, both YAML mirrors identical, scheduler_test.go updated. No implementation changes needed. Committed CONTEXT.md (694d96f) to advance HEAD per scheduler requirement.
-
-### From: manual
-
-Implementation verified complete. All 5 requirements satisfied: (1) docs_writer cataracta definition in aqueduct.yaml; (2) docs step inserted between qa and delivery with on_escalate=human; (3) qa on_pass updated to docs; (4) trivial skip_cataractae includes docs; (5) both YAML mirrors identical. scheduler_test.go updated with docs step. Committed CONTEXT.md at 694d96f to advance HEAD.
-
-### From: manual
-
-Phase 2: aqueduct/aqueduct.yaml and cmd/ct/assets/aqueduct/aqueduct.yaml — docs step is missing on_escalate: human. The diff hunk @@ -420,6 +426,21 @@ inserts the docs step but its only routing fields are the three context lines inherited from the old security-review step (on_pass: delivery, on_fail: implement, on_recirculate: implement). The sole on_escalate: human addition in the diff goes to the security-review step, not the docs step. Critical droplets (complexity=4) at the docs step will not be escalated to human review before delivery. scheduler_test.go:231 has OnEscalate: 'human' because the workflow struct is constructed directly in Go — this masks the YAML deficiency. Fix: add on_escalate: human to the docs step in both YAML files.
+Fixed readWSTextFrame case 127: 8-byte extended length now correctly combines all 8 bytes per RFC 6455 §5.2. All 9 packages pass.
 
 ### From: scheduler
 
-Implement pass rejected: HEAD has not advanced since last review (commit: 694d96f4a4279810e8d1e22e9fbd1c92df9da704). No new commits were found. You must commit your changes before signaling pass.
+Implement pass rejected: HEAD has not advanced since last review (commit: adf8afd900b608cb93db0d1d6b0998ddde882e2d). No new commits were found. You must commit your changes before signaling pass.
+
+### From: manual
+
+Fixed readWSTextFrame case 127: 8-byte extended payload length now correctly combines all 8 bytes per RFC 6455 §5.2 (was silently discarding high 32 bits ext[0]-ext[3]). All 9 packages pass. Committed bdab760.
+
+### From: manual
+
+Fixed readWSTextFrame case 127 RFC 6455 §5.2 compliance. All 9 packages pass.
 
 <available_skills>
   <skill>
@@ -53,9 +49,9 @@ Implement pass rejected: HEAD has not advanced since last review (commit: 694d96
     <location>.claude/skills/cistern-droplet-state/SKILL.md</location>
   </skill>
   <skill>
-    <name>github-workflow</name>
-    <description>---</description>
-    <location>.claude/skills/github-workflow/SKILL.md</location>
+    <name>code-simplifier</name>
+    <description>code-simplifier</description>
+    <location>.claude/skills/code-simplifier/SKILL.md</location>
   </skill>
 </available_skills>
 
@@ -64,16 +60,16 @@ Implement pass rejected: HEAD has not advanced since last review (commit: 694d96
 When your work is done, signal your outcome using the `ct` CLI:
 
 **Pass (work complete, move to next step):**
-    ct droplet pass ci-vlpsw
+    ct droplet pass ci-0vm8f
 
 **Recirculate (needs rework — send back upstream):**
-    ct droplet recirculate ci-vlpsw
-    ct droplet recirculate ci-vlpsw --to implement
+    ct droplet recirculate ci-0vm8f
+    ct droplet recirculate ci-0vm8f --to implement
 
 **Block (genuinely blocked, cannot proceed):**
-    ct droplet block ci-vlpsw
+    ct droplet block ci-0vm8f
 
 Add notes before signaling:
-    ct droplet note ci-vlpsw "What you did / found"
+    ct droplet note ci-0vm8f "What you did / found"
 
 The `ct` binary is on your PATH.

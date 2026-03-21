@@ -1,15 +1,148 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"crypto/sha1"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
+
+	"github.com/MichielDean/cistern/internal/cistern"
 )
+
+// wsWriteTimeout is the per-frame write deadline set on the hijacked net.Conn
+// before each wsSendText call. Without this, a client that disappears via a
+// network partition (no TCP FIN) causes the goroutine to block indefinitely
+// inside bufio.Writer.Flush.
+const wsWriteTimeout = 10 * time.Second
+
+// aqueductSessionInfo holds the tmux session name and droplet context for an
+// active aqueduct worker.
+type aqueductSessionInfo struct {
+	sessionID string
+	dropletID string
+	title     string
+	elapsed   time.Duration
+}
+
+// lookupAqueductSession returns session info for the named aqueduct worker, or
+// false if the worker is not currently flowing.
+func lookupAqueductSession(dbPath, name string) (aqueductSessionInfo, bool) {
+	c, err := cistern.New(dbPath, "")
+	if err != nil {
+		return aqueductSessionInfo{}, false
+	}
+	defer c.Close()
+
+	items, err := c.List("", "in_progress")
+	if err != nil {
+		return aqueductSessionInfo{}, false
+	}
+	for _, item := range items {
+		if item.Assignee == name {
+			return aqueductSessionInfo{
+				sessionID: item.Repo + "-" + name,
+				dropletID: item.ID,
+				title:     item.Title,
+				elapsed:   time.Since(item.UpdatedAt),
+			}, true
+		}
+	}
+	return aqueductSessionInfo{}, false
+}
+
+// parsePeekLines reads the optional ?lines= query parameter, falling back to
+// defaultPeekLines.
+func parsePeekLines(r *http.Request) int {
+	if v := r.URL.Query().Get("lines"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return defaultPeekLines
+}
+
+// wsAcceptKey computes Sec-WebSocket-Accept per RFC 6455 §4.2.2.
+func wsAcceptKey(clientKey string) string {
+	const magic = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+	h := sha1.New()
+	h.Write([]byte(clientKey + magic))
+	return base64.StdEncoding.EncodeToString(h.Sum(nil))
+}
+
+// wsSendText writes a WebSocket text frame to the buffered writer and flushes.
+// The server never masks frames (RFC 6455 §5.1).
+func wsSendText(w *bufio.Writer, data string) error {
+	payload := []byte(data)
+	n := len(payload)
+	header := make([]byte, 0, 10)
+	header = append(header, 0x81) // FIN=1, opcode=0x1 (text)
+	switch {
+	case n < 126:
+		header = append(header, byte(n))
+	case n < 65536:
+		header = append(header, 0x7E)
+		header = binary.BigEndian.AppendUint16(header, uint16(n))
+	default:
+		header = append(header, 0x7F)
+		header = binary.BigEndian.AppendUint64(header, uint64(n))
+	}
+	if _, err := w.Write(header); err != nil {
+		return err
+	}
+	if _, err := w.Write(payload); err != nil {
+		return err
+	}
+	return w.Flush()
+}
+
+// wsUpgrade performs the RFC 6455 handshake. On success it returns the hijacked
+// connection and its buffered read-writer. On failure it writes an HTTP error
+// and returns a non-nil error.
+func wsUpgrade(w http.ResponseWriter, r *http.Request) (net.Conn, *bufio.ReadWriter, error) {
+	if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+		http.Error(w, "websocket upgrade required", http.StatusUpgradeRequired)
+		return nil, nil, fmt.Errorf("not a websocket request")
+	}
+	key := r.Header.Get("Sec-Websocket-Key")
+	if key == "" {
+		http.Error(w, "missing Sec-WebSocket-Key", http.StatusBadRequest)
+		return nil, nil, fmt.Errorf("missing Sec-WebSocket-Key")
+	}
+	hj, ok := w.(http.Hijacker)
+	if !ok {
+		http.Error(w, "hijacking not supported", http.StatusInternalServerError)
+		return nil, nil, fmt.Errorf("hijacking not supported")
+	}
+	conn, brw, err := hj.Hijack()
+	if err != nil {
+		return nil, nil, err
+	}
+	resp := "HTTP/1.1 101 Switching Protocols\r\n" +
+		"Upgrade: websocket\r\n" +
+		"Connection: Upgrade\r\n" +
+		"Sec-WebSocket-Accept: " + wsAcceptKey(key) + "\r\n" +
+		"\r\n"
+	if _, err := brw.WriteString(resp); err != nil {
+		conn.Close()
+		return nil, nil, err
+	}
+	if err := brw.Flush(); err != nil {
+		conn.Close()
+		return nil, nil, err
+	}
+	return conn, brw, nil
+}
 
 // newDashboardMux returns an http.Handler for the web dashboard.
 // Exposed for testing.
@@ -68,6 +201,65 @@ func newDashboardMux(cfgPath, dbPath string) http.Handler {
 				return
 			case <-ticker.C:
 				send()
+			}
+		}
+	})
+
+	// GET /api/aqueducts/{name}/peek — snapshot of current tmux pane output.
+	mux.HandleFunc("/api/aqueducts/{name}/peek", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		name := r.PathValue("name")
+		lines := parsePeekLines(r)
+		sess, ok := lookupAqueductSession(dbPath, name)
+		capturer := defaultCapturer
+		if !ok || !capturer.HasSession(sess.sessionID) {
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			fmt.Fprint(w, "session not active")
+			return
+		}
+		content, err := capturer.Capture(sess.sessionID, lines)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("capture error: %v", err), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		fmt.Fprint(w, stripANSI(content))
+	})
+
+	// WS /ws/aqueducts/{name}/peek — live streaming peek (poll every 500ms, send diffs).
+	mux.HandleFunc("/ws/aqueducts/{name}/peek", func(w http.ResponseWriter, r *http.Request) {
+		name := r.PathValue("name")
+		lines := parsePeekLines(r)
+
+		conn, brw, err := wsUpgrade(w, r)
+		if err != nil {
+			return // wsUpgrade already wrote the HTTP error
+		}
+		defer conn.Close()
+
+		var prev string
+		capturer := defaultCapturer
+		ticker := time.NewTicker(peekInterval)
+		defer ticker.Stop()
+
+		for range ticker.C {
+			next := "session not active"
+			if sess, ok := lookupAqueductSession(dbPath, name); ok && capturer.HasSession(sess.sessionID) {
+				content, err := capturer.Capture(sess.sessionID, lines)
+				if err != nil {
+					continue
+				}
+				next = stripANSI(content)
+			}
+			if diff := computeDiff(prev, next); diff != "" {
+				conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout)) //nolint:errcheck
+				if wsSendText(brw.Writer, diff) != nil {
+					return
+				}
+				prev = next
 			}
 		}
 	})
@@ -180,12 +372,37 @@ h1{font-size:15px;color:var(--dim);letter-spacing:2px;text-transform:uppercase;m
 .empty{color:var(--dim);font-size:12px;padding:2px 0}
 footer{color:var(--dim);font-size:11px;margin-top:12px;padding-top:8px;border-top:1px solid var(--border)}
 @media(max-width:480px){body{padding:8px}}
+/* Peek modal */
+.peek-overlay{position:fixed;inset:0;background:rgba(0,0,0,.65);display:none;z-index:100;align-items:center;justify-content:center}
+.peek-overlay.open{display:flex}
+.peek-panel{background:var(--surface);border:1px solid var(--border);border-radius:4px;width:90vw;max-width:900px;height:70vh;display:flex;flex-direction:column;overflow:hidden}
+.peek-hdr{padding:6px 10px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.peek-ro-label{color:var(--green);font-size:11px;font-weight:bold;white-space:nowrap}
+.peek-title{flex:1;font-size:12px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.peek-btn{background:none;border:1px solid var(--border);color:var(--dim);font-size:11px;padding:2px 6px;cursor:pointer;border-radius:3px;font-family:var(--font)}
+.peek-btn:hover{color:var(--text);border-color:var(--dim)}
+.peek-content{flex:1;overflow-y:auto;padding:8px;font-size:12px;white-space:pre-wrap;word-break:break-all;color:var(--text);background:var(--bg)}
+.peek-footer{padding:3px 10px;border-top:1px solid var(--border);font-size:11px;color:var(--dim)}
+.aq-channel.active{cursor:pointer}
+.aq-channel.active:hover{background:rgba(63,185,80,.16)}
 </style>
 </head>
 <body>
 <h1>&#x2697; Cistern</h1>
 <div id="conn" class="offline">&#x25CB; connecting&#x2026;</div>
 <div id="app"></div>
+<div id="peek-overlay" class="peek-overlay">
+  <div class="peek-panel">
+    <div class="peek-hdr">
+      <span class="peek-ro-label">Observing &#x2014; read only</span>
+      <span id="peek-title" class="peek-title"></span>
+      <button class="peek-btn" id="peek-pin-btn" onclick="peekTogglePin()">pin scroll</button>
+      <button class="peek-btn" onclick="peekClose()">&#x2715; close</button>
+    </div>
+    <div id="peek-content" class="peek-content">(connecting&#x2026;)</div>
+    <div id="peek-footer" class="peek-footer">connecting&#x2026;</div>
+  </div>
+</div>
 <script>
 var app=document.getElementById('app');
 var connEl=document.getElementById('conn');
@@ -223,7 +440,7 @@ function render(d){
       h+='<div class="aqueduct">';
       h+='<div class="aq-name">'+esc(ch.name)+'</div>';
       if(ch.droplet_id){
-        h+='<div class="aq-channel active">\u2248\u2248  '+esc(ch.droplet_id)+'  '+bar(ch.cataractae_index,ch.total_cataractae,8)+'  '+fmtNs(ch.elapsed)+'  \u2248\u2248</div>';
+        h+='<div class="aq-channel active" data-aqname="'+esc(ch.name)+'" title="Click to observe live session">\u2248\u2248  '+esc(ch.droplet_id)+'  '+bar(ch.cataractae_index,ch.total_cataractae,8)+'  '+fmtNs(ch.elapsed)+'  \u2248\u2248</div>';
       } else {
         h+='<div class="aq-channel idle">\u2014 idle \u2014</div>';
       }
@@ -332,6 +549,73 @@ function connect(){
   };
 }
 connect();
+
+// --- Peek modal ---
+var peekWs=null;
+var peekPinned=false;
+var peekAqName='';
+
+function peekOpen(name){
+  peekAqName=name;
+  peekPinned=false;
+  document.getElementById('peek-title').textContent=name;
+  document.getElementById('peek-content').textContent='(connecting\u2026)';
+  document.getElementById('peek-footer').textContent='connecting\u2026';
+  document.getElementById('peek-pin-btn').textContent='pin scroll';
+  document.getElementById('peek-pin-btn').style.color='';
+  document.getElementById('peek-overlay').classList.add('open');
+  peekConnect(name);
+}
+
+function peekClose(){
+  document.getElementById('peek-overlay').classList.remove('open');
+  if(peekWs){peekWs.close();peekWs=null;}
+  peekAqName='';
+}
+
+function peekTogglePin(){
+  peekPinned=!peekPinned;
+  var btn=document.getElementById('peek-pin-btn');
+  btn.textContent=peekPinned?'unpin scroll':'pin scroll';
+  btn.style.color=peekPinned?'var(--green)':'';
+  document.getElementById('peek-footer').textContent=peekPinned?'scroll pinned \u2014 click to unpin':'auto-scroll active';
+}
+
+function peekConnect(name){
+  if(peekWs){peekWs.close();}
+  var proto=location.protocol==='https:'?'wss:':'ws:';
+  var url=proto+'//'+location.host+'/ws/aqueducts/'+encodeURIComponent(name)+'/peek';
+  var ws=new WebSocket(url);
+  peekWs=ws;
+  ws.onopen=function(){
+    document.getElementById('peek-footer').textContent='Observing \u2014 read only';
+  };
+  ws.onmessage=function(e){
+    if(!e.data)return;
+    var el=document.getElementById('peek-content');
+    el.textContent=e.data;
+    if(!peekPinned){el.scrollTop=el.scrollHeight;}
+  };
+  ws.onerror=function(){
+    document.getElementById('peek-footer').textContent='connection error';
+  };
+  ws.onclose=function(){
+    if(document.getElementById('peek-overlay').classList.contains('open')&&peekAqName){
+      document.getElementById('peek-footer').textContent='disconnected \u2014 retrying in 3s\u2026';
+      setTimeout(function(){if(peekAqName)peekConnect(peekAqName);},3000);
+    }
+  };
+}
+
+// Close peek when clicking the backdrop.
+document.getElementById('peek-overlay').addEventListener('click',function(e){
+  if(e.target===this)peekClose();
+});
+// Open peek when clicking an active aqueduct channel.
+app.addEventListener('click',function(e){
+  var el=e.target.closest&&e.target.closest('[data-aqname]');
+  if(el)peekOpen(el.dataset.aqname);
+});
 </script>
 </body>
 </html>`
