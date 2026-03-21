@@ -316,8 +316,8 @@ const dashboardHTML = `<!DOCTYPE html>
 body{background:#0d1117;color:#e6edf3;font-family:'Cascadia Code','Courier New',Courier,monospace;font-size:13px;line-height:1.3}
 #conn{font-size:11px;padding:3px 8px;color:#e06c75}
 #conn.live{color:#4bb96e}
-#header,#screen{padding:0 8px;white-space:pre;overflow-x:auto;cursor:default}
-#header{padding-top:4px}
+#header{padding:8px 8px 4px;border-bottom:1px solid #30363d;margin-bottom:4px}
+#screen{padding:0 8px;white-space:pre;overflow-x:auto;cursor:default}
 /* ── CSS Arch Section ─────────────────────────────────────────────────────── */
 #arch-section{padding:0 8px}
 .aq-block{margin-bottom:4px}
@@ -328,7 +328,7 @@ body{background:#0d1117;color:#e6edf3;font-family:'Cascadia Code','Courier New',
 .aq-channel-row{display:flex;height:44px;border-bottom:1px solid #30363d;overflow:hidden}
 .aq-channel{flex:1;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center;min-width:0}
 .aq-channel.clickable{cursor:pointer}
-.aq-wave{position:absolute;inset:0;background:linear-gradient(90deg,transparent,#0891b2,transparent);background-size:200% 100%;animation:wave-scroll 2s linear infinite;opacity:0.55}
+.aq-wave{position:absolute;inset:0;background:#0d2a30;opacity:0.6}
 .aq-info{position:relative;z-index:1;display:flex;align-items:center;gap:8px;padding:0 12px;font-size:0.8125rem;white-space:nowrap;overflow:hidden}
 .aq-info.idle{color:#46465a}
 .aq-info.revised{color:#f0c86b}
@@ -337,7 +337,7 @@ body{background:#0d1117;color:#e6edf3;font-family:'Cascadia Code','Courier New',
 .aq-revised-mark{color:#f0c86b}
 .aq-pbar{height:8px;width:80px;background:#1c2128;border-radius:2px;overflow:hidden;flex-shrink:0;border:1px solid #30363d}
 .aq-pbar-fill{height:100%;background:#4bb96e}
-.aq-waterfall{width:16px;flex-shrink:0;background:linear-gradient(to bottom,transparent,#0891b2 40%,#1a7a96 60%,transparent) 0 0/100% 24px;animation:wf-fall 0.8s linear infinite}
+.aq-waterfall{width:1px;flex-shrink:0;background:#30363d}
 .aq-piers{display:flex}
 .aq-pier{flex:1;min-height:40px;min-width:0;border-right:1px solid #30363d;border-bottom:1px solid #30363d}
 .aq-pier:last-child{border-right:none}
@@ -351,8 +351,7 @@ body{background:#0d1117;color:#e6edf3;font-family:'Cascadia Code','Courier New',
 .aq-idle-repo{min-width:14ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .aq-idle-dot{flex-shrink:0}
 .aq-empty{color:#46465a;padding:4px 0;font-size:0.875rem}
-@keyframes wave-scroll{from{background-position:200% 0}to{background-position:-200% 0}}
-@keyframes wf-fall{from{background-position:0 -24px}to{background-position:0 0}}
+
 @media(max-width:480px){
 .aq-piers,.aq-labels{flex-wrap:wrap}
 .aq-pier,.aq-lbl{flex:0 0 50%}
@@ -377,7 +376,7 @@ body{background:#0d1117;color:#e6edf3;font-family:'Cascadia Code','Courier New',
 </head>
 <body>
 <div id="conn">&#x25CB; connecting&#x2026;</div>
-<pre id="header"></pre>
+<div id="header"></div>
 <div id="arch-section"></div>
 <pre id="screen"></pre>
 <div id="peek-overlay" class="peek-overlay">
@@ -614,14 +613,9 @@ function viewRecent(d){
 var dashData=null;
 function sepLine(){return sp(cDim,'\u2500'.repeat(SCR_W));}
 
-// renderHeader populates the #header pre once (static content).
+// renderHeader populates the #header div once (static content).
 function renderHeader(){
-  var lines=[];
-  lines.push(sp(cDim,'\u2593'.repeat(SCR_W)));
-  lines.push(sp(cHeader,padC('\u25c8  C I S T E R N  \u25c8',SCR_W),true));
-  lines.push(sp(cDim,'\u2593'.repeat(SCR_W)));
-  lines.push(sepLine());
-  headerEl.innerHTML=lines.join('\n');
+  headerEl.innerHTML='<span style="color:#9db1db;font-weight:bold;font-size:1rem;letter-spacing:0.15em">CISTERN</span>';
 }
 
 // render updates #screen with the status bar and text sections.
