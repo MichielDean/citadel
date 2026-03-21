@@ -49,9 +49,8 @@ type peekModel struct {
 	capturer    Capturer
 	session     string
 	lines       int    // number of pane lines to capture
-	content     string // current pane content
-	prevContent string // previous content for diff detection
-	scrollY     int    // scroll offset (0 = top)
+	content string // current pane content
+	scrollY int    // scroll offset (0 = top)
 	pinned      bool   // when true scroll position is locked
 	width       int
 	height      int
@@ -114,15 +113,11 @@ func (m peekModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case peekContentMsg:
 		newContent := string(msg)
-		m.prevContent = m.content
 		m.content = newContent
 		if !m.pinned {
 			// Auto-scroll to bottom.
 			contentLines := strings.Count(newContent, "\n")
-			visible := m.height - 4 // reserve rows for header + label + divider + status
-			if visible < 1 {
-				visible = 1
-			}
+			visible := max(m.height-4, 1) // reserve rows for header + label + divider + status
 			if contentLines > visible {
 				m.scrollY = contentLines - visible
 			} else {
@@ -182,24 +177,12 @@ func (m peekModel) View() string {
 		b.WriteString("(session not active)")
 	} else {
 		lines := strings.Split(m.content, "\n")
-		visible := m.height - 4
-		if visible < 1 {
-			visible = 1
-		}
-		start := m.scrollY
-		if start < 0 {
-			start = 0
-		}
+		visible := max(m.height-4, 1)
+		start := max(m.scrollY, 0)
 		if start >= len(lines) {
-			start = len(lines) - 1
-			if start < 0 {
-				start = 0
-			}
+			start = max(len(lines)-1, 0)
 		}
-		end := start + visible
-		if end > len(lines) {
-			end = len(lines)
-		}
+		end := min(start+visible, len(lines))
 		b.WriteString(strings.Join(lines[start:end], "\n"))
 	}
 

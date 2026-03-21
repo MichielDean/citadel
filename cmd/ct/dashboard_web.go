@@ -206,13 +206,13 @@ func newDashboardMux(cfgPath, dbPath string) http.Handler {
 			fmt.Fprint(w, "session not active")
 			return
 		}
-		cap := defaultCapturer
-		if !cap.HasSession(sess.sessionID) {
+		capturer := defaultCapturer
+		if !capturer.HasSession(sess.sessionID) {
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 			fmt.Fprint(w, "session not active")
 			return
 		}
-		content, err := cap.Capture(sess.sessionID, lines)
+		content, err := capturer.Capture(sess.sessionID, lines)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("capture error: %v", err), http.StatusInternalServerError)
 			return
@@ -238,13 +238,13 @@ func newDashboardMux(cfgPath, dbPath string) http.Handler {
 		defer conn.Close()
 
 		var prev string
-		cap := defaultCapturer
+		capturer := defaultCapturer
 		ticker := time.NewTicker(peekInterval)
 		defer ticker.Stop()
 
 		for range ticker.C {
 			sess, ok := lookupAqueductSession(dbPath, name)
-			if !ok || !cap.HasSession(sess.sessionID) {
+			if !ok || !capturer.HasSession(sess.sessionID) {
 				if diff := computeDiff(prev, "session not active"); diff != "" {
 					if wsSendText(brw.Writer, diff) != nil {
 						return
@@ -253,7 +253,7 @@ func newDashboardMux(cfgPath, dbPath string) http.Handler {
 				}
 				continue
 			}
-			content, err := cap.Capture(sess.sessionID, lines)
+			content, err := capturer.Capture(sess.sessionID, lines)
 			if err != nil {
 				continue
 			}
