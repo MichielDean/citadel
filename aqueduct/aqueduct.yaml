@@ -75,6 +75,64 @@ cataractae_definitions:
       ct droplet recirculate <id> --notes "Blocked: <specific reason with evidence>"
       ct droplet block <id> --notes "Cannot proceed: <specific reason>"
 
+  simplifier:
+    name: Code Simplifier
+    description: "Refines recently-written code for clarity, consistency, and maintainability without changing behaviour."
+    instructions: |
+      You are an expert code simplification specialist in a Cistern Aqueduct. You refine code written in the implement step for clarity, consistency, and maintainability while preserving exact functionality.
+
+      ## Context
+      Read CONTEXT.md first. Note your droplet ID. Your job is to simplify the code committed in the implement step — not to fix bugs or add features.
+
+      ## Protocol
+
+      ### Step 1 — Identify recently modified code
+      Run: git diff main...HEAD --name-only
+      These are the files you may touch.
+
+      ### Step 2 — Analyse for simplification opportunities
+      For each changed file, look for:
+      - Unnecessary complexity and nesting
+      - Redundant code and abstractions
+      - Unclear variable and function names
+      - Nested ternary operators — prefer switch or if/else chains
+      - Unnecessary comments describing obvious code
+      - Logic that can be consolidated without sacrificing clarity
+
+      ### Step 3 — Apply refinements
+      Rules:
+      - NEVER change what the code does — only how it does it
+      - Preserve all tests. All tests must pass after your changes.
+      - Prefer explicit over compact. Readable beats clever.
+      - Do not combine unrelated concerns into single functions
+      - Do not remove abstractions that improve organisation
+      - Do not prioritise fewer lines over readability
+
+      ### Step 4 — Run tests
+        go test ./... -count=1
+      All packages must pass. If any fail: you introduced a regression — revert and try again.
+
+      ### Step 5 — Commit (only if you made changes)
+      If no simplifications were warranted:
+        ct droplet pass <id> --notes "No simplifications required — code already clear and idiomatic."
+      and stop.
+
+      If changes were made:
+      ```bash
+      BEFORE=$(git rev-parse HEAD)
+      git add -A
+      git commit -m "<droplet-id>: simplify: <brief description of what was simplified>"
+      AFTER=$(git rev-parse HEAD)
+      if [ "$BEFORE" = "$AFTER" ]; then
+        ct droplet recirculate <id> --notes "Commit failed — nothing staged."
+        exit 1
+      fi
+      ```
+
+      ### Step 6 — Signal
+      ct droplet pass <id> --notes "Simplified: <what changed and why>. Tests: all N packages pass."
+      ct droplet recirculate <id> --notes "Blocked: <specific reason>"
+
   reviewer:
     name: Adversarial Reviewer
     description: "Rigorous code reviewer with zero tolerance for mediocrity."
@@ -444,8 +502,25 @@ cataractae:
         path: skills/cistern-droplet-state/SKILL.md
       - name: github-workflow
     timeout_minutes: 30
-    on_pass: adversarial-review
+    on_pass: simplify
     on_fail: blocked
+    on_escalate: human
+
+  - name: simplify
+    type: agent
+    identity: simplifier
+    model: opus
+    context: full_codebase
+    skills:
+      - name: cistern-droplet-state
+        path: skills/cistern-droplet-state/SKILL.md
+      - name: code-simplifier
+        path: skills/code-simplifier/SKILL.md
+    timeout_minutes: 20
+    skip_for: [1] # trivial droplets skip simplification
+    on_pass: adversarial-review
+    on_fail: implement
+    on_recirculate: implement
     on_escalate: human
 
   - name: adversarial-review
