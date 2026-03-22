@@ -62,7 +62,9 @@ func runCataractaeGenerate(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	cataractaeDir := cisternCataractaeDir()
+	// Derive cataractae dir from the workflow location: <repo>/cataractae/ sits one level
+	// above the aqueduct dir that contains the workflow file.
+	cataractaeDir := filepath.Clean(filepath.Join(filepath.Dir(wfPath), "..", "cataractae"))
 	written, err := aqueduct.GenerateCataractaeFiles(w, cataractaeDir)
 	if err != nil {
 		return err
