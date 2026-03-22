@@ -105,19 +105,23 @@ func wsSendBinary(w *bufio.Writer, data []byte) error {
 // wsSendFrame writes a single WebSocket frame and flushes.
 func wsSendFrame(w *bufio.Writer, opcode byte, payload []byte) error {
 	n := len(payload)
-	header := make([]byte, 0, 10)
-	header = append(header, opcode) // FIN=1
+	var header [10]byte
+	header[0] = opcode // FIN=1
+	var hLen int
 	switch {
 	case n < 126:
-		header = append(header, byte(n))
+		header[1] = byte(n)
+		hLen = 2
 	case n < 65536:
-		header = append(header, 0x7E)
-		header = binary.BigEndian.AppendUint16(header, uint16(n))
+		header[1] = 0x7E
+		binary.BigEndian.PutUint16(header[2:4], uint16(n))
+		hLen = 4
 	default:
-		header = append(header, 0x7F)
-		header = binary.BigEndian.AppendUint64(header, uint64(n))
+		header[1] = 0x7F
+		binary.BigEndian.PutUint64(header[2:10], uint64(n))
+		hLen = 10
 	}
-	if _, err := w.Write(header); err != nil {
+	if _, err := w.Write(header[:hLen]); err != nil {
 		return err
 	}
 	if _, err := w.Write(payload); err != nil {
