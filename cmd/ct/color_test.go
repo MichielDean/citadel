@@ -31,17 +31,13 @@ func TestStatusCode(t *testing.T) {
 	}
 }
 
-// statusCell — in non-terminal mode (tests) ANSI codes are not injected.
-// Expected format: icon + " " + padRight(status, width-2)
-
+// In non-terminal mode (tests) ANSI codes are not injected.
 func TestStatusCell(t *testing.T) {
-	// width=12: textWidth = 12-2 = 10
 	tests := []struct {
 		status string
 		width  int
 		want   string
 	}{
-		// icon(1) + space(1) + padRight(status, 10)
 		{"flowing", 12, "● flowing   "},
 		{"queued", 12, "○ queued    "},
 		{"awaiting", 12, "⏸ awaiting  "},
@@ -228,9 +224,9 @@ func TestPrintDropletListTerminal(t *testing.T) {
 			printDropletListTerminal(nil, nil, false, 30)
 		})
 		// Header must contain all column labels.
-		for _, col := range []string{"ID", "COMPLEXITY", "TITLE", "STATUS", "ELAPSED", "CATARACTA"} {
-			if !strings.Contains(out, col) {
-				t.Errorf("header missing column %q:\n%s", col, out)
+		for _, label := range []string{"ID", "COMPLEXITY", "TITLE", "STATUS", "ELAPSED", "CATARACTA"} {
+			if !strings.Contains(out, label) {
+				t.Errorf("header missing column %q:\n%s", label, out)
 			}
 		}
 		// Only one line (the header).
@@ -290,7 +286,6 @@ func TestPrintDropletListTerminal(t *testing.T) {
 	})
 
 	t.Run("no panic on nil slices", func(t *testing.T) {
-		// Should not panic.
 		captureStdout(t, func() {
 			printDropletListTerminal(nil, nil, true, 20)
 		})
