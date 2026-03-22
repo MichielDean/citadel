@@ -506,6 +506,8 @@ cataractae:
     skills:
       - name: cistern-droplet-state
         path: skills/cistern-droplet-state/SKILL.md
+      - name: critical-code-reviewer
+        path: skills/critical-code-reviewer/SKILL.md
     timeout_minutes: 15
     skip_for: [1] # trivial droplets skip this cataractae
     on_pass: qa
