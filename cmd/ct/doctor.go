@@ -194,14 +194,20 @@ func runDoctorExtendedChecks(cfg *aqueduct.AqueductConfig, cfgPath, home, dbPath
 		}
 
 		// Check 2: Skills installed at ~/.cistern/skills/<name>/SKILL.md.
-		// All skills (in-repo and external) are read from this canonical location
-		// via --add-dir ~/.cistern/skills. Both must be present there.
+		// In-repo skills (path: field set) are loaded directly from the sandbox
+		// worktree at runtime — no installation required. Only external skills
+		// (no path: field) must be present in ~/.cistern/skills/.
 		for _, step := range wf.Cataractae {
 			for _, skill := range step.Skills {
 				if seenSkills[skill.Name] {
 					continue
 				}
 				seenSkills[skill.Name] = true
+
+				// Skip the installation check for in-repo skills.
+				if skill.Path != "" {
+					continue
+				}
 
 				name := skill.Name
 				mdPath := filepath.Join(skillsDir, name, "SKILL.md")
