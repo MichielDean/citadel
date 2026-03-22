@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -289,7 +290,7 @@ func TestWsSendText_MediumPayload(t *testing.T) {
 	if b[1] != 0x7E {
 		t.Errorf("byte[1] = 0x%02x, want 0x7E (medium extended len)", b[1])
 	}
-	n := int(b[2])<<8 | int(b[3])
+	n := int(binary.BigEndian.Uint16(b[2:4]))
 	if n != 200 {
 		t.Errorf("encoded length = %d, want 200", n)
 	}
@@ -612,6 +613,157 @@ func TestDashboardHTML_UsesXterm(t *testing.T) {
 		if !strings.Contains(html, c.want) {
 			t.Errorf("HTML must contain %s (%q)", c.desc, c.want)
 		}
+	}
+}
+
+// TestWsTui_WSReaderExitsOnConnClose verifies the shutdown propagation in the
+// /ws/tui handler: goroutine B (WS frame reader) must exit and call cancel()
+// when the underlying connection is closed without a WebSocket close frame.
+// This is the trigger for shutdown watchdog goroutine C, which closes ptmx
+// and unblocks the PTY reader goroutine A from ptmx.Read.
+func TestWsTui_WSReaderExitsOnConnClose(t *testing.T) {
+	// in-process pipe connection — simulates the hijacked net.Conn
+	server, client := net.Pipe()
+	defer server.Close()
+
+	br := bufio.NewReader(server)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer cancel()
+		buf := make([]byte, 4096)
+		for {
+			_, _, nb, err := wsReadClientFrame(br, buf)
+			buf = nb
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	// Simulate abrupt client disconnect — no WebSocket close frame.
+	client.Close()
+
+	select {
+	case <-done:
+		// goroutine exited as expected
+	case <-time.After(1 * time.Second):
+		t.Fatal("WS reader goroutine did not exit after connection close")
+	}
+	select {
+	case <-ctx.Done():
+		// cancel() was called by goroutine's defer — watchdog would fire
+	default:
+		t.Error("cancel() was not called by WS reader goroutine on connection close")
+	}
+}
+
+// TestWsTui_WSReaderReadDeadlineExitsOnPartition verifies goroutine B exits
+// and calls cancel() when the read deadline fires with no client frames,
+// simulating a network partition with an idle PTY.
+func TestWsTui_WSReaderReadDeadlineExitsOnPartition(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	// client is intentionally not closed — simulates a network partition
+	// where no TCP FIN arrives, so server cannot distinguish idle from dead.
+	// runtime.KeepAlive(client) at the end prevents the GC from finalizing the
+	// connection before the deadline fires, which would cause an early exit via
+	// a connection-close error instead of the read-deadline path under test.
+
+	br := bufio.NewReader(server)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer cancel()
+		buf := make([]byte, wsMaxClientPayload)
+		for {
+			// Mirrors production read-deadline fix; shorter timeout for test speed.
+			server.SetReadDeadline(time.Now().Add(50 * time.Millisecond)) //nolint:errcheck
+			_, _, nb, err := wsReadClientFrame(br, buf)
+			buf = nb
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("WS reader goroutine did not exit after read deadline (network partition case)")
+	}
+	select {
+	case <-ctx.Done():
+	default:
+		t.Error("cancel() was not called by WS reader goroutine on read deadline")
+	}
+	runtime.KeepAlive(client)
+}
+
+// TestWsReadClientFrame_PayloadSizeLimit verifies wsMaxClientPayload enforcement:
+// frames with payload > 4096 must be rejected, payload == 4096 must be accepted.
+func TestWsReadClientFrame_PayloadSizeLimit(t *testing.T) {
+	// buildFrame constructs a masked client text frame with rawLen=126 and
+	// the given extended payload length. The payload itself is zero-filled.
+	buildFrame := func(extLen uint16) []byte {
+		var frame []byte
+		frame = append(frame, 0x81)       // FIN + text opcode
+		frame = append(frame, 0x80|0x7E)  // masked + rawLen=126
+		var ext [2]byte
+		binary.BigEndian.PutUint16(ext[:], extLen)
+		frame = append(frame, ext[:]...)
+		frame = append(frame, 0, 0, 0, 0) // mask key (all zeros — no-op XOR)
+		frame = append(frame, make([]byte, extLen)...)
+		return frame
+	}
+
+	t.Run("rejects_payload_exceeding_max", func(t *testing.T) {
+		frame := buildFrame(5000) // > wsMaxClientPayload (4096)
+		br := bufio.NewReader(bytes.NewReader(frame))
+		_, _, _, err := wsReadClientFrame(br, make([]byte, 128))
+		if err == nil {
+			t.Fatal("expected error for payload > wsMaxClientPayload, got nil")
+		}
+		if !strings.Contains(err.Error(), "exceeds max") {
+			t.Errorf("error = %q, want it to mention 'exceeds max'", err)
+		}
+	})
+
+	t.Run("accepts_payload_at_max", func(t *testing.T) {
+		frame := buildFrame(4096) // == wsMaxClientPayload
+		br := bufio.NewReader(bytes.NewReader(frame))
+		_, payload, _, err := wsReadClientFrame(br, make([]byte, 128))
+		if err != nil {
+			t.Fatalf("unexpected error for payload == wsMaxClientPayload: %v", err)
+		}
+		if len(payload) != 4096 {
+			t.Errorf("payload length = %d, want 4096", len(payload))
+		}
+	})
+}
+
+// TestWsReadClientFrame_RejectsUnmaskedFrame verifies that wsReadClientFrame
+// returns an error for unmasked client frames, as required by RFC 6455 §5.1.
+// Browsers always mask frames; a forged unmasked frame indicates a non-browser
+// client or a protocol violation.
+func TestWsReadClientFrame_RejectsUnmaskedFrame(t *testing.T) {
+	// Unmasked text frame: FIN+text (0x81), no mask bit, payload "hello".
+	frame := []byte{0x81, 0x05, 'h', 'e', 'l', 'l', 'o'}
+	br := bufio.NewReader(bytes.NewReader(frame))
+	_, _, _, err := wsReadClientFrame(br, make([]byte, 128))
+	if err == nil {
+		t.Fatal("expected error for unmasked client frame, got nil")
+	}
+	if !strings.Contains(err.Error(), "unmasked") {
+		t.Errorf("error = %q, want it to mention 'unmasked'", err)
 	}
 }
 

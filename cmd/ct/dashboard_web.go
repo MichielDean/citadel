@@ -4,11 +4,13 @@ import (
 	"bufio"
 	"context"
 	"crypto/sha1"
+	"embed"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
@@ -23,11 +25,30 @@ import (
 	"github.com/creack/pty"
 )
 
+//go:embed assets/static
+var staticAssets embed.FS
+
 // wsWriteTimeout is the per-frame write deadline set on the hijacked net.Conn
 // before each wsSendText call. Without this, a client that disappears via a
 // network partition (no TCP FIN) causes the goroutine to block indefinitely
 // inside bufio.Writer.Flush.
 const wsWriteTimeout = 10 * time.Second
+
+// wsMaxClientPayload is the maximum payload size accepted from a client frame.
+// Client→server frames carry only resize JSON (~40 bytes) or close frames,
+// so 4 KiB is generous. This prevents a malicious client from triggering
+// unbounded memory allocation via a forged frame length header.
+const wsMaxClientPayload = 4096
+
+// ptyReadBufSize is the read buffer for forwarding PTY output to WebSocket.
+const ptyReadBufSize = 4096
+
+// WebSocket opcodes (RFC 6455 §5.2).
+const (
+	wsOpcodeText   = 0x1
+	wsOpcodeBinary = 0x2
+	wsOpcodeClose  = 0x8
+)
 
 // aqueductSessionInfo holds the tmux session name and droplet context for an
 // active aqueduct worker.
@@ -86,37 +107,105 @@ func wsAcceptKey(clientKey string) string {
 // wsSendText writes a WebSocket text frame to the buffered writer and flushes.
 // The server never masks frames (RFC 6455 §5.1).
 func wsSendText(w *bufio.Writer, data string) error {
-	return wsSendFrame(w, 0x81, []byte(data))
+	return wsSendFrame(w, wsOpcodeText, []byte(data))
 }
 
-// wsSendBinary writes a WebSocket binary frame (opcode 0x82).
+// wsSendBinary writes a WebSocket binary frame.
 // Use for raw PTY output which may contain non-UTF-8 bytes — text frames
 // with invalid UTF-8 cause browsers to close the connection immediately.
 func wsSendBinary(w *bufio.Writer, data []byte) error {
-	return wsSendFrame(w, 0x82, data)
+	return wsSendFrame(w, wsOpcodeBinary, data)
 }
 
+// wsSendFrame writes a single unfragmented WebSocket frame (FIN=1) and flushes.
 func wsSendFrame(w *bufio.Writer, opcode byte, payload []byte) error {
 	n := len(payload)
-	header := make([]byte, 0, 10)
-	header = append(header, opcode) // FIN=1
+	var header [10]byte
+	header[0] = 0x80 | opcode // FIN + opcode
+	var hLen int
 	switch {
 	case n < 126:
-		header = append(header, byte(n))
+		header[1] = byte(n)
+		hLen = 2
 	case n < 65536:
-		header = append(header, 0x7E)
-		header = binary.BigEndian.AppendUint16(header, uint16(n))
+		header[1] = 0x7E
+		binary.BigEndian.PutUint16(header[2:4], uint16(n))
+		hLen = 4
 	default:
-		header = append(header, 0x7F)
-		header = binary.BigEndian.AppendUint64(header, uint64(n))
+		header[1] = 0x7F
+		binary.BigEndian.PutUint64(header[2:10], uint64(n))
+		hLen = 10
 	}
-	if _, err := w.Write(header); err != nil {
+	if _, err := w.Write(header[:hLen]); err != nil {
 		return err
 	}
 	if _, err := w.Write(payload); err != nil {
 		return err
 	}
 	return w.Flush()
+}
+
+// wsReadClientFrame reads one WebSocket frame from a client (potentially masked).
+// It returns the opcode, payload, and any read error. buf is reused across calls
+// to avoid per-frame allocation; if the payload exceeds len(buf), a new slice is
+// allocated and returned as the buf going forward.
+func wsReadClientFrame(br *bufio.Reader, buf []byte) (opcode byte, payload []byte, newBuf []byte, err error) {
+	var header [2]byte
+	if _, err = io.ReadFull(br, header[:]); err != nil {
+		return 0, nil, buf, err
+	}
+	opcode = header[0] & 0x0F
+	masked := header[1]&0x80 != 0
+	rawLen := int(header[1] & 0x7F)
+
+	// RFC 6455 §5.1: clients MUST mask all frames to the server.
+	if !masked {
+		return 0, nil, buf, fmt.Errorf("unmasked client frame (RFC 6455 §5.1)")
+	}
+
+	var payloadLen int
+	switch rawLen {
+	case 126:
+		var ext [2]byte
+		if _, err = io.ReadFull(br, ext[:]); err != nil {
+			return 0, nil, buf, err
+		}
+		payloadLen = int(binary.BigEndian.Uint16(ext[:]))
+	case 127:
+		var ext [8]byte
+		if _, err = io.ReadFull(br, ext[:]); err != nil {
+			return 0, nil, buf, err
+		}
+		extLen := binary.BigEndian.Uint64(ext[:])
+		// Guard before int conversion: a value > wsMaxClientPayload but < math.MaxInt
+		// would pass the int-typed check below, so reject it here first.
+		if extLen > uint64(wsMaxClientPayload) {
+			return 0, nil, buf, fmt.Errorf("client frame payload %d exceeds max %d", extLen, wsMaxClientPayload)
+		}
+		payloadLen = int(extLen)
+	default:
+		payloadLen = rawLen
+	}
+
+	if payloadLen > wsMaxClientPayload {
+		return 0, nil, buf, fmt.Errorf("client frame payload %d exceeds max %d", payloadLen, wsMaxClientPayload)
+	}
+
+	var mask [4]byte
+	if _, err = io.ReadFull(br, mask[:]); err != nil {
+		return 0, nil, buf, err
+	}
+
+	if payloadLen > len(buf) {
+		buf = make([]byte, payloadLen)
+	}
+	if _, err = io.ReadFull(br, buf[:payloadLen]); err != nil {
+		return 0, nil, buf, err
+	}
+	for i := range buf[:payloadLen] {
+		buf[i] ^= mask[i%4]
+	}
+	return opcode, buf[:payloadLen], buf, nil
 }
 
 // wsUpgrade performs the RFC 6455 handshake. On success it returns the hijacked
@@ -161,6 +250,17 @@ func wsUpgrade(w http.ResponseWriter, r *http.Request) (net.Conn, *bufio.ReadWri
 // Exposed for testing.
 func newDashboardMux(cfgPath, dbPath string) http.Handler {
 	mux := http.NewServeMux()
+
+	// Cache the executable path once at mux creation time rather than
+	// resolving it per-connection in /ws/tui.
+	exe, _ := os.Executable()
+
+	// Serve bundled xterm.js assets so the dashboard works in airgapped environments.
+	staticSub, err := fs.Sub(staticAssets, "assets/static")
+	if err != nil {
+		panic("embedded static assets not found: " + err.Error())
+	}
+	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticSub))))
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
@@ -292,89 +392,76 @@ func newDashboardMux(cfgPath, dbPath string) http.Handler {
 		}
 		defer conn.Close()
 
-		exe, err := os.Executable()
-		if err != nil {
+		if exe == "" {
 			return
 		}
 		cmd := exec.Command(exe, "dashboard", "--db", dbPath)
 		// Force true-color environment so Bubble Tea renders with full ANSI colors.
 		// The web server inherits TERM=dumb from systemd; without these overrides
 		// lipgloss strips all colors and the TUI renders black and white.
-		env := append(os.Environ(),
+		cmd.Env = append(os.Environ(),
 			"CT_CISTERN_CONFIG="+cfgPath,
 			"TERM=xterm-256color",
 			"COLORTERM=truecolor",
 		)
-		cmd.Env = env
 
 		ptmx, err := pty.Start(cmd)
 		if err != nil {
 			return
 		}
+
+		// Shutdown sequence — three goroutines:
+		//
+		// (A) PTY reader (this goroutine): reads ptmx, writes binary WS frames.
+		//     Exits when: wsSendBinary fails (wsWriteTimeout / dead conn), or
+		//     ptmx.Read returns an error (PTY EOF / closed by watchdog C).
+		//     Calls cancel() via defer on any exit.
+		//
+		// (B) WS frame reader (goroutine below): reads resize/close frames from client.
+		//     Exits when: read deadline fires (wsWriteTimeout), wsReadClientFrame
+		//     returns error (conn closed / EOF), or a close frame (opcode 0x8).
+		//     The read deadline mirrors the write-side timeout: without it, a
+		//     network partition + idle PTY leaks goroutines A (ptmx.Read) and B
+		//     (io.ReadFull) — neither gets an error, and cancel() is never called.
+		//     Calls cancel() via defer on any exit.
+		//
+		// (C) Shutdown watchdog (goroutine below): waits for ctx cancellation.
+		//     Triggered when A or B exits; closes ptmx so goroutine A unblocks
+		//     from ptmx.Read. conn is unblocked by defer conn.Close() above,
+		//     which fires once goroutine A returns to the handler.
+		ctx, cancel := context.WithCancel(context.Background())
 		defer func() {
-			ptmx.Close()
+			cancel()
 			cmd.Process.Kill() //nolint:errcheck
+			cmd.Wait()         //nolint:errcheck // reap child to prevent zombie accumulation
+		}()
+
+		// Goroutine C: shutdown watchdog — unblocks the peer goroutine on ctx cancel.
+		// Closes ptmx so goroutine A (ptmx.Read) unblocks. conn is owned exclusively
+		// by defer conn.Close() above; closing it here would race with that defer.
+		go func() {
+			<-ctx.Done()
+			ptmx.Close()
 		}()
 
 		// Default size — will be overridden by the client's first resize message.
 		_ = pty.Setsize(ptmx, &pty.Winsize{Rows: 24, Cols: 80})
 
-		// Read incoming WebSocket frames from the client.
-		// Frames are read via the raw connection; we handle text (control) and
-		// binary (keyboard input) frames.
+		// Goroutine B: read incoming WebSocket frames from the client.
 		go func() {
-			buf := make([]byte, 4096)
+			defer cancel() // arm watchdog (C) on any exit
+			buf := make([]byte, wsMaxClientPayload)
 			for {
-				// Read a WebSocket frame header.
-				header := make([]byte, 2)
-				if _, err := io.ReadFull(brw.Reader, header); err != nil {
+				if err := conn.SetReadDeadline(time.Now().Add(wsWriteTimeout)); err != nil {
 					return
 				}
-				opcode := header[0] & 0x0F
-				masked := header[1]&0x80 != 0
-				rawLen := int(header[1] & 0x7F)
-
-				var payloadLen int
-				switch rawLen {
-				case 126:
-					ext := make([]byte, 2)
-					if _, err := io.ReadFull(brw.Reader, ext); err != nil {
-						return
-					}
-					payloadLen = int(ext[0])<<8 | int(ext[1])
-				case 127:
-					ext := make([]byte, 8)
-					if _, err := io.ReadFull(brw.Reader, ext); err != nil {
-						return
-					}
-					payloadLen = int(ext[4])<<24 | int(ext[5])<<16 | int(ext[6])<<8 | int(ext[7])
-				default:
-					payloadLen = rawLen
-				}
-
-				var mask [4]byte
-				if masked {
-					if _, err := io.ReadFull(brw.Reader, mask[:]); err != nil {
-						return
-					}
-				}
-
-				if payloadLen > len(buf) {
-					buf = make([]byte, payloadLen)
-				}
-				if _, err := io.ReadFull(brw.Reader, buf[:payloadLen]); err != nil {
+				opcode, payload, nb, err := wsReadClientFrame(brw.Reader, buf)
+				buf = nb
+				if err != nil {
 					return
 				}
-				if masked {
-					for i := range buf[:payloadLen] {
-						buf[i] ^= mask[i%4]
-					}
-				}
-
-				payload := buf[:payloadLen]
-
 				switch opcode {
-				case 0x1: // text frame — control message (resize)
+				case wsOpcodeText: // control message (resize)
 					var msg struct {
 						Resize *struct {
 							Cols uint16 `json:"cols"`
@@ -387,14 +474,14 @@ func newDashboardMux(cfgPath, dbPath string) http.Handler {
 							Cols: msg.Resize.Cols,
 						})
 					}
-				case 0x8: // close frame
+				case wsOpcodeClose:
 					return
 				}
 			}
 		}()
 
-		// Forward PTY output → WebSocket as binary frames.
-		out := make([]byte, 4096)
+		// Goroutine A: forward PTY output → WebSocket as binary frames.
+		out := make([]byte, ptyReadBufSize)
 		for {
 			n, err := ptmx.Read(out)
 			if n > 0 {
@@ -410,20 +497,6 @@ func newDashboardMux(cfgPath, dbPath string) http.Handler {
 	})
 
 	return mux
-}
-
-// stripClearWriter wraps an io.Writer and strips ANSI clear-screen sequences
-// (\033[2J\033[H) from the stream. xterm.js renders incrementally — clear
-// codes cause visible flashing and can corrupt multi-frame renders.
-type stripClearWriter struct{ w io.Writer }
-
-func (s *stripClearWriter) Write(p []byte) (int, error) {
-	clean := strings.ReplaceAll(string(p), "\033[2J\033[H", "")
-	n, err := s.w.Write([]byte(clean))
-	if err != nil {
-		return n, err
-	}
-	return len(p), nil // report original len to avoid short-write errors
 }
 
 // RunDashboardWeb starts the HTTP web dashboard on addr and blocks until
@@ -491,12 +564,12 @@ html,body{width:100%;height:100%;background:#0d1117;overflow:hidden}
 .xterm-viewport::-webkit-scrollbar-thumb{background:#30363d;border-radius:3px}
 .xterm-viewport{scrollbar-color:#30363d #0d1117;scrollbar-width:thin}
 </style>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css"/>
+<link rel="stylesheet" href="/static/xterm.min.css"/>
 </head>
 <body>
 <div id="scroll"><div id="wrap"><div id="terminal"></div></div></div>
-<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+<script src="/static/xterm.min.js"></script>
+<script src="/static/addon-fit.min.js"></script>
 <script>
 var term = new Terminal({
   theme: {
