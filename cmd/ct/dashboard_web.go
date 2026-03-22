@@ -35,6 +35,13 @@ const wsWriteTimeout = 10 * time.Second
 // unbounded memory allocation via a forged frame length header.
 const wsMaxClientPayload = 4096
 
+// WebSocket opcodes (RFC 6455 §5.2).
+const (
+	wsOpcodeText   = 0x1
+	wsOpcodeBinary = 0x2
+	wsOpcodeClose  = 0x8
+)
+
 // aqueductSessionInfo holds the tmux session name and droplet context for an
 // active aqueduct worker.
 type aqueductSessionInfo struct {
@@ -92,21 +99,21 @@ func wsAcceptKey(clientKey string) string {
 // wsSendText writes a WebSocket text frame to the buffered writer and flushes.
 // The server never masks frames (RFC 6455 §5.1).
 func wsSendText(w *bufio.Writer, data string) error {
-	return wsSendFrame(w, 0x81, []byte(data))
+	return wsSendFrame(w, wsOpcodeText, []byte(data))
 }
 
-// wsSendBinary writes a WebSocket binary frame (opcode 0x82).
+// wsSendBinary writes a WebSocket binary frame.
 // Use for raw PTY output which may contain non-UTF-8 bytes — text frames
 // with invalid UTF-8 cause browsers to close the connection immediately.
 func wsSendBinary(w *bufio.Writer, data []byte) error {
-	return wsSendFrame(w, 0x82, data)
+	return wsSendFrame(w, wsOpcodeBinary, data)
 }
 
-// wsSendFrame writes a single WebSocket frame and flushes.
+// wsSendFrame writes a single unfragmented WebSocket frame (FIN=1) and flushes.
 func wsSendFrame(w *bufio.Writer, opcode byte, payload []byte) error {
 	n := len(payload)
 	var header [10]byte
-	header[0] = opcode // FIN bit and opcode are both encoded in this byte by the caller
+	header[0] = 0x80 | opcode // FIN + opcode
 	var hLen int
 	switch {
 	case n < 126:
@@ -421,7 +428,7 @@ func newDashboardMux(cfgPath, dbPath string) http.Handler {
 		// Goroutine B: read incoming WebSocket frames from the client.
 		go func() {
 			defer cancel() // arm watchdog (C) on any exit
-			buf := make([]byte, 4096)
+			buf := make([]byte, wsMaxClientPayload)
 			for {
 				opcode, payload, nb, err := wsReadClientFrame(brw.Reader, buf)
 				buf = nb
@@ -429,7 +436,7 @@ func newDashboardMux(cfgPath, dbPath string) http.Handler {
 					return
 				}
 				switch opcode {
-				case 0x1: // text frame — control message (resize)
+				case wsOpcodeText: // control message (resize)
 					var msg struct {
 						Resize *struct {
 							Cols uint16 `json:"cols"`
@@ -442,7 +449,7 @@ func newDashboardMux(cfgPath, dbPath string) http.Handler {
 							Cols: msg.Resize.Cols,
 						})
 					}
-				case 0x8: // close frame
+				case wsOpcodeClose:
 					return
 				}
 			}
