@@ -7,6 +7,46 @@
 - Removed `ct cataractae reset` command — there are no more built-in defaults to reset to. Edit `PERSONA.md` / `INSTRUCTIONS.md` directly and use `ct cataractae generate` to regenerate.
 - Removed the `CataractaeDefinition` type and `BuiltinCataractaeDefinitions` map from the `aqueduct` package.
 
+### Castellarius: log AddNote and SetLastReviewedCommit errors at WARN (ci-q4npe)
+- Errors from `AddNote` and `SetLastReviewedCommit` are now logged at WARN level instead of being silently discarded (`_ = ...`)
+- Affected call sites: `adapter.go`, `stuck_delivery.go`, `context.go` — non-blocking; errors do not propagate or affect delivery flow
+- Makes diagnostic failures (e.g. DB issues) visible in Castellarius logs without changing behaviour
+- Three new tests verify WARN is emitted when each call fails
+
+### Test coverage: internal/castellarius — dispatch loop, stall detection, aqueduct pool, heartbeat (ci-ybfbh)
+- Adds `coverage_gaps_test.go` covering the core Castellarius dispatch loop, stall detection, aqueduct pool management, heartbeat, and session lifecycle — all previously untested
+- No behaviour changes; all existing tests continue to pass
+
+### Dead code: remove stale var err / _ = err pattern in cmd/ct/repo.go (ci-gs281)
+- Removed three dead-code `var err error` / `_ = err` / unreachable `if err != nil` blocks in `repoListCmd`, `repoAddCmd`, `repoCloneCmd`
+- No behaviour change
+
+### Test coverage: cmd/aqueduct — runConfigValidate, runStatus, resolveDeliveryDBPath (ci-vh7ii)
+- Adds 10 unit tests covering `runConfigValidate`, `runStatus`, and `resolveDeliveryDBPath` in `cmd/aqueduct`
+- Package coverage improved from 6.7% to 47%
+
+### Test coverage: internal/skills — IsInstalled, ListInstalled, Remove, removeManifestEntry (ci-swjsh)
+- Adds 11 tests covering `IsInstalled`, `ListInstalled`, `Remove`, and `removeManifestEntry` — all previously at 0% coverage
+
+### Test coverage: ct cataractae subcommands (ci-eerdv)
+- Adds test coverage for all `ct cataractae` subcommands (`add`, `generate`, `list`, `edit`), previously at 0%
+
+### Test coverage: internal/cistern/client.go — untested state ops (ci-fsomz)
+- Adds table-driven tests for `UpdateTitle`, `GetNoteCount`, `SetOutcome`, `SetCataractae`, `Purge`, and `ListRecentEvents` — all previously untested
+
+### Droplet display: remove recirculation counter and yellow color (ci-pkz7a)
+- Removed the standalone recirculation counter (`↩ N`) and yellow color styling from droplet list and dashboard displays
+- Recirculate events remain visible via `♻` icon prefixed inline in the note text (set by `ct droplet recirculate`)
+
+### aqueduct.yaml: remove cataractae_definitions field (ci-gqwjt)
+- `cataractae_definitions:` stanza removed from `aqueduct.yaml` (and the embedded asset) — inline role definitions are no longer supported in workflow config
+- All role content has moved to `cataractae/<role>/` directories; `aqueduct.yaml` is now routing config only
+- Related parsing types and `ct cataractae` command internals updated accordingly
+
+### ct doctor: fix false failure for skills with path: field (ci-5mvl3)
+- `ct doctor` previously reported in-repo skills referenced with a `path:` field in `aqueduct.yaml` as not installed, even when accessible
+- Fixed: health check now correctly validates skills regardless of whether `path:` or name-only references are used
+
 ### Skills: unified handling — all skills live in ~/.cistern/skills/ (ci-add2g)
 - Removed the `path:` field from skill references in `aqueduct.yaml` — all skills are now referenced by name only. Skills that previously used `path:` must be accessible via `~/.cistern/skills/<name>/SKILL.md`.
 - The `git_sync` drought hook now automatically deploys skills from the repo's `skills/` tree into `~/.cistern/skills/` after each fetch — no manual `ct skills install` required for repo-bundled skills.
