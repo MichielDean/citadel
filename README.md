@@ -162,17 +162,31 @@ By convention, aqueduct names are drawn from historic Roman aqueducts (`virgo`, 
 
 ## Customizing Cataractae Definitions
 
-Cataractae definitions are stored in your aqueduct YAML — they're yours to edit. Cistern adapts.
+Each cataractae is a self-contained directory under `cataractae/<identity>/` in your aqueduct repo:
+
+```
+cataractae/
+  implementer/
+    PERSONA.md        # Who this cataractae is — role, guardrails (hand-authored, stable)
+    INSTRUCTIONS.md   # Task protocol and steps (hand-authored)
+    CLAUDE.md         # Generated: concatenated from PERSONA.md + INSTRUCTIONS.md
+  reviewer/
+  qa/
+  ...
+```
+
+`CLAUDE.md` is a generated artifact — edit `PERSONA.md` and `INSTRUCTIONS.md` directly and regenerate.
 
 ```bash
+ct cataractae add <name>            # Scaffold a new cataractae directory with template files
 ct cataractae list                  # See all cataractae definitions and how to edit them
-ct cataractae edit implementer      # Open in $EDITOR, save, CLAUDE.md regenerates
+ct cataractae edit implementer      # Open INSTRUCTIONS.md in $EDITOR, save, CLAUDE.md regenerates
 ct cataractae reset qa              # Restore to built-in default (with confirmation)
-ct cataractae generate              # Regenerate all CLAUDE.md files from YAML
+ct cataractae generate              # Regenerate all CLAUDE.md files from source files
 ct cataractae status                # Show which cataractae are actively processing droplets
 ```
 
-Cataractae content lives in `~/.cistern/aqueduct/feature.yaml` under the `cataractae_definitions:` key. CLAUDE.md files are generated artifacts — the YAML is the source of truth.
+The `aqueduct.yaml` holds routing configuration (which cataractae run at each step, skill references, timeouts). Persona and instruction content lives in the directory files, not inline in YAML.
 
 ## Skills
 
@@ -367,10 +381,11 @@ ct droplet issue resolve <issue-id> --evidence "..."              Resolve with p
 ct droplet issue reject <issue-id> --evidence "..."               Reject as still present (reviewer only)
 
 # Cataractae — manage cataractae definitions
+ct cataractae add <name>             Scaffold a new cataractae directory with PERSONA.md and INSTRUCTIONS.md
 ct cataractae list                   See all cataractae definitions
 ct cataractae status                 Show which cataractae are active and what they're processing
 ct cataractae edit <cataractae>       Edit cataractae definition in $EDITOR
-ct cataractae generate               Regenerate CLAUDE.md files from YAML
+ct cataractae generate               Regenerate CLAUDE.md files from source files
 ct cataractae reset <cataractae>      Restore cataractae definition to built-in default
 
 # Skills — manage cataractae skills

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Cataractae: self-contained directories and ct cataractae add command (ci-cgey2)
+- Each cataractae identity is now a self-contained directory under `cataractae/<identity>/` containing `PERSONA.md` (role and guardrails) and `INSTRUCTIONS.md` (task protocol). `CLAUDE.md` remains a generated artifact built from these files.
+- `aqueduct.yaml` no longer stores inline `instructions:` blobs — routing config only. Operators who previously edited inline YAML text should move that content into the appropriate `PERSONA.md` / `INSTRUCTIONS.md` files and run `ct cataractae generate`.
+- New `ct cataractae add <name>` command scaffolds a new cataractae directory with template files and adds the entry to `aqueduct.yaml`. Run `ct cataractae generate` after editing the templates to produce `CLAUDE.md`.
+- All skills now have explicit `path:` references in `aqueduct.yaml`; `adversarial-reviewer` and `github-workflow` skills added to the repo under `skills/`.
+- `simplifier` cataractae directory created (was previously missing).
+
 ### ct status: --watch flag for auto-refresh (ci-drisq)
 - `ct status --watch` continuously refreshes the status display every 5 seconds (Ctrl-C to stop)
 - `--interval N` sets the refresh interval in seconds (default 5, minimum 1)
