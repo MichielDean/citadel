@@ -114,13 +114,12 @@ func runCataractaeList(cmd *cobra.Command, args []string) error {
 	}
 
 	identities := w.UniqueIdentities()
+	sort.Strings(identities)
+
 	if len(identities) == 0 {
 		fmt.Println("no agent identities defined in workflow steps")
 		return nil
 	}
-
-	// Sort keys for stable output.
-	sort.Strings(identities)
 
 	cataractaeDir := cisternCataractaeDir(wfPath)
 	for _, id := range identities {
@@ -164,6 +163,8 @@ func runCataractaeEdit(cmd *cobra.Command, args []string) error {
 	}
 
 	identities := w.UniqueIdentities()
+	sort.Strings(identities)
+
 	if len(identities) == 0 {
 		fmt.Println("no agent identities defined in workflow steps")
 		return nil
@@ -211,27 +212,6 @@ func runCataractaeEdit(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  %s\n", path)
 	}
 	return nil
-}
-
-// resolveWorkflowPath returns the workflow YAML path, either from the
-// --workflow flag or by reading the first repo in the aqueduct config.
-func resolveWorkflowPath() (string, error) {
-	if cataractaeGenerateWorkflow != "" {
-		return cataractaeGenerateWorkflow, nil
-	}
-	cfgPath := resolveConfigPath()
-	cfg, err := aqueduct.ParseAqueductConfig(cfgPath)
-	if err != nil {
-		return "", fmt.Errorf("loading config: %w", err)
-	}
-	if len(cfg.Repos) == 0 {
-		return "", fmt.Errorf("no repos configured")
-	}
-	wfPath := cfg.Repos[0].WorkflowPath
-	if !filepath.IsAbs(wfPath) {
-		wfPath = filepath.Join(filepath.Dir(cfgPath), wfPath)
-	}
-	return wfPath, nil
 }
 
 // --- cataractae status ---
@@ -298,6 +278,28 @@ var cataractaeStatusCmd = &cobra.Command{
 		}
 		return nil
 	},
+}
+
+// resolveWorkflowPath returns the absolute path to the workflow YAML.
+// If --workflow was passed it is used directly; otherwise the first repo's
+// WorkflowPath from the aqueduct config is resolved.
+func resolveWorkflowPath() (string, error) {
+	if cataractaeGenerateWorkflow != "" {
+		return cataractaeGenerateWorkflow, nil
+	}
+	cfgPath := resolveConfigPath()
+	cfg, err := aqueduct.ParseAqueductConfig(cfgPath)
+	if err != nil {
+		return "", fmt.Errorf("loading config: %w (use --workflow to specify an aqueduct file directly)", err)
+	}
+	if len(cfg.Repos) == 0 {
+		return "", fmt.Errorf("no repos configured")
+	}
+	wfPath := cfg.Repos[0].WorkflowPath
+	if !filepath.IsAbs(wfPath) {
+		wfPath = filepath.Join(filepath.Dir(cfgPath), wfPath)
+	}
+	return wfPath, nil
 }
 
 // cisternCataractaeDir returns the cataractae directory derived from a workflow file path.

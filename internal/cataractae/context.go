@@ -355,8 +355,11 @@ func revisionCycleNotes(notes []cistern.CataractaeNote) []cistern.CataractaeNote
 		if isPassSignal {
 			break
 		}
-		// Prepend so order is oldest-first within the cycle.
-		cycle = append([]cistern.CataractaeNote{n}, cycle...)
+		cycle = append(cycle, n)
+	}
+	// Reverse to oldest-first order (notes arrive newest-first).
+	for i, j := 0, len(cycle)-1; i < j; i, j = i+1, j-1 {
+		cycle[i], cycle[j] = cycle[j], cycle[i]
 	}
 	// Only return notes from reviewer/security/qa cataractae — not implementer self-notes.
 	var filtered []cistern.CataractaeNote

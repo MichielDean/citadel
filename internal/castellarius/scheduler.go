@@ -1263,16 +1263,16 @@ func (s *Castellarius) ensureCataractaeIntegrity() {
 	// Collect all unique identities across all repo workflows.
 	seen := map[string]bool{}
 	for _, wf := range s.workflows {
-		for _, step := range wf.Cataractae {
-			if step.Identity == "" || seen[step.Identity] {
+		for _, identity := range wf.UniqueIdentities() {
+			if seen[identity] {
 				continue
 			}
-			seen[step.Identity] = true
-			claudePath := filepath.Join(cataractaeDir, step.Identity, "CLAUDE.md")
+			seen[identity] = true
+			claudePath := filepath.Join(cataractaeDir, identity, "CLAUDE.md")
 			content, err := os.ReadFile(claudePath)
 			if err != nil || !strings.Contains(string(content), sentinel) {
 				s.logger.Warn("CLAUDE.md missing or corrupt — will regenerate",
-					"identity", step.Identity, "path", claudePath)
+					"identity", identity, "path", claudePath)
 				needsRegen = true
 			}
 		}

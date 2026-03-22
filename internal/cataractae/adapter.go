@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/MichielDean/cistern/internal/gates"
 	"github.com/MichielDean/cistern/internal/cistern"
@@ -95,13 +96,9 @@ func (a *Adapter) spawnAutomated(ctx context.Context, req castellarius.Cataracta
 	// Build metadata from prior annotations stored as step notes with "meta:" prefix.
 	metadata := make(map[string]any)
 	for _, n := range req.Notes {
-		if len(n.Content) > 5 && n.Content[:5] == "meta:" {
-			kv := n.Content[5:]
-			for i := 0; i < len(kv); i++ {
-				if kv[i] == '=' {
-					metadata[kv[:i]] = kv[i+1:]
-					break
-				}
+		if after, ok := strings.CutPrefix(n.Content, "meta:"); ok {
+			if k, v, ok := strings.Cut(after, "="); ok {
+				metadata[k] = v
 			}
 		}
 	}
