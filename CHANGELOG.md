@@ -37,6 +37,15 @@
 - `--interval N` sets the refresh interval in seconds (default 5, minimum 1)
 - Outside watch mode, behaviour is unchanged
 
+### ct version: --json flag (ci-4j6up)
+- `ct version --json` outputs `{"version":"<version>","commit":"<sha>"}` — machine-readable format for scripting and CI
+- Plain `ct version` output unchanged
+
+### cistern-git skill — git conventions for cataractae
+- New bundled skill `cistern-git` encodes hard-won git conventions: always exclude `CONTEXT.md` from staging (`git add -A -- ':!CONTEXT.md'`), always use two-dot diff (`origin/main..HEAD`), never stash in per-droplet worktrees
+- Wired into implement, simplify, docs, and delivery cataractae; replaces inline git instruction blocks that were previously embedded in each YAML entry
+- Two-dot diff prevents three-dot diff from appearing empty on rebased branches — the root cause of several dispatch loops
+
 ### Castellarius: dispatch-loop detection and auto-recovery (ci-ae5o8)
 - The Castellarius now detects droplets stuck in a tight **dispatch loop** — repeatedly failing to spawn an agent (e.g. dirty worktree, missing worktree) with no session ever starting — and attempts ordered self-recovery automatically
 - Detection threshold: 5 or more dispatch failures within any 2-minute window with no successful agent spawn
@@ -97,6 +106,13 @@
 - **Dirty worktree pre-flight check**: before running `git stash`, the delivery cataractae runs `git status --porcelain` and recirculates if any non-CONTEXT.md files are uncommitted. Prevents silently stashing an implementer's work and delivering an empty branch.
 - **Docs-only deliverables check**: before creating the PR, the delivery cataractae checks `git diff origin/$BASE...HEAD --name-only` and recirculates if only `.md`/`.txt`/CHANGELOG/README/CONTEXT files changed. A branch must contain at least one implementation file (`.go`, `.yaml`, etc.) unless the droplet is explicitly docs-only.
 - Both checks apply to the default aqueduct (`aqueduct/aqueduct.yaml`) and the embedded asset (`cmd/ct/assets/aqueduct/aqueduct.yaml`).
+
+### Web dashboard: pinch-to-zoom, Ctrl+scroll, and scale-aware terminal
+- **Pinch-to-zoom on mobile**: touch pinch scales the xterm.js font size proportionally; Safari gesture events for trackpad pinch; font size clamped to 7–28 px
+- **Ctrl+scroll on desktop**: keyboard-friendly zoom — same effect as pinch
+- **Single-finger pan after zoom**: CSS `transform: scale()` applied to the xterm container; scrollable overflow lets you pan to any part of the zoomed terminal
+- **Scale-aware virtual area**: default scale 0.75 renders the TUI as if the screen is 33% larger — FitAddon sees a bigger element, so Bubble Tea shows more aqueducts and content; CSS then scales it back down to fit the viewport
+- FitAddon refit called after every font-size or viewport change so PTY dimensions always match displayed size
 
 ### Web dashboard: xterm.js TUI terminal (ci-792v7)
 - `/ws/tui` WebSocket endpoint streams the TUI render loop as raw ANSI to the browser — the same output the terminal sees, with no reimplementation drift
