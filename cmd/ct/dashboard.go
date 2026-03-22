@@ -51,7 +51,7 @@ type FlowActivity struct {
 	DropletID   string                   `json:"droplet_id"`
 	Title       string                   `json:"title"`
 	Step        string                   `json:"step"`
-	RecentNotes []cistern.CataractaeNote `json:"recent_notes"` // last 3, newest last
+	RecentNotes []cistern.CataractaeNote `json:"recent_notes"` // last 3, newest first
 }
 
 // DashboardData holds all data required to render the dashboard.
@@ -207,10 +207,10 @@ func fetchDashboardData(cfgPath, dbPath string) *DashboardData {
 		if err != nil {
 			notes = nil
 		}
-		// Keep last 3 notes (most recent activity).
+		// Keep last 3 notes (most recent activity, newest first).
 		recent := notes
 		if len(recent) > 3 {
-			recent = recent[len(recent)-3:]
+			recent = recent[:3]
 		}
 		data.FlowActivities = append(data.FlowActivities, FlowActivity{
 			DropletID:   item.ID,

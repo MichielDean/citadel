@@ -422,13 +422,13 @@ func (c *Client) AddNote(id, step, content string) error {
 	return nil
 }
 
-// GetNotes returns all cataractae notes for a droplet, ordered by creation time.
+// GetNotes returns all cataractae notes for a droplet, newest first.
 func (c *Client) GetNotes(id string) ([]CataractaeNote, error) {
 	rows, err := c.db.Query(
 		`SELECT id, droplet_id, cataractae_name, content, created_at
 		 FROM cataractae_notes
 		 WHERE droplet_id = ?
-		 ORDER BY created_at ASC`,
+		 ORDER BY created_at DESC`,
 		id,
 	)
 	if err != nil {

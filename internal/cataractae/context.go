@@ -237,7 +237,7 @@ func writeContextFile(path string, p ContextParams) error {
 	if len(p.Notes) > 0 {
 		recent := p.Notes
 		if len(recent) > 4 {
-			recent = recent[len(recent)-4:]
+			recent = recent[:4]
 		}
 		b.WriteString("## Recent Step Notes\n\n")
 		for _, n := range recent {
@@ -325,10 +325,11 @@ func buildSpecContent(item *cistern.Droplet) string {
 // i.e. all notes appended since the last "pass" or "block" note from a cataractae.
 // These are surfaced at the top of CONTEXT.md so the implementer sees them first.
 func revisionCycleNotes(notes []cistern.CataractaeNote) []cistern.CataractaeNote {
-	// Walk backwards to find the start of the latest recirculate cycle.
+	// Walk newest-to-oldest to find the start of the latest recirculate cycle.
 	// A new cycle begins after any note whose content starts with "pass" or contains "No issues".
+	// Notes are ordered newest-first (DESC), so we iterate forward.
 	var cycle []cistern.CataractaeNote
-	for i := len(notes) - 1; i >= 0; i-- {
+	for i := 0; i < len(notes); i++ {
 		n := notes[i]
 		content := strings.TrimSpace(n.Content)
 		isPassSignal := strings.HasPrefix(strings.ToLower(content), "no issues") ||

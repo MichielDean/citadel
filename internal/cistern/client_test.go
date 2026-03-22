@@ -235,10 +235,11 @@ func TestAddNote_And_GetNotes(t *testing.T) {
 	if len(notes) != 2 {
 		t.Fatalf("got %d notes, want 2", len(notes))
 	}
-	if notes[0].CataractaeName != "implement" || notes[0].Content != "wrote the code" {
+	// Notes are returned newest-first (DESC).
+	if notes[0].CataractaeName != "review" || notes[0].Content != "looks good" {
 		t.Errorf("note[0] = %+v", notes[0])
 	}
-	if notes[1].CataractaeName != "review" || notes[1].Content != "looks good" {
+	if notes[1].CataractaeName != "implement" || notes[1].Content != "wrote the code" {
 		t.Errorf("note[1] = %+v", notes[1])
 	}
 }

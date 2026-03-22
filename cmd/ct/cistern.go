@@ -18,6 +18,16 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// cataractaeName returns the cataractae identity for note attribution.
+// It reads CT_CATARACTA_NAME (injected by the pipeline into agent sessions),
+// falling back to "manual" for direct CLI invocations.
+func cataractaeName() string {
+	if name := os.Getenv("CT_CATARACTA_NAME"); name != "" {
+		return name
+	}
+	return "manual"
+}
+
 var dropletCmd = &cobra.Command{
 	Use:   "droplet",
 	Short: "Manage droplets in the cistern",
@@ -534,7 +544,7 @@ var dropletNoteCmd = &cobra.Command{
 		}
 		defer c.Close()
 
-		if err := c.AddNote(args[0], "manual", args[1]); err != nil {
+		if err := c.AddNote(args[0], cataractaeName(), args[1]); err != nil {
 			return err
 		}
 			fmt.Printf("note added to droplet %s\n", args[0])
@@ -949,7 +959,7 @@ var dropletPassCmd = &cobra.Command{
 		}
 
 		if passNotes != "" {
-			if err := c.AddNote(args[0], "manual", passNotes); err != nil {
+			if err := c.AddNote(args[0], cataractaeName(), passNotes); err != nil {
 				return err
 			}
 		}
@@ -978,7 +988,7 @@ var dropletRecirculateCmd = &cobra.Command{
 		defer c.Close()
 
 		if recirculateNotes != "" {
-			if err := c.AddNote(args[0], "manual", recirculateNotes); err != nil {
+			if err := c.AddNote(args[0], cataractaeName(), "♻ "+recirculateNotes); err != nil {
 				return err
 			}
 		}
@@ -1010,7 +1020,7 @@ var dropletBlockCmd = &cobra.Command{
 		defer c.Close()
 
 		if blockNotes != "" {
-			if err := c.AddNote(args[0], "manual", blockNotes); err != nil {
+			if err := c.AddNote(args[0], cataractaeName(), blockNotes); err != nil {
 				return err
 			}
 		}
@@ -1113,7 +1123,7 @@ var dropletPeekCmd = &cobra.Command{
 				// Fall back to last 10 lines of the most recent note.
 				notes, nerr := c.GetNotes(id)
 				if nerr == nil && len(notes) > 0 {
-					last := notes[len(notes)-1]
+					last := notes[0]
 					lines := strings.Split(last.Content, "\n")
 					if len(lines) > 10 {
 						lines = lines[len(lines)-10:]
