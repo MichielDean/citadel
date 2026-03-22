@@ -472,21 +472,30 @@ const dashboardHTML = `<!DOCTYPE html>
 <title>Cistern</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-html,body{width:100%;height:100%;background:#0d1117;overflow:hidden}
-#terminal{width:100%;height:100%;position:absolute;inset:0}
-/* Vertical scrollbar inside xterm.js viewport */
+html,body{width:100%;height:100%;background:#0d1117}
+/* Outer scroll container — handles pan after zoom */
+#scroll{
+  width:100%;height:100%;
+  overflow:auto;           /* both axes scrollable */
+  -webkit-overflow-scrolling:touch;  /* momentum scroll on iOS */
+}
+/* Terminal inner container — sized to actual terminal content */
+#terminal{
+  display:inline-block;    /* shrinks to content width for horizontal scroll */
+  min-width:100%;
+  min-height:100%;
+}
+/* xterm.js scrollback scrollbar (vertical, inside the viewport) */
 .xterm-viewport::-webkit-scrollbar{width:8px}
 .xterm-viewport::-webkit-scrollbar-track{background:#0d1117}
 .xterm-viewport::-webkit-scrollbar-thumb{background:#30363d;border-radius:4px}
 .xterm-viewport::-webkit-scrollbar-thumb:hover{background:#484f58}
 .xterm-viewport{scrollbar-color:#30363d #0d1117;scrollbar-width:thin}
-/* Allow horizontal scroll on the terminal screen element */
-.xterm-screen{overflow-x:auto}
 </style>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css"/>
 </head>
 <body>
-<div id="terminal"></div>
+<div id="scroll"><div id="terminal"></div></div>
 <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
 <script>
@@ -531,8 +540,16 @@ term.onResize(function(e) {
 });
 
 function fitAndResize() {
+  /* Size the terminal div to the scroll container before fitting,
+     so FitAddon calculates cols/rows based on the visible area. */
+  var scroll = document.getElementById('scroll');
+  var termEl = document.getElementById('terminal');
+  termEl.style.width  = scroll.clientWidth  + 'px';
+  termEl.style.height = scroll.clientHeight + 'px';
   fitAddon.fit();
-  /* onResize fires automatically after fitAddon.fit() changes dimensions */
+  /* After fit, let the div shrink to terminal content size for scroll */
+  termEl.style.width  = '';
+  termEl.style.height = '';
 }
 
 window.addEventListener('resize', fitAndResize);
@@ -559,7 +576,7 @@ function setFontSize(size) {
 }
 
 /* Touch events (mobile) */
-document.getElementById('terminal').addEventListener('touchstart', function(e) {
+document.getElementById('scroll').addEventListener('touchstart', function(e) {
   if (e.touches.length === 2) {
     var dx = e.touches[0].clientX - e.touches[1].clientX;
     var dy = e.touches[0].clientY - e.touches[1].clientY;
@@ -569,7 +586,7 @@ document.getElementById('terminal').addEventListener('touchstart', function(e) {
   }
 }, {passive: false});
 
-document.getElementById('terminal').addEventListener('touchmove', function(e) {
+document.getElementById('scroll').addEventListener('touchmove', function(e) {
   if (e.touches.length === 2) {
     var dx = e.touches[0].clientX - e.touches[1].clientX;
     var dy = e.touches[0].clientY - e.touches[1].clientY;
@@ -581,7 +598,7 @@ document.getElementById('terminal').addEventListener('touchmove', function(e) {
   }
 }, {passive: false});
 
-document.getElementById('terminal').addEventListener('touchend', function(e) {
+document.getElementById('scroll').addEventListener('touchend', function(e) {
   if (e.touches.length < 2) {
     pinchStartDist = 0;
     baseFontSize = term.options.fontSize;
@@ -589,18 +606,18 @@ document.getElementById('terminal').addEventListener('touchend', function(e) {
 }, {passive: false});
 
 /* Gesture events (Safari desktop/iPad trackpad) */
-document.getElementById('terminal').addEventListener('gesturestart', function(e) {
+document.getElementById('scroll').addEventListener('gesturestart', function(e) {
   pinchStartSize = term.options.fontSize;
   e.preventDefault();
 }, {passive: false});
 
-document.getElementById('terminal').addEventListener('gesturechange', function(e) {
+document.getElementById('scroll').addEventListener('gesturechange', function(e) {
   setFontSize(pinchStartSize * e.scale);
   e.preventDefault();
 }, {passive: false});
 
 /* Ctrl+scroll zoom (desktop) */
-document.getElementById('terminal').addEventListener('wheel', function(e) {
+document.getElementById('scroll').addEventListener('wheel', function(e) {
   if (e.ctrlKey || e.metaKey) {
     e.preventDefault();
     var delta = e.deltaY > 0 ? -1 : 1;
