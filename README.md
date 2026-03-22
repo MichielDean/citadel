@@ -222,22 +222,34 @@ When the cistern is dry, Cistern runs maintenance automatically. Configure in `~
 ```yaml
 # Drought protocols — run when Cistern is idle
 drought_hooks:
+  - name: sync-workflow
+    action: git_sync             # Pull aqueduct.yaml + cataractae source files from origin/main
+    restart_if_updated: true     # Hot-reload the Castellarius when the workflow changes
+
   - name: sync-cataractae
-    action: cataractae_generate   # Regenerate cataractae files when YAML is newer
+    action: cataractae_generate  # Regenerate CLAUDE.md files from PERSONA.md + INSTRUCTIONS.md
 
   - name: prune-worktrees
-    action: worktree_prune     # Prune stale aqueduct registrations
+    action: worktree_prune       # Prune stale aqueduct registrations
 
   # - name: git-sync
   #   action: git_sync         # Fetch origin/main: redeploy aqueduct.yaml and skills/ into ~/.cistern/skills/
 
   # - name: vacuum-cistern
-  #   action: db_vacuum        # Compact the cistern database
+  #   action: db_vacuum          # Compact the cistern database
 
   # - name: custom
   #   action: shell
   #   command: "echo $(date): cistern dry >> ~/.cistern/drought.log"
 ```
+
+| Action | What it does |
+|---|---|
+| `git_sync` | Fetches `origin/main` and deploys `aqueduct.yaml` + `cataractae/<role>/PERSONA.md` + `cataractae/<role>/INSTRUCTIONS.md` to `~/.cistern/`. Skips files that are already up to date. |
+| `cataractae_generate` | Regenerates `CLAUDE.md` for each cataractae from its `PERSONA.md` + `INSTRUCTIONS.md`. Run after `git_sync` to pick up new source files. |
+| `worktree_prune` | Runs `git worktree prune` on each repo's primary clone to remove stale worktree registrations. |
+| `db_vacuum` | Compacts the SQLite cistern database. |
+| `shell` | Runs an arbitrary shell command. Use for custom maintenance. |
 
 Protocols fire once on the `flowing → idle` transition, not on every tick. Safe to add your own.
 
@@ -277,6 +289,9 @@ heartbeat_interval: 30s
 
 # Drought protocols run when the cistern goes idle
 drought_hooks:
+  - name: sync-workflow
+    action: git_sync
+    restart_if_updated: true
   - name: sync-cataractae
     action: cataractae_generate
   - name: prune-worktrees

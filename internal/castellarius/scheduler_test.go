@@ -1481,3 +1481,173 @@ func TestDispatch_DirtyWorktree(t *testing.T) {
 		}
 	}
 }
+
+// --- dirtyNonContextFiles unit tests ---
+
+func TestDirtyNonContextFiles_Error(t *testing.T) {
+	// Non-existent directory: git status should fail and return an error.
+	files, err := dirtyNonContextFiles("/does/not/exist/at/all")
+	if err == nil {
+		t.Error("expected error for non-existent directory, got nil")
+	}
+	if len(files) != 0 {
+		t.Errorf("expected no files on error, got %v", files)
+	}
+}
+
+func TestDirtyNonContextFiles_Clean(t *testing.T) {
+	dir := t.TempDir()
+	makeGitSandbox(t, dir)
+
+	files, err := dirtyNonContextFiles(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(files) != 0 {
+		t.Errorf("expected no dirty files for clean repo, got %v", files)
+	}
+}
+
+func TestDirtyNonContextFiles_DirtyTrackedFile(t *testing.T) {
+	dir := t.TempDir()
+	makeGitSandbox(t, dir)
+
+	// Modify a tracked file without committing.
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("modified\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	files, err := dirtyNonContextFiles(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(files) == 0 {
+		t.Fatal("expected dirty files, got none")
+	}
+	found := false
+	for _, f := range files {
+		if f == "README.md" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected README.md in dirty files, got %v", files)
+	}
+}
+
+func TestDirtyNonContextFiles_FiltersContextMD(t *testing.T) {
+	dir := t.TempDir()
+	makeGitSandbox(t, dir)
+
+	// Commit CONTEXT.md as a tracked file, then modify it.
+	if err := os.WriteFile(filepath.Join(dir, "CONTEXT.md"), []byte("original\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"git", "add", "CONTEXT.md"},
+		{"git", "commit", "-m", "add CONTEXT.md"},
+	} {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%v: %v\n%s", args, err, out)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "CONTEXT.md"), []byte("modified\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	files, err := dirtyNonContextFiles(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, f := range files {
+		if f == "CONTEXT.md" {
+			t.Error("CONTEXT.md should be filtered from dirty files")
+		}
+	}
+}
+
+func TestDirtyNonContextFiles_FiltersUntracked(t *testing.T) {
+	dir := t.TempDir()
+	makeGitSandbox(t, dir)
+
+	// Create an untracked file (never added to git).
+	if err := os.WriteFile(filepath.Join(dir, "untracked.go"), []byte("// new\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	files, err := dirtyNonContextFiles(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, f := range files {
+		if f == "untracked.go" {
+			t.Error("untracked file should be filtered from dirty files")
+		}
+	}
+}
+
+// TestRecoverDispatchLoop_DirtyWorktree verifies that recoverDispatchLoop detects
+// dirty tracked files, resets them, and records a recovery note.
+func TestRecoverDispatchLoop_DirtyWorktree(t *testing.T) {
+	sandboxRoot := t.TempDir()
+
+	const itemID = "dl-dirty-1"
+	worktreeDir := filepath.Join(sandboxRoot, "test-repo", itemID)
+	if err := os.MkdirAll(worktreeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	makeGitSandbox(t, worktreeDir)
+
+	// Create the feature branch.
+	cmd := exec.Command("git", "checkout", "-b", "feat/"+itemID)
+	cmd.Dir = worktreeDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git checkout -b: %v\n%s", err, out)
+	}
+
+	// Dirty state: modify a tracked file without committing.
+	if err := os.WriteFile(filepath.Join(worktreeDir, "README.md"), []byte("dirty\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Confirm the worktree is dirty before recovery.
+	if files, err := dirtyNonContextFiles(worktreeDir); err != nil || len(files) == 0 {
+		t.Fatalf("precondition failed: expected dirty worktree, got files=%v err=%v", files, err)
+	}
+
+	client := newMockClient()
+	item := &cistern.Droplet{ID: itemID, CurrentCataractae: "implement", Status: "in_progress"}
+	client.items[itemID] = item
+
+	config := testConfig()
+	workflows := map[string]*aqueduct.Workflow{"test-repo": testWorkflow()}
+	clients := map[string]CisternClient{"test-repo": client}
+	runner := newMockRunner(client)
+	sched := NewFromParts(config, workflows, clients, runner, WithSandboxRoot(sandboxRoot))
+
+	sched.recoverDispatchLoop(client, item, config.Repos[0])
+
+	// After recovery, the worktree should be clean.
+	files, err := dirtyNonContextFiles(worktreeDir)
+	if err != nil {
+		t.Fatalf("unexpected error after recovery: %v", err)
+	}
+	if len(files) != 0 {
+		t.Errorf("expected clean worktree after dirty recovery, got %v", files)
+	}
+
+	// A recovery note should have been added to the droplet.
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	var noteFound bool
+	for _, n := range client.attached {
+		if n.id == itemID && strings.Contains(n.notes, "dirty worktree reset") {
+			noteFound = true
+		}
+	}
+	if !noteFound {
+		t.Errorf("expected dirty-worktree recovery note, got: %v", client.attached)
+	}
+}

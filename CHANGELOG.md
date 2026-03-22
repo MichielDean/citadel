@@ -14,6 +14,12 @@
 - Notes are displayed **newest first** — `ct droplet show <id>` and CONTEXT.md both surface the most recent context at the top without scrolling.
 - `ct droplet recirculate --notes "..."` prefixes the note content with ♻ inline — the recirculate icon replaces the now-removed standalone recirculation counter and makes recirculate cycles immediately identifiable in the note list.
 
+### git_sync: deploy cataractae PERSONA.md + INSTRUCTIONS.md (ci-jesew)
+- The `git_sync` drought hook now deploys `PERSONA.md` and `INSTRUCTIONS.md` for every role defined in the workflow YAML, writing them to `~/.cistern/cataractae/<role>/` — the same pattern used for the workflow YAML itself (`git show origin/main:<path>`).
+- Previously only `aqueduct.yaml` was extracted from `origin/main`; cataractae source files were never synced, so a `git_sync` followed by `cataractae_generate` produced CLAUDE.md files from stale or missing source files, often re-generating the legacy stub content without the sentinel.
+- Missing files (role in YAML but no corresponding directory in origin/main) are logged at INFO level and skipped — they do not halt the sync.
+- Fixed `worktree_prune` drought hook: `git worktree prune` now runs against the `_primary` clone (`~/.cistern/sandboxes/<repo>/_primary/`), not the repo sandbox root, which had no worktree metadata.
+
 ### ct cataractae add: auto-generate CLAUDE.md on scaffold (ci-f4354)
 - `ct cataractae add <name>` now runs `ct cataractae generate` automatically after creating the template files — `CLAUDE.md` is ready immediately without a separate generate step.
 - Output format updated to `Created:` / `Updated:` / `Generated:` lines matching the actual files produced, followed by an instruction to edit `PERSONA.md` and `INSTRUCTIONS.md` and wire the cataractae into the pipeline.

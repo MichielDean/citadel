@@ -527,3 +527,218 @@ func TestHookGitSync_SkillsSyncGracefulWhenNoSkillsDir(t *testing.T) {
 		t.Errorf("expected no skill dirs, found %d", skillDirs)
 	}
 }
+
+// --- git_sync cataractae file deployment tests ---
+
+// mustGit runs git with args in dir, failing the test if it errors.
+func mustGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git -C %s %v: %v\n%s", dir, args, err, out)
+	}
+}
+
+// setupGitSyncEnv creates a minimal git environment for hookGitSync tests.
+// It initialises a non-bare remote repo with the given files, clones it into
+// the expected sandbox structure, and returns the sandboxRoot path.
+func setupGitSyncEnv(t *testing.T, tmpDir, repoName string, files map[string]string) string {
+	t.Helper()
+
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	// Create and populate the "remote" repo.
+	remoteDir := filepath.Join(tmpDir, "remote")
+	if err := os.MkdirAll(remoteDir, 0o755); err != nil {
+		t.Fatalf("mkdir remote: %v", err)
+	}
+	mustGit(t, remoteDir, "init")
+	mustGit(t, remoteDir, "config", "user.email", "test@test.com")
+	mustGit(t, remoteDir, "config", "user.name", "Test")
+
+	for relPath, content := range files {
+		fullPath := filepath.Join(remoteDir, relPath)
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", filepath.Dir(fullPath), err)
+		}
+		if err := os.WriteFile(fullPath, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", fullPath, err)
+		}
+	}
+
+	mustGit(t, remoteDir, "add", "-A")
+	mustGit(t, remoteDir, "commit", "-m", "initial")
+	// Rename current branch to main (no-op if already named main).
+	exec.Command("git", "-C", remoteDir, "branch", "-M", "main").Run() //nolint:errcheck
+
+	// Clone to the sandbox structure: <sandboxRoot>/<repoName>/ci-test.
+	sandboxRoot := filepath.Join(tmpDir, "sandboxes")
+	cloneDir := filepath.Join(sandboxRoot, repoName, "ci-test")
+	if err := os.MkdirAll(filepath.Dir(cloneDir), 0o755); err != nil {
+		t.Fatalf("mkdir clone parent: %v", err)
+	}
+	if out, err := exec.Command("git", "clone", remoteDir, cloneDir).CombinedOutput(); err != nil {
+		t.Fatalf("git clone: %v\n%s", err, out)
+	}
+	mustGit(t, cloneDir, "config", "user.email", "test@test.com")
+	mustGit(t, cloneDir, "config", "user.name", "Test")
+
+	return sandboxRoot
+}
+
+// setHomeForTest overrides HOME/USERPROFILE and restores them after the test.
+func setHomeForTest(t *testing.T, dir string) {
+	t.Helper()
+	origHome := os.Getenv("HOME")
+	origUserProfile := os.Getenv("USERPROFILE")
+	os.Setenv("HOME", dir)
+	os.Setenv("USERPROFILE", dir)
+	t.Cleanup(func() {
+		os.Setenv("HOME", origHome)
+		os.Setenv("USERPROFILE", origUserProfile)
+	})
+}
+
+func TestGitSync_DeploysCataractaeFiles_WhenPresentInRemote(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	wfContent := `name: test
+cataractae:
+  - name: impl
+    type: agent
+    identity: implementer
+    on_pass: done
+`
+	personaContent := "# Role: Implementer\n\nThis is the implementer persona.\n"
+	instrContent := "## Protocol\n\nFollow these instructions.\n"
+
+	sandboxRoot := setupGitSyncEnv(t, tmpDir, "testrepo", map[string]string{
+		"aqueduct/aqueduct.yaml":                 wfContent,
+		"cataractae/implementer/PERSONA.md":      personaContent,
+		"cataractae/implementer/INSTRUCTIONS.md": instrContent,
+	})
+
+	setHomeForTest(t, tmpDir)
+	os.MkdirAll(filepath.Join(tmpDir, ".cistern", "aqueduct"), 0o755)
+
+	cfg := &aqueduct.AqueductConfig{
+		Repos:         []aqueduct.RepoConfig{{Name: "testrepo", WorkflowPath: "aqueduct/aqueduct.yaml", Cataractae: 1, Prefix: "t"}},
+		MaxCataractae: 1,
+	}
+
+	if _, err := hookGitSync(cfg, sandboxRoot, discardLogger()); err != nil {
+		t.Fatalf("hookGitSync: %v", err)
+	}
+
+	// PERSONA.md must be deployed with correct content.
+	personaPath := filepath.Join(tmpDir, ".cistern", "cataractae", "implementer", "PERSONA.md")
+	got, err := os.ReadFile(personaPath)
+	if err != nil {
+		t.Fatalf("PERSONA.md not deployed: %v", err)
+	}
+	if string(got) != personaContent {
+		t.Errorf("PERSONA.md content mismatch:\ngot:  %q\nwant: %q", string(got), personaContent)
+	}
+
+	// INSTRUCTIONS.md must be deployed with correct content.
+	instrPath := filepath.Join(tmpDir, ".cistern", "cataractae", "implementer", "INSTRUCTIONS.md")
+	got, err = os.ReadFile(instrPath)
+	if err != nil {
+		t.Fatalf("INSTRUCTIONS.md not deployed: %v", err)
+	}
+	if string(got) != instrContent {
+		t.Errorf("INSTRUCTIONS.md content mismatch:\ngot:  %q\nwant: %q", string(got), instrContent)
+	}
+}
+
+func TestGitSync_SkipsCataractaeFile_WhenUpToDate(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	wfContent := `name: test
+cataractae:
+  - name: impl
+    type: agent
+    identity: implementer
+    on_pass: done
+`
+	personaContent := "# Role: Implementer\n\nNo changes.\n"
+	instrContent := "## Protocol\n\nNo changes.\n"
+
+	sandboxRoot := setupGitSyncEnv(t, tmpDir, "testrepo", map[string]string{
+		"aqueduct/aqueduct.yaml":                 wfContent,
+		"cataractae/implementer/PERSONA.md":      personaContent,
+		"cataractae/implementer/INSTRUCTIONS.md": instrContent,
+	})
+
+	setHomeForTest(t, tmpDir)
+
+	// Pre-populate deployed files with identical content.
+	implDeployDir := filepath.Join(tmpDir, ".cistern", "cataractae", "implementer")
+	os.MkdirAll(implDeployDir, 0o755)
+	personaPath := filepath.Join(implDeployDir, "PERSONA.md")
+	os.WriteFile(personaPath, []byte(personaContent), 0o644)
+	os.WriteFile(filepath.Join(implDeployDir, "INSTRUCTIONS.md"), []byte(instrContent), 0o644)
+
+	// Set mtime to a known past time so we can detect any rewrite.
+	past := time.Now().Add(-time.Hour)
+	os.Chtimes(personaPath, past, past)
+
+	os.MkdirAll(filepath.Join(tmpDir, ".cistern", "aqueduct"), 0o755)
+
+	cfg := &aqueduct.AqueductConfig{
+		Repos:         []aqueduct.RepoConfig{{Name: "testrepo", WorkflowPath: "aqueduct/aqueduct.yaml", Cataractae: 1, Prefix: "t"}},
+		MaxCataractae: 1,
+	}
+
+	if _, err := hookGitSync(cfg, sandboxRoot, discardLogger()); err != nil {
+		t.Fatalf("hookGitSync: %v", err)
+	}
+
+	// If the file was skipped, its mtime should still be approximately past (~1 hour ago).
+	// If it was rewritten, mtime would be very recent (within last few seconds).
+	info, err := os.Stat(personaPath)
+	if err != nil {
+		t.Fatalf("stat PERSONA.md: %v", err)
+	}
+	if time.Since(info.ModTime()) < 30*time.Second {
+		t.Error("PERSONA.md was rewritten even though content was identical (mtime is very recent)")
+	}
+}
+
+func TestGitSync_SkipsMissingCataractaeFiles_Gracefully(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Workflow defines implementer but the remote has no cataractae directory.
+	wfContent := `name: test
+cataractae:
+  - name: impl
+    type: agent
+    identity: implementer
+    on_pass: done
+`
+	sandboxRoot := setupGitSyncEnv(t, tmpDir, "testrepo", map[string]string{
+		"aqueduct/aqueduct.yaml": wfContent,
+		// No cataractae files in remote.
+	})
+
+	setHomeForTest(t, tmpDir)
+	os.MkdirAll(filepath.Join(tmpDir, ".cistern", "aqueduct"), 0o755)
+
+	cfg := &aqueduct.AqueductConfig{
+		Repos:         []aqueduct.RepoConfig{{Name: "testrepo", WorkflowPath: "aqueduct/aqueduct.yaml", Cataractae: 1, Prefix: "t"}},
+		MaxCataractae: 1,
+	}
+
+	// Must not error when cataractae source files are absent from the remote.
+	if _, err := hookGitSync(cfg, sandboxRoot, discardLogger()); err != nil {
+		t.Fatalf("hookGitSync should not error for missing cataractae files: %v", err)
+	}
+
+	// No cataractae deploy dir should have been created.
+	cataractaePath := filepath.Join(tmpDir, ".cistern", "cataractae", "implementer")
+	if _, err := os.Stat(cataractaePath); !os.IsNotExist(err) {
+		t.Error("cataractae deploy dir should not exist when remote has no source files")
+	}
+}

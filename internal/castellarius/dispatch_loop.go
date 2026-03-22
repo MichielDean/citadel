@@ -116,7 +116,11 @@ func (s *Castellarius) recoverDispatchLoop(client CisternClient, item *cistern.D
 
 	// Recovery 1: dirty worktree — reset and clean.
 	if _, err := os.Stat(worktreePath); err == nil {
-		if dirtyFiles := dirtyNonContextFiles(worktreePath); len(dirtyFiles) > 0 {
+		dirtyFiles, dirtyCheckErr := dirtyNonContextFiles(worktreePath)
+		if dirtyCheckErr != nil {
+			s.logger.Warn("dispatch-loop recovery: dirty check failed — skipping dirty recovery",
+				"droplet", item.ID, "error", dirtyCheckErr)
+		} else if len(dirtyFiles) > 0 {
 			s.logger.Info("dispatch-loop recovery: dirty worktree — resetting",
 				"droplet", item.ID,
 				"attempt", attempt,

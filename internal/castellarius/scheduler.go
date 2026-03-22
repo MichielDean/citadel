@@ -727,7 +727,20 @@ func (s *Castellarius) dispatchRepo(ctx context.Context, repo aqueduct.RepoConfi
 
 				// Dirty state check: if non-CONTEXT.md files are uncommitted,
 				// recirculate with a diagnostic note rather than spawning into dirty state.
-				if dirtyFiles := dirtyNonContextFiles(sandboxDir); len(dirtyFiles) > 0 {
+				// If git status itself fails (transient error, disk full, permissions),
+				// recirculate conservatively rather than letting an unknown dirty state advance.
+				dirtyFiles, dirtyErr := dirtyNonContextFiles(sandboxDir)
+				if dirtyErr != nil {
+					s.logger.Error("dirty check: git status failed — recirculating conservatively",
+						"droplet", req.Item.ID, "error", dirtyErr)
+					s.dispatchLoop.recordFailure(req.Item.ID)
+					if err2 := client.Assign(req.Item.ID, "", req.Step.Name); err2 != nil {
+						s.logger.Error("reset after dirty-check error", "droplet", req.Item.ID, "error", err2)
+					}
+					pool.Release(w)
+					return
+				}
+				if len(dirtyFiles) > 0 {
 					note := fmt.Sprintf(
 						"Dispatch blocked: worktree has uncommitted files from a prior session: %s. "+
 							"These must be committed or discarded before proceeding.",
@@ -1161,15 +1174,17 @@ func removeDropletWorktree(primaryDir, sandboxRoot, repoName, dropletID string) 
 
 // dirtyNonContextFiles returns uncommitted non-CONTEXT.md files in dir.
 // An empty slice means the worktree is clean for dispatch.
-func dirtyNonContextFiles(dir string) []string {
+// Returns an error if git status cannot be run (e.g. dir is not a git repo,
+// transient failure, disk full). Callers must treat errors conservatively.
+func dirtyNonContextFiles(dir string) ([]string, error) {
 	cmd := exec.Command("git", "status", "--porcelain")
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	var dirty []string
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+	for _, line := range strings.Split(string(out), "\n") {
 		if line == "" {
 			continue
 		}
@@ -1188,7 +1203,7 @@ func dirtyNonContextFiles(dir string) []string {
 			dirty = append(dirty, name)
 		}
 	}
-	return dirty
+	return dirty, nil
 }
 
 // cleanupBranchInSandbox detaches HEAD in the worktree and deletes the feature
