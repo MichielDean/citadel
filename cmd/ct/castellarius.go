@@ -278,10 +278,19 @@ var aqueductValidateCmd = &cobra.Command{
 // ct status — overall system status (combines all views)
 // ─────────────────────────────────────────────────────────────────────────────
 
+var (
+	statusWatch    bool
+	statusInterval int
+)
+
 var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Overall system status — cistern level, aqueduct flow, and cataractae chains",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if statusInterval < 1 {
+			return fmt.Errorf("--interval must be at least 1")
+		}
+
 		cfgPath := resolveConfigPath()
 		cfg, err := aqueduct.ParseAqueductConfig(cfgPath)
 		if err != nil {
@@ -295,103 +304,133 @@ var statusCmd = &cobra.Command{
 		}
 		defer c.Close()
 
-		allItems, err := c.List("", "")
-		if err != nil {
-			return fmt.Errorf("list droplets: %w", err)
-		}
-
-		flowing, queued, done := 0, 0, 0
-		var humanGated []*cistern.Droplet
-		assignee := map[string]*cistern.Droplet{}
-		for _, item := range allItems {
-			switch item.Status {
-			case "in_progress":
-				flowing++
-				if item.Assignee != "" {
-					assignee[item.Assignee] = item
-				}
-			case "open":
-				queued++
-			case "delivered":
-				done++
+		render := func() error {
+			allItems, err := c.List("", "")
+			if err != nil {
+				return fmt.Errorf("list droplets: %w", err)
 			}
-			if item.CurrentCataractae == "human" && (item.Status == "stagnant" || item.Status == "escalated") {
-				humanGated = append(humanGated, item)
-			}
-		}
 
-		// ── Cistern summary ───────────────────────────────────────────────────
-		summary := fmt.Sprintf("%s flowing · %s queued · %s delivered",
-			col(colorGreen, fmt.Sprintf("%d", flowing)),
-			col(colorYellow, fmt.Sprintf("%d", queued)),
-			col(colorDim, fmt.Sprintf("%d", done)))
-		fmt.Printf("%s\n\n", summary)
-
-		if len(humanGated) > 0 {
-			ids := make([]string, 0, len(humanGated))
-			for _, d := range humanGated {
-				ids = append(ids, d.ID)
-			}
-			fmt.Printf("%s %d droplet(s) awaiting human approval: %s\n\n",
-				col(colorYellow, "⏸"),
-				len(humanGated),
-				strings.Join(ids, ", "))
-		}
-
-		// ── Castellarius / aqueducts ──────────────────────────────────────────
-		fmt.Printf("Castellarius  watching\n")
-
-		// Pre-load workflow step counts for progress indicators.
-		cfgDir := filepath.Dir(cfgPath)
-		wfSteps := map[string][]aqueduct.WorkflowCataractae{}
-		for _, repo := range cfg.Repos {
-			wfPath := repo.WorkflowPath
-			if !filepath.IsAbs(wfPath) {
-				wfPath = filepath.Join(cfgDir, wfPath)
-			}
-			if wf, wfErr := aqueduct.ParseWorkflow(wfPath); wfErr == nil {
-				wfSteps[repo.Name] = wf.Cataractae
-			}
-		}
-
-		tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-		for _, repo := range cfg.Repos {
-			steps := wfSteps[repo.Name]
-			for _, name := range repoWorkerNames(repo) {
-				if item, ok := assignee[name]; ok {
-					elapsed := formatElapsed(time.Since(item.UpdatedAt))
-					stage := item.CurrentCataractae
-					idx := cataractaeIndexInWorkflow(stage, steps)
-					total := len(steps)
-					var progress string
-					if idx > 0 && total > 0 {
-						progress = fmt.Sprintf("%s [%d/%d]", stage, idx, total)
-					} else {
-						progress = stage
+			flowing, queued, done := 0, 0, 0
+			var humanGated []*cistern.Droplet
+			assignee := map[string]*cistern.Droplet{}
+			for _, item := range allItems {
+				switch item.Status {
+				case "in_progress":
+					flowing++
+					if item.Assignee != "" {
+						assignee[item.Assignee] = item
 					}
-					line := fmt.Sprintf("  %s\t→ %s\t[%s]\t%s\n", name, item.ID, progress, elapsed)
-					fmt.Fprint(tw, col(colorGreen, line))
-				} else {
-					line := fmt.Sprintf("  %s\t→ idle\t\t\n", name)
-					fmt.Fprint(tw, col(colorDim, line))
+				case "open":
+					queued++
+				case "delivered":
+					done++
+				}
+				if item.CurrentCataractae == "human" && (item.Status == "stagnant" || item.Status == "escalated") {
+					humanGated = append(humanGated, item)
 				}
 			}
-		}
-		tw.Flush()
 
-		// ── Aqueducts ─────────────────────────────────────────────────────────
-		fmt.Println()
-		fmt.Printf("Aqueducts\n")
-		for _, repo := range cfg.Repos {
-			steps := wfSteps[repo.Name]
-			stepCount := "?"
-			if len(steps) > 0 {
-				stepCount = fmt.Sprintf("%d", len(steps))
+			// ── Cistern summary ───────────────────────────────────────────────────
+			summary := fmt.Sprintf("%s flowing · %s queued · %s delivered",
+				col(colorGreen, fmt.Sprintf("%d", flowing)),
+				col(colorYellow, fmt.Sprintf("%d", queued)),
+				col(colorDim, fmt.Sprintf("%d", done)))
+			fmt.Printf("%s\n\n", summary)
+
+			if len(humanGated) > 0 {
+				ids := make([]string, 0, len(humanGated))
+				for _, d := range humanGated {
+					ids = append(ids, d.ID)
+				}
+				fmt.Printf("%s %d droplet(s) awaiting human approval: %s\n\n",
+					col(colorYellow, "⏸"),
+					len(humanGated),
+					strings.Join(ids, ", "))
 			}
-			fmt.Printf("  %-20s  %s  (%s cataractae)\n", repo.Name, repo.WorkflowPath, stepCount)
+
+			// ── Castellarius / aqueducts ──────────────────────────────────────────
+			fmt.Printf("Castellarius  watching\n")
+
+			// Pre-load workflow step counts for progress indicators.
+			cfgDir := filepath.Dir(cfgPath)
+			wfSteps := map[string][]aqueduct.WorkflowCataractae{}
+			for _, repo := range cfg.Repos {
+				wfPath := repo.WorkflowPath
+				if !filepath.IsAbs(wfPath) {
+					wfPath = filepath.Join(cfgDir, wfPath)
+				}
+				if wf, wfErr := aqueduct.ParseWorkflow(wfPath); wfErr == nil {
+					wfSteps[repo.Name] = wf.Cataractae
+				}
+			}
+
+			tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			for _, repo := range cfg.Repos {
+				steps := wfSteps[repo.Name]
+				for _, name := range repoWorkerNames(repo) {
+					if item, ok := assignee[name]; ok {
+						elapsed := formatElapsed(time.Since(item.UpdatedAt))
+						stage := item.CurrentCataractae
+						idx := cataractaeIndexInWorkflow(stage, steps)
+						total := len(steps)
+						var progress string
+						if idx > 0 && total > 0 {
+							progress = fmt.Sprintf("%s [%d/%d]", stage, idx, total)
+						} else {
+							progress = stage
+						}
+						line := fmt.Sprintf("  %s\t→ %s\t[%s]\t%s\n", name, item.ID, progress, elapsed)
+						fmt.Fprint(tw, col(colorGreen, line))
+					} else {
+						line := fmt.Sprintf("  %s\t→ idle\t\t\n", name)
+						fmt.Fprint(tw, col(colorDim, line))
+					}
+				}
+			}
+			tw.Flush()
+
+			// ── Aqueducts ─────────────────────────────────────────────────────────
+			fmt.Println()
+			fmt.Printf("Aqueducts\n")
+			for _, repo := range cfg.Repos {
+				steps := wfSteps[repo.Name]
+				stepCount := "?"
+				if len(steps) > 0 {
+					stepCount = fmt.Sprintf("%d", len(steps))
+				}
+				fmt.Printf("  %-20s  %s  (%s cataractae)\n", repo.Name, repo.WorkflowPath, stepCount)
+			}
+
+			return nil
 		}
 
-		return nil
+		if !statusWatch {
+			return render()
+		}
+
+		// Watch mode: clear screen and re-render every statusInterval seconds. Ctrl-C to exit.
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+		defer signal.Stop(sigCh)
+
+		ticker := time.NewTicker(time.Duration(statusInterval) * time.Second)
+		defer ticker.Stop()
+
+		fmt.Print(clearScreen)
+		if err := render(); err != nil {
+			return err
+		}
+		for {
+			select {
+			case <-ticker.C:
+				fmt.Print(clearScreen)
+				if err := render(); err != nil {
+					return err
+				}
+			case <-sigCh:
+				return nil
+			}
+		}
 	},
 }
 
@@ -399,6 +438,9 @@ var statusCmd = &cobra.Command{
 
 func init() {
 	castellariusStartCmd.Flags().StringVar(&configPath, "config", "", "path to cistern.yaml (default: ~/.cistern/cistern.yaml)")
+
+	statusCmd.Flags().BoolVar(&statusWatch, "watch", false, "continuously refresh status every N seconds")
+	statusCmd.Flags().IntVar(&statusInterval, "interval", 5, "refresh interval in seconds (min 1, used with --watch)")
 
 	castellariusCmd.AddCommand(castellariusStartCmd, castellariusStatusCmd)
 	aqueductCmd.AddCommand(aqueductStatusCmd, aqueductValidateCmd)
