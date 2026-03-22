@@ -1060,17 +1060,20 @@ func prepareDropletWorktree(primaryDir, sandboxRoot, repoName, dropletID string)
 	branch := "feat/" + dropletID
 
 	if _, err := os.Stat(worktreePath); err == nil {
-		// Worktree exists — resume by checking out the branch.
+		// Worktree exists — resume by checking out the branch, then hard-reset
+		// to guarantee a clean state. Any uncommitted changes from prior manual
+		// work or prior cataractae are discarded — agents must commit their work.
 		checkout := exec.Command("git", "checkout", branch)
 		checkout.Dir = worktreePath
 		if out, err := checkout.CombinedOutput(); err != nil {
 			return "", fmt.Errorf("git checkout %s in %s: %w: %s", branch, worktreePath, err, out)
 		}
-		// Discard CONTEXT.md left modified from prior dispatch — it is rewritten
-		// fresh by PrepareContext before each spawn.
-		discard := exec.Command("git", "checkout", "--", "CONTEXT.md")
-		discard.Dir = worktreePath
-		_ = discard.Run()
+		reset := exec.Command("git", "reset", "--hard", "HEAD")
+		reset.Dir = worktreePath
+		_ = reset.Run()
+		clean := exec.Command("git", "clean", "-fd")
+		clean.Dir = worktreePath
+		_ = clean.Run()
 		return worktreePath, nil
 	}
 
@@ -1096,21 +1099,6 @@ func prepareDropletWorktree(primaryDir, sandboxRoot, repoName, dropletID string)
 			return "", fmt.Errorf("git worktree add %s in %s: %w: %s", worktreePath, primaryDir, err2, out2)
 		}
 		_ = out // first attempt output discarded; only the second failure matters
-	}
-
-	// Reset to origin/main and scrub untracked files to guarantee a clean
-	// baseline — the primary clone may have local modifications (manual hotfixes,
-	// direct edits) that can bleed into new worktrees.
-	resetCmd := exec.Command("git", "reset", "--hard", "origin/main")
-	resetCmd.Dir = worktreePath
-	if out, err := resetCmd.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("git reset in %s: %w: %s", worktreePath, err, out)
-	}
-
-	cleanCmd := exec.Command("git", "clean", "-fd")
-	cleanCmd.Dir = worktreePath
-	if out, err := cleanCmd.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("git clean in %s: %w: %s", worktreePath, err, out)
 	}
 
 	for _, args := range [][]string{
@@ -1216,6 +1204,7 @@ func WriteContext(dir string, notes []cistern.CataractaeNote) error {
 	return os.WriteFile(filepath.Join(dir, "CONTEXT.md"), b, 0o644)
 }
 
+// parkWorktree detaches HEAD in a worker's sandbox so the feature branch is
 // ensureCataractaeIntegrity checks each agent cataractae's CLAUDE.md for the
 // sentinel string that proves it was generated from the YAML (not corrupted).
 // If any file is missing or lacks the sentinel, it is regenerated automatically.
