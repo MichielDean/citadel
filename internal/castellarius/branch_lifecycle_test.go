@@ -200,3 +200,79 @@ func TestCleanupBranchInSandbox_NoopWhenBranchMissing(t *testing.T) {
 	// cleanupBranchInSandbox ignores errors — must not panic.
 	cleanupBranchInSandbox(dir, "feat/nonexistent")
 }
+
+// --- prepareDropletWorktree tests ---
+
+// TestPrepareDropletWorktree_NewWorktree_CreatesOnFeatureBranch verifies that a
+// new worktree is created at the correct path on the feature branch.
+func TestPrepareDropletWorktree_NewWorktree_CreatesOnFeatureBranch(t *testing.T) {
+	primaryDir := makeBareAndClone(t)
+	sandboxRoot := t.TempDir()
+
+	worktreePath, err := prepareDropletWorktree(primaryDir, sandboxRoot, "myrepo", "drop-new")
+	if err != nil {
+		t.Fatalf("prepareDropletWorktree: %v", err)
+	}
+
+	if _, statErr := os.Stat(worktreePath); statErr != nil {
+		t.Fatalf("worktree path does not exist: %v", statErr)
+	}
+
+	if got := currentBranch(t, worktreePath); got != "feat/drop-new" {
+		t.Errorf("HEAD branch = %q, want feat/drop-new", got)
+	}
+}
+
+// TestPrepareDropletWorktree_NewWorktree_ResetsToOriginMain verifies that even
+// when an existing feat/<id> branch is ahead of origin/main (e.g. from a prior
+// manual hotfix), the new worktree is reset to origin/main before being handed
+// to the agent — preventing dirty state from bleeding in.
+func TestPrepareDropletWorktree_NewWorktree_ResetsToOriginMain(t *testing.T) {
+	primaryDir := makeBareAndClone(t)
+	sandboxRoot := t.TempDir()
+
+	// Advance feat/drop-dirty beyond origin/main to simulate a prior manual edit
+	// that left the branch ahead of the remote.
+	branchMustRun(t, branchGitCmd(primaryDir, "checkout", "-b", "feat/drop-dirty"))
+	if err := os.WriteFile(filepath.Join(primaryDir, "hotfix.go"), []byte("// hotfix\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	branchMustRun(t, branchGitCmd(primaryDir, "add", "."))
+	branchMustRun(t, branchGitCmd(primaryDir, "commit", "-m", "manual hotfix on feat branch"))
+	branchMustRun(t, branchGitCmd(primaryDir, "checkout", "main"))
+
+	originMainSHA := func() string {
+		out, err := exec.Command("git", "-C", primaryDir, "rev-parse", "origin/main").Output()
+		if err != nil {
+			t.Fatalf("rev-parse origin/main: %v", err)
+		}
+		return strings.TrimSpace(string(out))
+	}()
+
+	worktreePath, err := prepareDropletWorktree(primaryDir, sandboxRoot, "myrepo", "drop-dirty")
+	if err != nil {
+		t.Fatalf("prepareDropletWorktree: %v", err)
+	}
+
+	worktreeHEAD := func() string {
+		out, err := exec.Command("git", "-C", worktreePath, "rev-parse", "HEAD").Output()
+		if err != nil {
+			t.Fatalf("rev-parse HEAD in worktree: %v", err)
+		}
+		return strings.TrimSpace(string(out))
+	}()
+
+	if worktreeHEAD != originMainSHA {
+		t.Errorf("worktree HEAD = %s, want origin/main = %s (reset --hard did not work)",
+			worktreeHEAD, originMainSHA)
+	}
+
+	// Worktree must be clean after creation.
+	statusOut, statusErr := exec.Command("git", "-C", worktreePath, "status", "--porcelain").Output()
+	if statusErr != nil {
+		t.Fatalf("git status: %v", statusErr)
+	}
+	if strings.TrimSpace(string(statusOut)) != "" {
+		t.Errorf("worktree is not clean after prepareDropletWorktree:\n%s", statusOut)
+	}
+}

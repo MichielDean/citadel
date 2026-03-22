@@ -1098,6 +1098,21 @@ func prepareDropletWorktree(primaryDir, sandboxRoot, repoName, dropletID string)
 		_ = out // first attempt output discarded; only the second failure matters
 	}
 
+	// Reset to origin/main and scrub untracked files to guarantee a clean
+	// baseline — the primary clone may have local modifications (manual hotfixes,
+	// direct edits) that can bleed into new worktrees.
+	resetCmd := exec.Command("git", "reset", "--hard", "origin/main")
+	resetCmd.Dir = worktreePath
+	if out, err := resetCmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("git reset in %s: %w: %s", worktreePath, err, out)
+	}
+
+	cleanCmd := exec.Command("git", "clean", "-fd")
+	cleanCmd.Dir = worktreePath
+	if out, err := cleanCmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("git clean in %s: %w: %s", worktreePath, err, out)
+	}
+
 	for _, args := range [][]string{
 		{"git", "config", "user.name", "Cistern Agent"},
 		{"git", "config", "user.email", "agent@cistern.local"},
