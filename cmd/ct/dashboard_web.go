@@ -86,10 +86,20 @@ func wsAcceptKey(clientKey string) string {
 // wsSendText writes a WebSocket text frame to the buffered writer and flushes.
 // The server never masks frames (RFC 6455 §5.1).
 func wsSendText(w *bufio.Writer, data string) error {
-	payload := []byte(data)
+	return wsSendFrame(w, 0x81, []byte(data))
+}
+
+// wsSendBinary writes a WebSocket binary frame (opcode 0x82).
+// Use for raw PTY output which may contain non-UTF-8 bytes — text frames
+// with invalid UTF-8 cause browsers to close the connection immediately.
+func wsSendBinary(w *bufio.Writer, data []byte) error {
+	return wsSendFrame(w, 0x82, data)
+}
+
+func wsSendFrame(w *bufio.Writer, opcode byte, payload []byte) error {
 	n := len(payload)
 	header := make([]byte, 0, 10)
-	header = append(header, 0x81) // FIN=1, opcode=0x1 (text)
+	header = append(header, opcode) // FIN=1
 	switch {
 	case n < 126:
 		header = append(header, byte(n))
@@ -268,8 +278,13 @@ func newDashboardMux(cfgPath, dbPath string) http.Handler {
 	})
 
 	// WS /ws/tui — runs ct dashboard in a PTY and streams raw ANSI to xterm.js.
-	// Bubble Tea requires a real PTY to render correctly; piping to io.Writer
-	// produces plain text only. This gives pixel-perfect TUI output in the browser.
+	//
+	// Protocol (client → server): JSON text frames for control messages.
+	//   {"resize":{"cols":N,"rows":N}}  — resize PTY to match xterm.js viewport
+	//
+	// Protocol (server → client): binary frames containing raw PTY output bytes.
+	// Binary frames are required because PTY output may contain non-UTF-8 byte
+	// sequences; text frames with invalid UTF-8 cause browsers to close the WS.
 	mux.HandleFunc("/ws/tui", func(w http.ResponseWriter, r *http.Request) {
 		conn, brw, err := wsUpgrade(w, r)
 		if err != nil {
@@ -277,7 +292,6 @@ func newDashboardMux(cfgPath, dbPath string) http.Handler {
 		}
 		defer conn.Close()
 
-		// Spawn ct dashboard as a subprocess attached to a PTY.
 		exe, err := os.Executable()
 		if err != nil {
 			return
@@ -294,16 +308,90 @@ func newDashboardMux(cfgPath, dbPath string) http.Handler {
 			cmd.Process.Kill() //nolint:errcheck
 		}()
 
-		// Set initial PTY size.
-		_ = pty.Setsize(ptmx, &pty.Winsize{Rows: 40, Cols: 200})
+		// Default size — will be overridden by the client's first resize message.
+		_ = pty.Setsize(ptmx, &pty.Winsize{Rows: 24, Cols: 80})
 
-		// Forward PTY output → WebSocket.
-		buf := make([]byte, 4096)
+		// Read incoming WebSocket frames from the client.
+		// Frames are read via the raw connection; we handle text (control) and
+		// binary (keyboard input) frames.
+		go func() {
+			buf := make([]byte, 4096)
+			for {
+				// Read a WebSocket frame header.
+				header := make([]byte, 2)
+				if _, err := io.ReadFull(brw.Reader, header); err != nil {
+					return
+				}
+				opcode := header[0] & 0x0F
+				masked := header[1]&0x80 != 0
+				rawLen := int(header[1] & 0x7F)
+
+				var payloadLen int
+				switch rawLen {
+				case 126:
+					ext := make([]byte, 2)
+					if _, err := io.ReadFull(brw.Reader, ext); err != nil {
+						return
+					}
+					payloadLen = int(ext[0])<<8 | int(ext[1])
+				case 127:
+					ext := make([]byte, 8)
+					if _, err := io.ReadFull(brw.Reader, ext); err != nil {
+						return
+					}
+					payloadLen = int(ext[4])<<24 | int(ext[5])<<16 | int(ext[6])<<8 | int(ext[7])
+				default:
+					payloadLen = rawLen
+				}
+
+				var mask [4]byte
+				if masked {
+					if _, err := io.ReadFull(brw.Reader, mask[:]); err != nil {
+						return
+					}
+				}
+
+				if payloadLen > len(buf) {
+					buf = make([]byte, payloadLen)
+				}
+				if _, err := io.ReadFull(brw.Reader, buf[:payloadLen]); err != nil {
+					return
+				}
+				if masked {
+					for i := range buf[:payloadLen] {
+						buf[i] ^= mask[i%4]
+					}
+				}
+
+				payload := buf[:payloadLen]
+
+				switch opcode {
+				case 0x1: // text frame — control message (resize)
+					var msg struct {
+						Resize *struct {
+							Cols uint16 `json:"cols"`
+							Rows uint16 `json:"rows"`
+						} `json:"resize"`
+					}
+					if json.Unmarshal(payload, &msg) == nil && msg.Resize != nil {
+						_ = pty.Setsize(ptmx, &pty.Winsize{
+							Rows: msg.Resize.Rows,
+							Cols: msg.Resize.Cols,
+						})
+					}
+				case 0x8: // close frame
+					return
+				}
+			}
+		}()
+
+		// Forward PTY output → WebSocket as binary frames.
+		out := make([]byte, 4096)
 		for {
-			n, err := ptmx.Read(buf)
+			n, err := ptmx.Read(out)
 			if n > 0 {
 				conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout)) //nolint:errcheck
-				if wsSendText(brw.Writer, string(buf[:n])) != nil {
+				if wsSendBinary(brw.Writer, out[:n]) != nil {
 					return
 				}
 			}
@@ -372,46 +460,101 @@ const dashboardHTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Cistern</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-html,body{width:100%;height:100%;background:#0d1117;overflow:hidden}
-#terminal{width:100%;height:100%}
-.xterm-viewport{scrollbar-color:#30363d #0d1117}
+html,body{width:100%;height:100%;background:#0d1117;overflow:hidden;touch-action:none}
+#terminal{width:100%;height:100%;position:absolute;inset:0}
+/* Scrollbar styling */
+.xterm-viewport::-webkit-scrollbar{width:6px}
+.xterm-viewport::-webkit-scrollbar-track{background:#0d1117}
+.xterm-viewport::-webkit-scrollbar-thumb{background:#30363d;border-radius:3px}
+.xterm-viewport{scrollbar-color:#30363d #0d1117;scrollbar-width:thin}
 </style>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css"/>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css"/>
 </head>
 <body>
 <div id="terminal"></div>
-<script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
 <script>
-var term=new Terminal({
-  theme:{background:'#0d1117',foreground:'#e6edf3',cursor:'#e6edf3',selectionBackground:'#264f78'},
-  fontFamily:"'Cascadia Code','Courier New',Courier,monospace",
-  fontSize:13,
-  convertEol:true,
-  scrollback:1000
+var term = new Terminal({
+  theme: {
+    background:          '#0d1117',
+    foreground:          '#e6edf3',
+    cursor:              '#58a6ff',
+    cursorAccent:        '#0d1117',
+    selectionBackground: '#264f78',
+    black:   '#484f58', red:     '#ff7b72', green:   '#3fb950', yellow:  '#d29922',
+    blue:    '#58a6ff', magenta: '#bc8cff', cyan:    '#39c5cf', white:   '#b1bac4',
+    brightBlack:   '#6e7681', brightRed:     '#ffa198', brightGreen:   '#56d364',
+    brightYellow:  '#e3b341', brightBlue:    '#79c0ff', brightMagenta: '#d2a8ff',
+    brightCyan:    '#56d4dd', brightWhite:   '#f0f6fc'
+  },
+  /* Font stack: prefer fonts known to have good Unicode box-drawing coverage.
+     Cascadia Code (Windows Terminal), DejaVu Sans Mono, and JetBrains Mono all
+     render box-drawing chars correctly. Fall back to system monospace. */
+  fontFamily: "'Cascadia Code','JetBrains Mono','DejaVu Sans Mono','Fira Code','Menlo','Consolas','Liberation Mono',monospace",
+  fontSize: 13,
+  lineHeight: 1.2,
+  letterSpacing: 0,
+  cursorBlink: false,
+  scrollback: 500,
+  /* Allow Bubble Tea to use the full palette */
+  allowProposedApi: true
 });
-var fitAddon=new FitAddon.FitAddon();
+
+var fitAddon = new FitAddon.FitAddon();
 term.loadAddon(fitAddon);
 term.open(document.getElementById('terminal'));
-fitAddon.fit();
 
-window.addEventListener('resize',function(){fitAddon.fit();});
+var ws = null;
 
-function connect(){
-  var proto=location.protocol==='https:'?'wss:':'ws:';
-  var ws=new WebSocket(proto+'//'+location.host+'/ws/tui');
-  ws.onopen=function(){term.clear();};
-  ws.onmessage=function(e){term.write(e.data);};
-  ws.onclose=function(){
-    term.write('\r\n\x1b[2m--- disconnected, reconnecting in 3s ---\x1b[0m\r\n');
-    setTimeout(connect,3000);
-  };
-  ws.onerror=function(){ws.close();};
+/* Send resize message to server whenever xterm.js changes dimensions */
+term.onResize(function(e) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({resize: {cols: e.cols, rows: e.rows}}));
+  }
+});
+
+function fitAndResize() {
+  fitAddon.fit();
+  /* onResize fires automatically after fitAddon.fit() changes dimensions */
 }
+
+window.addEventListener('resize', fitAndResize);
+
+/* Initial fit after the element is visible */
+requestAnimationFrame(function() { fitAndResize(); });
+
+function connect() {
+  var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(proto + '//' + location.host + '/ws/tui');
+  ws.binaryType = 'arraybuffer';
+
+  ws.onopen = function() {
+    term.clear();
+    /* Send current size immediately on connect */
+    ws.send(JSON.stringify({resize: {cols: term.cols, rows: term.rows}}));
+  };
+
+  ws.onmessage = function(e) {
+    if (e.data instanceof ArrayBuffer) {
+      term.write(new Uint8Array(e.data));
+    } else {
+      term.write(e.data);
+    }
+  };
+
+  ws.onclose = function() {
+    term.write('\r\n\x1b[2m\u2500\u2500\u2500 disconnected \u2014 reconnecting in 3s \u2500\u2500\u2500\x1b[0m\r\n');
+    setTimeout(connect, 3000);
+  };
+
+  ws.onerror = function() { ws.close(); };
+}
+
 connect();
 </script>
 </body>
