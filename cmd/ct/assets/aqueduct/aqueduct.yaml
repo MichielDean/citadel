@@ -54,8 +54,8 @@ cataractae_definitions:
       ### Step 6 — Commit (REQUIRED — do this before any verification)
       ```bash
       BEFORE=$(git rev-parse HEAD)
-      git add -A
-      git status --short          # confirm your changed files are staged
+      git add -A -- ':!CONTEXT.md'   # stage everything except CONTEXT.md (Castellarius-managed)
+      git status --short             # confirm your changed files are staged
       git commit -m "<droplet-id>: <description>"
       AFTER=$(git rev-parse HEAD)
       if [ "$BEFORE" = "$AFTER" ]; then
@@ -103,7 +103,7 @@ cataractae_definitions:
       ## Protocol
 
       ### Step 1 — Identify recently modified code
-      Run: git diff main...HEAD --name-only
+      Run: git diff origin/main...HEAD --name-only
       These are the files you may touch.
 
       ### Step 2 — Analyse for simplification opportunities
@@ -136,7 +136,7 @@ cataractae_definitions:
       If changes were made:
       ```bash
       BEFORE=$(git rev-parse HEAD)
-      git add -A
+      git add -A -- ':!CONTEXT.md'
       git commit -m "<droplet-id>: simplify: <brief description of what was simplified>"
       AFTER=$(git rev-parse HEAD)
       if [ "$BEFORE" = "$AFTER" ]; then
@@ -162,16 +162,24 @@ cataractae_definitions:
       ### Phase 0 — Requirements verification (ALWAYS — run before reviewing the diff)
 
       Read CONTEXT.md. Extract the concrete deliverables from the Description section.
-      For EACH deliverable (e.g. "add /ws/tui endpoint using pty.Start", "add ct update command"):
-        grep -rn "<key_identifier>" .
-      
-      If a required deliverable is MISSING from the codebase:
-        ct droplet recirculate <id> --notes "Requirements not met: <deliverable> not found. grep '<identifier>' returned no results. The diff does not implement what was described."
-      
-      Do NOT pass a diff that does not implement the described requirements, even if the diff itself
-      is clean and correct. A clean diff that implements the wrong thing is a failed implementation.
+      You only have diff.patch — check whether the diff CONTAINS each required deliverable.
 
-      Only proceed to Phase 1/2 if all required deliverables are present in the codebase.
+      For EACH deliverable (e.g. "add /ws/tui endpoint using pty.Start", "add ct update command"):
+        grep "<key_identifier>" diff.patch
+
+      Rules:
+      - A deliverable is present if the diff adds lines containing its key identifier
+      - Look for `+` lines (additions) only — `-` lines are removals
+      - If the description says "use pty.Start" and the diff only shows io.Pipe: NOT present
+      - If the description says "add func prepareDropletWorktree" and the diff has no such function: NOT present
+
+      If a required deliverable is MISSING from the diff:
+        ct droplet recirculate <id> --notes "Requirements not met: '<deliverable>' not found in diff. grep '<identifier>' diff.patch returned no results. The diff does not implement what was described."
+
+      Do NOT pass a diff that does not implement the described requirements, even if the diff
+      itself is clean and correct. A clean diff that implements the wrong thing is a failed implementation.
+
+      Only proceed to Phase 1/2 if all required deliverables are present in the diff.
 
       ### Phase 1 — Verify prior issues (only when CONTEXT.md has a TWO-PHASE REVIEW section)
 
@@ -317,7 +325,40 @@ cataractae_definitions:
     name: Docs Writer
     description: "Reviews the diff and updates or creates documentation for user-visible changes."
     instructions: |
-      Read CONTEXT.md; run git diff main...HEAD; find all .md files; for each changed area (CLI, config, pipeline, architecture) check if docs exist and are accurate; if no user-visible changes pass with 'No documentation updates required'; otherwise update outdated sections, add missing docs, commit with '<id>: docs: update documentation for changes'; signal pass with file list or recirculate with specific ambiguity.
+      You are a documentation writer in a Cistern Aqueduct. Your job is to ensure that every
+      user-visible change in the diff has accurate, up-to-date documentation.
+
+      ## Protocol
+
+      ### Step 1 — Review the diff
+      Run: git diff origin/main...HEAD
+      Identify all user-visible changes: new CLI commands, config fields, API endpoints,
+      workflow changes, new behaviour, removed behaviour.
+
+      ### Step 2 — Check existing docs
+      For each user-visible change, find the relevant .md file and verify it is accurate.
+      Run: find . -name '*.md' | grep -v vendor | grep -v _work
+      Common locations: README.md, CHANGELOG.md, docs/
+
+      ### Step 3 — Update or create docs
+      - Update any sections that are stale or missing
+      - Add new sections for new features
+      - Remove references to removed functionality
+      - CHANGELOG.md: add an entry under the current version if there is user-visible change
+
+      If no user-visible changes (e.g. internal refactor, test-only changes):
+        ct droplet pass <id> --notes "No documentation updates required — no user-visible changes."
+      and stop.
+
+      ### Step 4 — Commit
+      ```bash
+      git add -A -- ':!CONTEXT.md'
+      git commit -m "<id>: docs: <brief description of what was documented>"
+      ```
+
+      ### Step 5 — Signal
+      ct droplet pass <id> --notes "Updated: <list of files changed and what was added/updated>."
+      ct droplet recirculate <id> --notes "Cannot document: <specific ambiguity or missing information>"
 
   delivery:
     name: Delivery
@@ -343,14 +384,15 @@ cataractae_definitions:
 
       Read CONTEXT.md for the droplet ID, then:
       ```bash
-      DROPLET_ID=$(grep '^Droplet:' CONTEXT.md | awk '{print $2}')
+      DROPLET_ID=$(grep '^## Item:' CONTEXT.md | awk '{print $3}')
       BRANCH=$(git branch --show-current)
       BASE=main
 
-      git stash --include-untracked -m "pre-delivery-stash" 2>/dev/null || true
       git fetch origin $BASE
       git rebase origin/$BASE
       ```
+      Note: do NOT git stash. Per-droplet worktrees are clean by design — stashing discards
+      uncommitted work from prior cataractae and causes silent empty deliveries.
 
       If rebase has conflicts, go to **Merge Conflict Resolution** below.
       After resolving all conflicts: `git push --force-with-lease origin $BRANCH`
@@ -429,9 +471,10 @@ cataractae_definitions:
       ## Step 2 — Create or locate the PR
 
       ```bash
+      PR_TITLE=$(grep '^\*\*Title:\*\*' CONTEXT.md | sed 's/\*\*Title:\*\* //')
       PR_URL=$(gh pr create \
-        --title "$(grep '^Title:' CONTEXT.md | cut -d: -f2- | xargs)" \
-        --body "$(grep '^Description:' CONTEXT.md | cut -d: -f2- | xargs)" \
+        --title "$PR_TITLE" \
+        --body "Closes droplet $DROPLET_ID. See CONTEXT.md for full description." \
         --base $BASE --head $BRANCH 2>&1) || true
 
       if echo "$PR_URL" | grep -q "already exists"; then
