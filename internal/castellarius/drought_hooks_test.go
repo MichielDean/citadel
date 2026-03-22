@@ -713,7 +713,9 @@ func TestRunDroughtHooks_CfgMtimeZero_NoDetection(t *testing.T) {
 	// When startupCfgMtime is zero, the detection is disabled regardless of cfgPath.
 	tmpDir := t.TempDir()
 	cfgPath := filepath.Join(tmpDir, "cistern.yaml")
-	os.WriteFile(cfgPath, []byte("repos: []\n"), 0o644)
+	if err := os.WriteFile(cfgPath, []byte("repos: []\n"), 0o644); err != nil {
+		t.Fatalf("write cfg: %v", err)
+	}
 
 	reloadCalled := false
 	RunDroughtHooks(DroughtHookParams{
@@ -737,7 +739,9 @@ func TestRunDroughtHooks_CfgFileUpdated_Unsupervised_LogsWarnOnly(t *testing.T) 
 	// workflowChanged is set internally by git_sync (not injectable).
 	tmpDir := t.TempDir()
 	cfgPath := filepath.Join(tmpDir, "cistern.yaml")
-	os.WriteFile(cfgPath, []byte("repos: []\n"), 0o644)
+	if err := os.WriteFile(cfgPath, []byte("repos: []\n"), 0o644); err != nil {
+		t.Fatalf("write cfg: %v", err)
+	}
 
 	// startupCfgMtime in the past → file is newer than recorded startup time.
 	startupMtime := time.Now().Add(-time.Hour)
@@ -761,7 +765,9 @@ func TestRunDroughtHooks_CfgFileNotUpdated_NoRestart(t *testing.T) {
 	// When cistern.yaml mtime has not advanced past startupCfgMtime, no restart is triggered.
 	tmpDir := t.TempDir()
 	cfgPath := filepath.Join(tmpDir, "cistern.yaml")
-	os.WriteFile(cfgPath, []byte("repos: []\n"), 0o644)
+	if err := os.WriteFile(cfgPath, []byte("repos: []\n"), 0o644); err != nil {
+		t.Fatalf("write cfg: %v", err)
+	}
 
 	// startupCfgMtime in the future → file is older than recorded startup time → no update.
 	startupMtime := time.Now().Add(time.Hour)

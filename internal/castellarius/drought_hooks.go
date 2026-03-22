@@ -133,6 +133,7 @@ func RunDroughtHooks(p DroughtHookParams) {
 	} else if cfgUpdated {
 		// Config change: in-process reload is impossible. Warn and keep running.
 		logger.Warn("cistern.yaml updated on disk — manual restart required to apply new config",
+			"workflow_also_changed", workflowChanged,
 			"hint", "Run: systemctl --user restart cistern-castellarius  (or Ctrl-C and restart manually)")
 	} else {
 		logger.Warn("Restart requested but no supervisor detected — skipping",
