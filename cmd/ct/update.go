@@ -82,9 +82,12 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("resolving binary symlinks: %w", err)
 	}
 
-	pullOut, pullErr := runGitCommand(repoPath, "pull", "origin", "main")
+	pullOut, pullErr := runGitCommand(repoPath, "pull", "--ff-only", "origin", "main")
 	if pullErr != nil {
-		return fmt.Errorf("git pull: %w\n%s", pullErr, pullOut)
+		if isFFOnlyFailure(pullOut) {
+			return fmt.Errorf("local repo has commits not in origin/main — rebase or reset manually before updating")
+		}
+		return fmt.Errorf("git pull --ff-only: %w\n%s", pullErr, pullOut)
 	}
 
 	newCommit, err := gitRevParseUpdate(repoPath, "HEAD")
@@ -137,13 +140,11 @@ func resolveUpdateRepoPath(override string) (string, error) {
 		return verifyUpdateRepoPath(env)
 	}
 
-	// 2. Sibling of the binary: ~/go/bin/ct → ~/cistern
+	// 2. Sibling of the binary: search 1–3 levels up from the binary directory.
+	//    Handles ~/bin/ct → ~/cistern (1 level) and ~/go/bin/ct → ~/cistern (2 levels).
 	if binPath, err := os.Executable(); err == nil {
 		if binPath, err = filepath.EvalSymlinks(binPath); err == nil {
-			binDir := filepath.Dir(binPath)
-			// go up two levels from binDir to reach the parent of the bin's parent
-			sibling := filepath.Join(filepath.Dir(filepath.Dir(binDir)), "cistern")
-			if p, err := verifyUpdateRepoPath(sibling); err == nil {
+			if p, err := findRepoFromBinaryPath(binPath); err == nil {
 				return p, nil
 			}
 		}
@@ -158,6 +159,31 @@ func resolveUpdateRepoPath(override string) (string, error) {
 	}
 
 	return "", fmt.Errorf("cannot find cistern repo — set CT_REPO_PATH or use --repo-path PATH")
+}
+
+// findRepoFromBinaryPath searches 1–3 levels above binPath's directory for a
+// sibling "cistern" directory that is a valid git+go.mod repo. This handles
+// common install locations:
+//   - ~/bin/ct          → ~/cistern     (1 level up)
+//   - ~/go/bin/ct       → ~/cistern     (2 levels up)
+//   - ~/a/b/bin/ct      → ~/cistern     (3 levels up)
+func findRepoFromBinaryPath(binPath string) (string, error) {
+	dir := filepath.Dir(binPath)
+	for levels := 1; levels <= 3; levels++ {
+		dir = filepath.Dir(dir)
+		if p, err := verifyUpdateRepoPath(filepath.Join(dir, "cistern")); err == nil {
+			return p, nil
+		}
+	}
+	return "", fmt.Errorf("no cistern repo found relative to binary at %s", binPath)
+}
+
+// isFFOnlyFailure reports whether a git pull --ff-only output indicates that
+// the local branch has diverged from origin (cannot fast-forward).
+func isFFOnlyFailure(output string) bool {
+	return strings.Contains(output, "Not possible to fast-forward") ||
+		strings.Contains(output, "diverging branches") ||
+		strings.Contains(output, "Diverging branches")
 }
 
 // verifyUpdateRepoPath checks that path is a git repository with go.mod.
