@@ -347,14 +347,14 @@ func (m dashboardTUIModel) viewIdleAqueductRow(ch CataractaeInfo) string {
 //	           implement        adv-review              qa              delivery
 func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string {
 	const (
-		colW      = 20  // wider columns → bigger arch span → more room for the curve
-		archTopW  = 10  // narrower pier top → span = colW-archTopW = 10 chars at keystone
-		taperRows = 3   // pier narrows by 2 per row
+		colW      = 14  // narrower columns → smaller footprint, higher density
+		archTopW  = 9   // narrower pier top → span = colW-archTopW = 5 chars at keystone
+		taperRows = 4   // pier narrows by 2 per row — more curve steps = higher resolution
 		pierRows  = 1   // constant-width pier body rows
 		brickW    = 4   // brick face width before ▌ joint
 		nameW     = 10
 	)
-	// pierW = archTopW - taperRows*2 = 4
+	// pierW = archTopW - taperRows*2 = 1
 	pierW := archTopW - taperRows*2
 
 	g   := tuiStyleGreen
@@ -490,7 +490,7 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string
 	// Option C: Spill & curtain — water exits flush against the abutment edge,
 	// hugs the structure for the first couple of rows, then falls nearly vertical.
 	// Stays close → feels connected to the arch. Wide pool forms at the base.
-	wfRows := [8]string{
+	wfRows := [10]string{
 		// sub 0: exits flush — ▓ right against the abutment edge
 		sp(0) + wfMid.Render("▒") + wfA(0).Render("▓") + wfMid.Render("▒") + wfDim.Render("░"),
 		// sub 1: still hugging the structure
@@ -507,6 +507,10 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string
 		sp(2) + wfDim.Render("░") + wfMid.Render("▒") + wfA(0).Render("▓") + wfMid.Render("▒") + wfDim.Render("░"),
 		// sub 7: wide pool — spray at edges, bright core, spreads both ways
 		sp(0) + wfDim.Render("░≈") + wfMid.Render("▒▒") + wfA(1).Render("▓▓") + wfMid.Render("▒▒") + wfDim.Render("≈░"),
+		// sub 8: pool continues spreading (extra row from taperRows=4)
+		sp(0) + wfDim.Render("≈░") + wfMid.Render("▒▒") + wfA(2).Render("▓▓") + wfMid.Render("▒▒") + wfDim.Render("░≈"),
+		// sub 9: settling pool — narrowing core, turbulence subsiding
+		sp(1) + wfDim.Render("░") + wfMid.Render("▒") + wfA(0).Render("▓▓") + wfMid.Render("▒") + wfDim.Render("░"),
 	}
 
 	// Channel exit: compact spill — trim trailing two blocks (▒░) off the top row.
