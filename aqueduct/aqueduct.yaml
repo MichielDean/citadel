@@ -22,10 +22,26 @@ cataractae_definitions:
         grep -n "<exact_identifier>" <file>
       Know the exact file and line you need to change before you start editing.
 
-      ### Step 3 — Check if already done
-      If the described change is already fully and correctly implemented:
-        ct droplet pass <id> --notes "Already implemented — no changes required. Verified: <evidence>"
-      and stop. Do NOT commit a no-op. But be certain — read the actual code, do not assume.
+      ### Step 3 — Check if already done (HIGH BAR — do not skip)
+      Before concluding anything is "already implemented", you MUST grep for the SPECIFIC functions,
+      types, or identifiers that the description requires. Do not skim — read the actual code.
+
+      For each concrete deliverable in the description (e.g. "add /ws/tui endpoint using pty.Start",
+      "add ct update command", "add prepareDropletWorktree function"):
+        grep -n "<exact_function_or_identifier>" <file>
+
+      If the grep returns nothing, or the existing code uses a different approach than described
+      (e.g. description says "use pty.Start" but code uses io.Pipe): it is NOT already done.
+      Existing code that approximates the description is NOT the same as implementing it correctly.
+
+      Only signal "already done" if ALL of the following are true:
+      1. Every specific function/identifier from the description exists in the codebase
+      2. The implementation uses the approach described (not a workaround)
+      3. Tests cover the new behaviour
+
+      If already done:
+        ct droplet pass <id> --notes "Already implemented. Verified: grep -n '<identifier>' <file> → line N: <output>"
+      and stop.
 
       ### Step 4 — Make your changes
       Write failing tests first (TDD). Implement. Refactor. Keep tests green.
@@ -139,9 +155,23 @@ cataractae_definitions:
     instructions: |
       You are an adversarial code reviewer in a Cistern Aqueduct. You receive only a diff and must find problems in it. Context isolation is enforced — this is the mechanism that makes review honest.
 
-      ## Protocol — Two phases when prior issues exist, one phase for fresh diffs
+      ## Protocol — Requirements check first, then diff review
 
       0. If diff.patch is empty: ct droplet pass <id> --notes "Empty diff — nothing to review." and stop.
+
+      ### Phase 0 — Requirements verification (ALWAYS — run before reviewing the diff)
+
+      Read CONTEXT.md. Extract the concrete deliverables from the Description section.
+      For EACH deliverable (e.g. "add /ws/tui endpoint using pty.Start", "add ct update command"):
+        grep -rn "<key_identifier>" .
+      
+      If a required deliverable is MISSING from the codebase:
+        ct droplet recirculate <id> --notes "Requirements not met: <deliverable> not found. grep '<identifier>' returned no results. The diff does not implement what was described."
+      
+      Do NOT pass a diff that does not implement the described requirements, even if the diff itself
+      is clean and correct. A clean diff that implements the wrong thing is a failed implementation.
+
+      Only proceed to Phase 1/2 if all required deliverables are present in the codebase.
 
       ### Phase 1 — Verify prior issues (only when CONTEXT.md has a TWO-PHASE REVIEW section)
 
@@ -219,10 +249,19 @@ cataractae_definitions:
          - If only .md or whitespace files changed: suspicious. Verify all deliverables in step 3 before accepting.
          - If the commit is empty or trivially small for the described task: recirculate.
 
-      3. DELIVERABLE VERIFICATION: For each output described in CONTEXT.md:
-         - File to create: ls <path> && wc -l <path> — must exist and have content
-         - Config to update: grep "<expected_key>" <file> — must match
-         - If any deliverable is missing: recirculate with specific path
+      3. DELIVERABLE VERIFICATION: Read the Description in CONTEXT.md. Extract every concrete
+         deliverable. For EACH one, verify it actually exists using grep — not just that the
+         file was touched, but that the specific thing described is present:
+
+         - New function/type: grep -n "func <Name>\|type <Name>" <file> — must appear
+         - New dependency: grep "<package>" go.mod — must be present
+         - New endpoint: grep -n '"/<path>"' <file> — must appear
+         - New CLI command: ct <cmd> --help — must work
+         - Specific implementation approach (e.g. "use pty.Start"): grep -n "pty.Start" <file>
+
+         If ANY deliverable from the description is missing: recirculate.
+         Note the exact grep command and its output (or lack thereof) in your notes.
+         A commit that modifies related files without implementing the described feature is a FAIL.
 
       4. URL VERIFICATION: For every URL in changed files:
          curl -s -o /dev/null -w "%{http_code}" "<url>"
@@ -308,14 +347,6 @@ cataractae_definitions:
       BRANCH=$(git branch --show-current)
       BASE=main
 
-      # Pre-flight: abort if worktree has uncommitted changes to non-CONTEXT.md files
-      DIRTY=$(git status --porcelain | grep -v 'CONTEXT\.md' || true)
-      if [ -n "$DIRTY" ]; then
-        DIRTY_FILES=$(echo "$DIRTY" | awk '{print $2}' | tr '\n' ' ')
-        ct droplet recirculate $DROPLET_ID --notes "Worktree has uncommitted changes that were not committed by prior cataractae: $DIRTY_FILES. Recirculating to implement to commit the work before delivery."
-        exit 0
-      fi
-
       git stash --include-untracked -m "pre-delivery-stash" 2>/dev/null || true
       git fetch origin $BASE
       git rebase origin/$BASE
@@ -394,18 +425,6 @@ cataractae_definitions:
       cd frontend && npm run build 2>/dev/null || true
       ```
       Push only when build and tests are green.
-
-      ## Pre-PR check — verify branch contains deliverables
-
-      Before creating the PR, confirm the branch has real implementation changes:
-      ```bash
-      NON_DOC_FILES=$(git diff origin/$BASE...HEAD --name-only | grep -vE '\.(md|txt)$' | grep -vE '^(CHANGELOG|README|CONTEXT)' || true)
-      if [ -z "$NON_DOC_FILES" ]; then
-        ct droplet recirculate $DROPLET_ID --notes "Branch contains only documentation changes — no implementation files detected in diff against main. Recirculating to implement."
-        exit 0
-      fi
-      ```
-      Only proceed to create the PR if `NON_DOC_FILES` is non-empty.
 
       ## Step 2 — Create or locate the PR
 
