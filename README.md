@@ -266,6 +266,8 @@ ct feed                        Alias for dashboard
 
 # Status — observe the system
 ct status                      Overall status: cistern level, aqueduct flow, cataractae chains
+ct status --watch              Continuously refresh status every 5 seconds (Ctrl-C to stop)
+ct status --watch --interval 10  Refresh every 10 seconds
 ct aqueduct status             Aqueduct definitions: repos and their cataractae chains
 
 # Aqueduct — inspect and validate aqueduct definitions

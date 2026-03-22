@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### ct status: --watch flag for auto-refresh (ci-drisq)
+- `ct status --watch` continuously refreshes the status display every 5 seconds (Ctrl-C to stop)
+- `--interval N` sets the refresh interval in seconds (default 5, minimum 1)
+- Outside watch mode, behaviour is unchanged
+
 ### Castellarius: dispatch-loop detection and auto-recovery (ci-ae5o8)
 - The Castellarius now detects droplets stuck in a tight **dispatch loop** — repeatedly failing to spawn an agent (e.g. dirty worktree, missing worktree) with no session ever starting — and attempts ordered self-recovery automatically
 - Detection threshold: 5 or more dispatch failures within any 2-minute window with no successful agent spawn
