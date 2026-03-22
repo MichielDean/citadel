@@ -1102,6 +1102,17 @@ func prepareDropletWorktree(primaryDir, sandboxRoot, repoName, dropletID string)
 		// Worktree exists — resume by checking out the branch, then hard-reset
 		// to guarantee a clean state. Any uncommitted changes from prior manual
 		// work or prior cataractae are discarded — agents must commit their work.
+
+		// Abort any in-progress rebase or merge left by a prior interrupted
+		// dispatch (e.g. Castellarius restart, timeout). Both commands exit
+		// non-zero when nothing is in progress — errors are ignored.
+		abortRebase := exec.Command("git", "rebase", "--abort")
+		abortRebase.Dir = worktreePath
+		_ = abortRebase.Run()
+		abortMerge := exec.Command("git", "merge", "--abort")
+		abortMerge.Dir = worktreePath
+		_ = abortMerge.Run()
+
 		checkout := exec.Command("git", "checkout", branch)
 		checkout.Dir = worktreePath
 		if out, err := checkout.CombinedOutput(); err != nil {
