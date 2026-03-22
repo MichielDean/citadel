@@ -453,8 +453,8 @@ func newDashboardMux(cfgPath, dbPath string) http.Handler {
 			buf := make([]byte, wsMaxClientPayload)
 			for {
 				if err := conn.SetReadDeadline(time.Now().Add(wsWriteTimeout)); err != nil {
-				return
-			}
+					return
+				}
 				opcode, payload, nb, err := wsReadClientFrame(brw.Reader, buf)
 				buf = nb
 				if err != nil {
