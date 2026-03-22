@@ -37,6 +37,9 @@ type CisternClient interface {
 	// GetLastReviewedCommit returns the HEAD commit hash recorded when the last
 	// review diff was generated. Used to detect phantom commits.
 	GetLastReviewedCommit(dropletID string) (string, error)
+	// SetOutcome records the agent outcome on a droplet. Used by stuck-delivery
+	// recovery to write an outcome directly so the observe phase can route it.
+	SetOutcome(id, outcome string) error
 }
 
 // CataractaeRunner executes a single workflow step.
@@ -78,6 +81,12 @@ type Castellarius struct {
 	startupBinaryMtime  time.Time // mtime of the binary at startup; used to detect updates
 	supervised          bool      // true if managed by systemd/supervisord/etc.
 	reloadCh            chan struct{} // signals Tick() to hot-reload workflows from disk
+
+	// Stuck delivery recovery — injectable for testing.
+	findPRFn        func(ctx context.Context, repoName, dropletID, sandboxDir string) (prURL, state, mergeStateStatus string, err error)
+	killSessionFn   func(sessionID string) error
+	rebaseAndPushFn func(ctx context.Context, sandboxDir string) error
+	ghMergeFn       func(ctx context.Context, sandboxDir, prURL string, autoMerge bool) error
 }
 
 // isSupervisedProcess returns true when the Castellarius is being managed by
@@ -146,6 +155,10 @@ func New(config aqueduct.AqueductConfig, dbPath string, runner CataractaeRunner,
 		startupBinaryMtime: startupBinaryMtime,
 		supervised:         isSupervisedProcess(),
 		reloadCh:           make(chan struct{}, 1),
+		findPRFn:           defaultFindPR,
+		killSessionFn:      defaultKillSession,
+		rebaseAndPushFn:    defaultRebaseAndPush,
+		ghMergeFn:          defaultGhMerge,
 	}
 	for _, o := range opts {
 		o(s)
@@ -217,6 +230,10 @@ func NewFromParts(
 		logger:            slog.Default(),
 		pollInterval:      10 * time.Second,
 		heartbeatInterval: 30 * time.Second,
+		findPRFn:          defaultFindPR,
+		killSessionFn:     defaultKillSession,
+		rebaseAndPushFn:   defaultRebaseAndPush,
+		ghMergeFn:         defaultGhMerge,
 	}
 	for _, o := range opts {
 		o(s)
@@ -298,6 +315,34 @@ func (s *Castellarius) Run(ctx context.Context) error {
 			}
 		}()
 	}
+
+	// Stuck delivery goroutine — checks every 5 minutes for delivery agents
+	// that have been running past 1.5× their configured timeout. Kills the
+	// stuck session and sets an appropriate outcome so the observe phase can
+	// route the droplet without human intervention.
+	go func() {
+		sdTicker := time.NewTicker(stuckDeliveryCheckInterval)
+		defer sdTicker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-sdTicker.C:
+				func() {
+					defer func() {
+						if r := recover(); r != nil {
+							stack := debug.Stack()
+							s.logger.Error("stuck delivery check: panic recovered",
+								"panic", r,
+								"stack", string(stack),
+							)
+						}
+					}()
+					s.checkStuckDeliveries(ctx)
+				}()
+			}
+		}
+	}()
 
 	// Heartbeat goroutine — runs independently of the main poll loop.
 	// Detects orphaned in-progress droplets (dead sessions with no outcome)
