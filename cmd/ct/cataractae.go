@@ -34,20 +34,9 @@ var cataractaeAddCmd = &cobra.Command{
 func runCataractaeAdd(cmd *cobra.Command, args []string) error {
 	name := args[0]
 
-	wfPath := cataractaeGenerateWorkflow
-	if wfPath == "" {
-		cfgPath := resolveConfigPath()
-		cfg, err := aqueduct.ParseAqueductConfig(cfgPath)
-		if err != nil {
-			return fmt.Errorf("loading config: %w (use --workflow to specify an aqueduct file directly)", err)
-		}
-		if len(cfg.Repos) == 0 {
-			return fmt.Errorf("no repos configured")
-		}
-		wfPath = cfg.Repos[0].WorkflowPath
-		if !filepath.IsAbs(wfPath) {
-			wfPath = filepath.Join(filepath.Dir(cfgPath), wfPath)
-		}
+	wfPath, err := resolveWorkflowPath()
+	if err != nil {
+		return err
 	}
 
 	// Derive cataractae dir from the workflow location (same as generate).
@@ -76,22 +65,9 @@ var cataractaeGenerateCmd = &cobra.Command{
 }
 
 func runCataractaeGenerate(cmd *cobra.Command, args []string) error {
-	wfPath := cataractaeGenerateWorkflow
-	if wfPath == "" {
-		// Try to find workflow from config.
-		cfgPath := resolveConfigPath()
-		cfg, err := aqueduct.ParseAqueductConfig(cfgPath)
-		if err != nil {
-			return fmt.Errorf("loading config: %w (use --workflow to specify an aqueduct file directly)", err)
-		}
-		if len(cfg.Repos) == 0 {
-			return fmt.Errorf("no repos configured")
-		}
-		// Use the first repo's aqueduct.
-		wfPath = cfg.Repos[0].WorkflowPath
-		if !filepath.IsAbs(wfPath) {
-			wfPath = filepath.Join(filepath.Dir(cfgPath), wfPath)
-		}
+	wfPath, err := resolveWorkflowPath()
+	if err != nil {
+		return err
 	}
 
 	w, err := aqueduct.ParseWorkflow(wfPath)
@@ -128,20 +104,9 @@ var cataractaeListCmd = &cobra.Command{
 }
 
 func runCataractaeList(cmd *cobra.Command, args []string) error {
-	wfPath := cataractaeGenerateWorkflow
-	if wfPath == "" {
-		cfgPath := resolveConfigPath()
-		cfg, err := aqueduct.ParseAqueductConfig(cfgPath)
-		if err != nil {
-			return fmt.Errorf("loading config: %w", err)
-		}
-		if len(cfg.Repos) == 0 {
-			return fmt.Errorf("no repos configured")
-		}
-		wfPath = cfg.Repos[0].WorkflowPath
-		if !filepath.IsAbs(wfPath) {
-			wfPath = filepath.Join(filepath.Dir(cfgPath), wfPath)
-		}
+	wfPath, err := resolveWorkflowPath()
+	if err != nil {
+		return err
 	}
 
 	w, err := aqueduct.ParseWorkflow(wfPath)
@@ -198,20 +163,9 @@ var cataractaeEditCmd = &cobra.Command{
 }
 
 func runCataractaeEdit(cmd *cobra.Command, args []string) error {
-	wfPath := cataractaeGenerateWorkflow
-	if wfPath == "" {
-		cfgPath := resolveConfigPath()
-		cfg, err := aqueduct.ParseAqueductConfig(cfgPath)
-		if err != nil {
-			return fmt.Errorf("loading config: %w", err)
-		}
-		if len(cfg.Repos) == 0 {
-			return fmt.Errorf("no repos configured")
-		}
-		wfPath = cfg.Repos[0].WorkflowPath
-		if !filepath.IsAbs(wfPath) {
-			wfPath = filepath.Join(filepath.Dir(cfgPath), wfPath)
-		}
+	wfPath, err := resolveWorkflowPath()
+	if err != nil {
+		return err
 	}
 
 	w, err := aqueduct.ParseWorkflow(wfPath)
@@ -289,20 +243,9 @@ var cataractaeResetCmd = &cobra.Command{
 }
 
 func runCataractaeReset(cmd *cobra.Command, args []string) error {
-	wfPath := cataractaeGenerateWorkflow
-	if wfPath == "" {
-		cfgPath := resolveConfigPath()
-		cfg, err := aqueduct.ParseAqueductConfig(cfgPath)
-		if err != nil {
-			return fmt.Errorf("loading config: %w", err)
-		}
-		if len(cfg.Repos) == 0 {
-			return fmt.Errorf("no repos configured")
-		}
-		wfPath = cfg.Repos[0].WorkflowPath
-		if !filepath.IsAbs(wfPath) {
-			wfPath = filepath.Join(filepath.Dir(cfgPath), wfPath)
-		}
+	wfPath, err := resolveWorkflowPath()
+	if err != nil {
+		return err
 	}
 
 	w, err := aqueduct.ParseWorkflow(wfPath)
@@ -403,6 +346,28 @@ func writeBuiltinToCataractaeDir(cataractaeDir, name string, builtin aqueduct.Ca
 	}
 	return nil
 }
+
+// resolveWorkflowPath returns the workflow YAML path, either from the
+// --workflow flag or by reading the first repo in the aqueduct config.
+func resolveWorkflowPath() (string, error) {
+	if cataractaeGenerateWorkflow != "" {
+		return cataractaeGenerateWorkflow, nil
+	}
+	cfgPath := resolveConfigPath()
+	cfg, err := aqueduct.ParseAqueductConfig(cfgPath)
+	if err != nil {
+		return "", fmt.Errorf("loading config: %w", err)
+	}
+	if len(cfg.Repos) == 0 {
+		return "", fmt.Errorf("no repos configured")
+	}
+	wfPath := cfg.Repos[0].WorkflowPath
+	if !filepath.IsAbs(wfPath) {
+		wfPath = filepath.Join(filepath.Dir(cfgPath), wfPath)
+	}
+	return wfPath, nil
+}
+
 
 // --- cataractae status ---
 
