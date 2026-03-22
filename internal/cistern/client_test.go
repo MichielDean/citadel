@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func testClient(t *testing.T) *Client {
@@ -750,4 +751,202 @@ func TestSearch(t *testing.T) {
 				results[0].Priority, results[len(results)-1].Priority)
 		}
 	})
+}
+
+func TestUpdateTitle(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Old title", "", 1, 3)
+
+	if err := c.UpdateTitle(item.ID, "New title"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, _ := c.Get(item.ID)
+	if got.Title != "New title" {
+		t.Errorf("title = %q, want %q", got.Title, "New title")
+	}
+}
+
+func TestUpdateTitle_NotFound(t *testing.T) {
+	c := testClient(t)
+	if err := c.UpdateTitle("nonexistent", "New title"); err == nil {
+		t.Error("expected error for missing item")
+	}
+}
+
+func TestSetOutcome(t *testing.T) {
+	for _, outcome := range []string{"pass", "recirculate", "block"} {
+		t.Run(outcome, func(t *testing.T) {
+			c := testClient(t)
+			item, _ := c.Add("myrepo", "Task", "", 1, 3)
+			if err := c.SetOutcome(item.ID, outcome); err != nil {
+				t.Fatal(err)
+			}
+			got, _ := c.Get(item.ID)
+			if got.Outcome != outcome {
+				t.Errorf("outcome = %q, want %q", got.Outcome, outcome)
+			}
+		})
+	}
+}
+
+func TestSetOutcome_Clear(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	c.SetOutcome(item.ID, "pass")
+
+	if err := c.SetOutcome(item.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	got, _ := c.Get(item.ID)
+	if got.Outcome != "" {
+		t.Errorf("outcome = %q, want empty after clear", got.Outcome)
+	}
+}
+
+func TestSetOutcome_NotFound(t *testing.T) {
+	c := testClient(t)
+	if err := c.SetOutcome("nonexistent", "pass"); err == nil {
+		t.Error("expected error for missing item")
+	}
+}
+
+func TestSetCataractae(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+
+	if err := c.SetCataractae(item.ID, "review"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, _ := c.Get(item.ID)
+	if got.CurrentCataractae != "review" {
+		t.Errorf("current_cataractae = %q, want %q", got.CurrentCataractae, "review")
+	}
+}
+
+func TestSetCataractae_NotFound(t *testing.T) {
+	c := testClient(t)
+	if err := c.SetCataractae("nonexistent", "review"); err == nil {
+		t.Error("expected error for missing item")
+	}
+}
+
+func TestPurge(t *testing.T) {
+	c := testClient(t)
+	delivered, _ := c.Add("myrepo", "Delivered", "", 1, 3)
+	stagnant, _ := c.Add("myrepo", "Stagnant", "", 1, 3)
+	inProgress, _ := c.Add("myrepo", "In progress", "", 1, 3)
+
+	c.CloseItem(delivered.ID)        // status = delivered
+	c.Escalate(stagnant.ID, "stuck") // status = stagnant
+	c.UpdateStatus(inProgress.ID, "in_progress")
+
+	// Negative duration sets cutoff in the future, making all items eligible by age.
+	n, err := c.Purge(-time.Hour, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Errorf("purged %d, want 2 (delivered + stagnant)", n)
+	}
+
+	// in_progress item must survive.
+	if _, err := c.Get(inProgress.ID); err != nil {
+		t.Errorf("in-progress item should not be purged: %v", err)
+	}
+
+	// delivered and stagnant must be gone.
+	if item, _ := c.Get(delivered.ID); item != nil {
+		t.Error("delivered item should have been purged")
+	}
+	if item, _ := c.Get(stagnant.ID); item != nil {
+		t.Error("stagnant item should have been purged")
+	}
+}
+
+func TestPurge_DryRun(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	c.CloseItem(item.ID)
+
+	n, err := c.Purge(-time.Hour, true) // dry run
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Errorf("dry-run count = %d, want 1", n)
+	}
+	// Item must still exist after a dry run.
+	if _, err := c.Get(item.ID); err != nil {
+		t.Errorf("dry run should not delete item: %v", err)
+	}
+}
+
+func TestPurge_LeavesInProgress(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	c.UpdateStatus(item.ID, "in_progress")
+
+	n, err := c.Purge(-time.Hour, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("purged %d, want 0 (in-progress must not be purged)", n)
+	}
+	if _, err := c.Get(item.ID); err != nil {
+		t.Error("in-progress item should not be purged")
+	}
+}
+
+func TestListRecentEvents_Empty(t *testing.T) {
+	c := testClient(t)
+	events, err := c.ListRecentEvents(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 0 {
+		t.Errorf("got %d events, want 0", len(events))
+	}
+}
+
+func TestListRecentEvents_WithEvents(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+
+	// AddNote writes to cataractae_notes; Escalate writes to events.
+	c.AddNote(item.ID, "implement", "wrote the code")
+	c.Escalate(item.ID, "needs human review")
+
+	events, err := c.ListRecentEvents(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("got %d events, want 2", len(events))
+	}
+	for _, e := range events {
+		if e.Droplet != item.ID {
+			t.Errorf("event droplet = %q, want %q", e.Droplet, item.ID)
+		}
+	}
+}
+
+func TestListRecentEvents_Limit(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+
+	for range 5 {
+		c.AddNote(item.ID, "step", "note")
+	}
+
+	events, err := c.ListRecentEvents(3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 3 {
+		t.Errorf("got %d events, want 3 (limit enforced)", len(events))
+	}
 }
