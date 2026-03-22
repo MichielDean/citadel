@@ -693,10 +693,13 @@ func TestDirtyNonContextFiles_OnlyContextMd_Empty(t *testing.T) {
 	}
 }
 
-func TestDirtyNonContextFiles_NonGitDir_ReturnsNil(t *testing.T) {
+func TestDirtyNonContextFiles_NonGitDir_ReturnsError(t *testing.T) {
 	dir := t.TempDir() // not a git repo
-	dirty, _ := dirtyNonContextFiles(dir)
+	dirty, err := dirtyNonContextFiles(dir)
+	if err == nil {
+		t.Error("expected error for non-git directory, got nil")
+	}
 	if dirty != nil {
-		t.Errorf("non-git dir should return nil, got %v", dirty)
+		t.Errorf("expected nil files on error, got %v", dirty)
 	}
 }
