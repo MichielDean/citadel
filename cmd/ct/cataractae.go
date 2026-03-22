@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -113,23 +112,11 @@ func runCataractaeList(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("parse aqueduct: %w", err)
 	}
 
-	// Collect unique identities from workflow steps.
-	seen := map[string]bool{}
-	var identities []string
-	for _, step := range w.Cataractae {
-		if step.Identity != "" && !seen[step.Identity] {
-			seen[step.Identity] = true
-			identities = append(identities, step.Identity)
-		}
-	}
-
+	identities := w.UniqueIdentities()
 	if len(identities) == 0 {
 		fmt.Println("no agent identities defined in workflow steps")
 		return nil
 	}
-
-	// Sort keys for stable output.
-	sort.Strings(identities)
 
 	cataractaeDir := cisternCataractaeDir(wfPath)
 	for _, id := range identities {
@@ -172,17 +159,7 @@ func runCataractaeEdit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("parse aqueduct: %w", err)
 	}
 
-	// Collect unique identities from workflow steps.
-	seen := map[string]bool{}
-	var identities []string
-	for _, step := range w.Cataractae {
-		if step.Identity != "" && !seen[step.Identity] {
-			seen[step.Identity] = true
-			identities = append(identities, step.Identity)
-		}
-	}
-	sort.Strings(identities)
-
+	identities := w.UniqueIdentities()
 	if len(identities) == 0 {
 		fmt.Println("no agent identities defined in workflow steps")
 		return nil

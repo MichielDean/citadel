@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Remove embedded defaults and `ct cataractae reset` (ci-kda7q)
+- Removed `internal/aqueduct/defaults/` — embedded role content (`implementer.md`, `qa.md`, `reviewer.md`, `security.md`) is superseded by the `cataractae/` directories introduced in #102.
+- Removed `ct cataractae reset` command — there are no more built-in defaults to reset to. Edit `PERSONA.md` / `INSTRUCTIONS.md` directly and use `ct cataractae generate` to regenerate.
+- Removed the `CataractaeDefinition` type and `BuiltinCataractaeDefinitions` map from the `aqueduct` package.
+
 ### Skills: unified handling — all skills live in ~/.cistern/skills/ (ci-add2g)
 - Removed the `path:` field from skill references in `aqueduct.yaml` — all skills are now referenced by name only. Skills that previously used `path:` must be accessible via `~/.cistern/skills/<name>/SKILL.md`.
 - The `git_sync` drought hook now automatically deploys skills from the repo's `skills/` tree into `~/.cistern/skills/` after each fetch — no manual `ct skills install` required for repo-bundled skills.

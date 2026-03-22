@@ -1,5 +1,7 @@
 package aqueduct
 
+import "sort"
+
 // CataractaeType classifies what runs in a workflow step.
 type CataractaeType string
 
@@ -59,6 +61,21 @@ type ComplexityConfig struct {
 	Standard ComplexityLevel `yaml:"standard"`
 	Full     ComplexityLevel `yaml:"full"`
 	Critical ComplexityLevel `yaml:"critical"`
+}
+
+// UniqueIdentities returns the deduplicated, sorted list of agent identity
+// strings from the workflow's cataractae steps.
+func (wf *Workflow) UniqueIdentities() []string {
+	seen := map[string]bool{}
+	var ids []string
+	for _, step := range wf.Cataractae {
+		if step.Identity != "" && !seen[step.Identity] {
+			seen[step.Identity] = true
+			ids = append(ids, step.Identity)
+		}
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 // SkipCataractaeForLevel returns cataractae names that should be skipped for the given

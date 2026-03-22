@@ -181,7 +181,6 @@ cataractae/
 ct cataractae add <name>            # Scaffold a new cataractae directory with template files; auto-generates CLAUDE.md
 ct cataractae list                  # See all cataractae definitions and how to edit them
 ct cataractae edit implementer      # Open INSTRUCTIONS.md in $EDITOR, save, CLAUDE.md regenerates
-ct cataractae reset qa              # Restore to built-in default (with confirmation)
 ct cataractae generate              # Regenerate all CLAUDE.md files from source files
 ct cataractae status                # Show which cataractae are actively processing droplets
 ```
@@ -406,7 +405,6 @@ ct cataractae list                   See all cataractae definitions
 ct cataractae status                 Show which cataractae are active and what they're processing
 ct cataractae edit <cataractae>       Edit cataractae definition in $EDITOR
 ct cataractae generate               Regenerate CLAUDE.md files from source files
-ct cataractae reset <cataractae>      Restore cataractae definition to built-in default
 
 # Skills — manage cataractae skills
 ct skills install <name> <url>       Install a skill from a URL
