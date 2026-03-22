@@ -329,14 +329,13 @@ func revisionCycleNotes(notes []cistern.CataractaeNote) []cistern.CataractaeNote
 	// A new cycle begins after any note whose content starts with "pass" or contains "No issues".
 	// Notes are ordered newest-first (DESC), so we iterate forward.
 	var cycle []cistern.CataractaeNote
-	for i := 0; i < len(notes); i++ {
-		n := notes[i]
-		content := strings.TrimSpace(n.Content)
-		isPassSignal := strings.HasPrefix(strings.ToLower(content), "no issues") ||
-			strings.HasPrefix(strings.ToLower(content), "fix already in place") ||
-			strings.HasPrefix(strings.ToLower(content), "all") ||
-			strings.HasPrefix(strings.ToLower(content), "implemented") ||
-			strings.HasPrefix(strings.ToLower(content), "manually verified")
+	for _, n := range notes {
+		lower := strings.ToLower(strings.TrimSpace(n.Content))
+		isPassSignal := strings.HasPrefix(lower, "no issues") ||
+			strings.HasPrefix(lower, "fix already in place") ||
+			strings.HasPrefix(lower, "all") ||
+			strings.HasPrefix(lower, "implemented") ||
+			strings.HasPrefix(lower, "manually verified")
 		if isPassSignal {
 			break
 		}
