@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -117,6 +118,9 @@ func runCataractaeList(cmd *cobra.Command, args []string) error {
 		fmt.Println("no agent identities defined in workflow steps")
 		return nil
 	}
+
+	// Sort keys for stable output.
+	sort.Strings(identities)
 
 	cataractaeDir := cisternCataractaeDir(wfPath)
 	for _, id := range identities {
