@@ -7,15 +7,17 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"text/tabwriter"
 	"time"
 
-	"github.com/MichielDean/cistern/internal/cistern"
+	"github.com/MichielDean/cistern/internal/aqueduct"
 	"github.com/MichielDean/cistern/internal/cataractae"
 	"github.com/MichielDean/cistern/internal/castellarius"
-	"github.com/MichielDean/cistern/internal/aqueduct"
+	"github.com/MichielDean/cistern/internal/cistern"
+	"github.com/MichielDean/cistern/internal/skills"
 	"github.com/spf13/cobra"
 )
 
@@ -69,6 +71,10 @@ keep dispatching droplets into aqueducts automatically.`,
 				return fmt.Errorf("repo %q workflow %q: %w", repo.Name, repo.WorkflowPath, err)
 			}
 			workflows[repo.Name] = w
+		}
+
+		if err := validateWorkflowSkills(workflows); err != nil {
+			return err
 		}
 
 		dbPath := resolveDBPath()
@@ -435,6 +441,39 @@ var statusCmd = &cobra.Command{
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+
+// validateWorkflowSkills checks that every skill referenced in any workflow
+// cataractae step is installed in ~/.cistern/skills/<name>/SKILL.md.
+// Returns a descriptive error listing all missing skills if any are absent,
+// so the operator can install them before the Castellarius starts accepting work.
+func validateWorkflowSkills(workflows map[string]*aqueduct.Workflow) error {
+	seen := map[string]bool{}
+	var missing []string
+	for _, w := range workflows {
+		for _, step := range w.Cataractae {
+			for _, skill := range step.Skills {
+				if skill.Name == "" || seen[skill.Name] {
+					continue
+				}
+				seen[skill.Name] = true
+				if !skills.IsInstalled(skill.Name) {
+					missing = append(missing, skill.Name)
+				}
+			}
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	sort.Strings(missing)
+	noun := "skill"
+	if len(missing) != 1 {
+		noun = "skills"
+	}
+	return fmt.Errorf("castellarius cannot start: %d required %s not installed"+
+		" — run git_sync or: ct skills install <name> <url>:\n  %s",
+		len(missing), noun, strings.Join(missing, "\n  "))
+}
 
 func init() {
 	castellariusStartCmd.Flags().StringVar(&configPath, "config", "", "path to cistern.yaml (default: ~/.cistern/cistern.yaml)")
