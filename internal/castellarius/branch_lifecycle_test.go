@@ -201,6 +201,31 @@ func TestCleanupBranchInSandbox_NoopWhenBranchMissing(t *testing.T) {
 	cleanupBranchInSandbox(dir, "feat/nonexistent")
 }
 
+// --- removeDropletWorktree tests ---
+
+// TestRemoveDropletWorktree_DeletesBranch verifies that removeDropletWorktree
+// deletes the feat/<id> branch ref in the primary clone, not just the worktree
+// directory. Without this, dead branch refs accumulate indefinitely.
+func TestRemoveDropletWorktree_DeletesBranch(t *testing.T) {
+	primaryDir := makeBareAndClone(t)
+	sandboxRoot := t.TempDir()
+
+	// Create a worktree so there's a branch to remove.
+	_, err := prepareDropletWorktree(primaryDir, sandboxRoot, "myrepo", "drop-rm")
+	if err != nil {
+		t.Fatalf("prepareDropletWorktree: %v", err)
+	}
+	if !branchExists(t, primaryDir, "feat/drop-rm") {
+		t.Fatal("feat/drop-rm should exist after prepareDropletWorktree")
+	}
+
+	removeDropletWorktree(primaryDir, sandboxRoot, "myrepo", "drop-rm")
+
+	if branchExists(t, primaryDir, "feat/drop-rm") {
+		t.Error("feat/drop-rm should have been deleted by removeDropletWorktree")
+	}
+}
+
 // --- prepareDropletWorktree tests ---
 
 // TestPrepareDropletWorktree_NewWorktree_CreatesOnFeatureBranch verifies that a
