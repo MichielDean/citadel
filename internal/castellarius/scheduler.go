@@ -1012,29 +1012,21 @@ func (s *Castellarius) heartbeatRepo(_ context.Context, repo aqueduct.RepoConfig
 		}
 
 		if item.Assignee != "" {
-			// NOTE: pool flowing state is never cleared by a tmux crash —
-			// do not use pool state as the sole crash-detection signal.
-			// Always combine it with isTmuxAlive below.
-			//
-			// If the aqueduct is known and idle, the observe goroutine
-			// already released it (or dispatch hasn't assigned it yet).
-			// Skip to avoid racing with the pool.Assign→sess.Spawn window
-			// where isTmuxAlive would return false prematurely.
-			// Unknown assignees (removed aqueducts) fall through so stale
-			// items still get recovered.
+			// Pool alone is not a reliable crash signal — tmux crash never
+			// clears the flowing bit. Use both signals:
+			//   known + idle    → skip (observe released, or not yet assigned)
+			//   known + flowing → fall through to tmux check
+			//   unknown         → fall through to tmux check (stale recovery)
 			if pool.FindByName(item.Assignee) != nil && !pool.IsFlowing(item.Assignee) {
 				continue
 			}
-
-			// Pool says flowing (or aqueduct unknown) — check tmux session.
-			sessionID := repo.Name + "-" + item.Assignee
-			if isTmuxAlive(sessionID) {
+			if isTmuxAlive(repo.Name + "-" + item.Assignee) {
 				continue
 			}
 		}
 
-		// Either no assignee, or pool=flowing + tmux=dead, or unknown
-		// aqueduct + tmux=dead. Reset to open for re-dispatch.
+		// No assignee, pool=flowing + tmux=dead, or unknown aqueduct +
+		// tmux=dead. Reset to open for re-dispatch.
 		s.logger.Info("heartbeat: resetting stalled droplet",
 			"repo", repo.Name, "droplet", item.ID, "cataractae", item.CurrentCataractae)
 
@@ -1227,8 +1219,7 @@ func removeDropletWorktree(primaryDir, sandboxRoot, repoName, dropletID string) 
 	rm.Dir = primaryDir
 	_ = rm.Run()
 
-	// Delete the branch ref — git worktree remove only removes the working
-	// directory, not the branch. Without this, feat/<id> refs accumulate.
+	// git worktree remove leaves the branch ref — delete it too.
 	del := exec.Command("git", "branch", "-D", "feat/"+dropletID)
 	del.Dir = primaryDir
 	_ = del.Run()
