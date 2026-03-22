@@ -5,14 +5,15 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/MichielDean/cistern/internal/cistern"
 	"github.com/MichielDean/cistern/internal/aqueduct"
+	"github.com/MichielDean/cistern/internal/cistern"
 )
 
 // platformCreateFile returns a shell command that creates an empty file.
@@ -345,5 +346,184 @@ func TestShellHook_EmptyCommandErrors(t *testing.T) {
 	err := hookShell(hook, logger)
 	if err == nil {
 		t.Fatal("expected error for empty command")
+	}
+}
+
+// --- hookGitSync skills deployment tests ---
+
+// mustRunGit is a test helper that runs a git command and fatals on error.
+func mustRunGit(t *testing.T, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+}
+
+// setupGitOriginWithSkills creates a bare origin repo with a skills/<name>/SKILL.md
+// committed to main. Returns the origin dir path.
+func setupGitOriginWithSkills(t *testing.T, tmpDir string, skillName, skillContent string) string {
+	t.Helper()
+
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	// Create bare origin.
+	originDir := filepath.Join(tmpDir, "origin.git")
+	mustRunGit(t, "init", "--bare", originDir)
+
+	// Clone origin, add skill, commit and push to main.
+	workDir := filepath.Join(tmpDir, "work")
+	mustRunGit(t, "clone", originDir, workDir)
+	mustRunGit(t, "-C", workDir, "config", "user.email", "test@example.com")
+	mustRunGit(t, "-C", workDir, "config", "user.name", "Test")
+
+	skillPath := filepath.Join(workDir, "skills", skillName, "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(skillPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(skillPath, []byte(skillContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustRunGit(t, "-C", workDir, "add", "-A")
+	mustRunGit(t, "-C", workDir, "commit", "-m", "add skill")
+	mustRunGit(t, "-C", workDir, "push", "origin", "HEAD:main")
+
+	return originDir
+}
+
+func TestHookGitSync_DeploysSkillsToSkillsDir(t *testing.T) {
+	// Given: an origin repo with skills/<name>/SKILL.md committed to main.
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+
+	const skillName = "test-skill"
+	const skillContent = "# Test Skill\nSkill content.\n"
+	originDir := setupGitOriginWithSkills(t, tmpDir, skillName, skillContent)
+
+	// Create a sandbox clone for hookGitSync to find.
+	sandboxRoot := filepath.Join(tmpDir, "sandboxes")
+	sandboxClone := filepath.Join(sandboxRoot, "myrepo", "worker1")
+	mustRunGit(t, "clone", originDir, sandboxClone)
+
+	cfg := &aqueduct.AqueductConfig{
+		Repos: []aqueduct.RepoConfig{
+			{Name: "myrepo", WorkflowPath: "aqueduct/workflow.yaml", Cataractae: 1, Prefix: "t"},
+		},
+	}
+
+	// When: hookGitSync runs.
+	logger := discardLogger()
+	if _, err := hookGitSync(cfg, sandboxRoot, logger); err != nil {
+		t.Fatalf("hookGitSync: %v", err)
+	}
+
+	// Then: skill is deployed to ~/.cistern/skills/<name>/SKILL.md.
+	deployedPath := filepath.Join(tmpDir, ".cistern", "skills", skillName, "SKILL.md")
+	data, err := os.ReadFile(deployedPath)
+	if err != nil {
+		t.Fatalf("skill not deployed to %s: %v", deployedPath, err)
+	}
+	if string(data) != skillContent {
+		t.Errorf("deployed content = %q, want %q", string(data), skillContent)
+	}
+}
+
+func TestHookGitSync_SkillsDeployIsIdempotent(t *testing.T) {
+	// Given: skills deployed from origin.
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+
+	const skillName = "idempotent-skill"
+	const skillContent = "# Idempotent\nContent.\n"
+	originDir := setupGitOriginWithSkills(t, tmpDir, skillName, skillContent)
+
+	sandboxRoot := filepath.Join(tmpDir, "sandboxes")
+	sandboxClone := filepath.Join(sandboxRoot, "repo", "worker1")
+	mustRunGit(t, "clone", originDir, sandboxClone)
+
+	cfg := &aqueduct.AqueductConfig{
+		Repos: []aqueduct.RepoConfig{
+			{Name: "repo", WorkflowPath: "aqueduct/workflow.yaml", Cataractae: 1, Prefix: "t"},
+		},
+	}
+	logger := discardLogger()
+
+	// First run: deploys skill.
+	if _, err := hookGitSync(cfg, sandboxRoot, logger); err != nil {
+		t.Fatalf("first hookGitSync: %v", err)
+	}
+
+	// When: second run with identical content.
+	if _, err := hookGitSync(cfg, sandboxRoot, logger); err != nil {
+		t.Fatalf("second hookGitSync: %v", err)
+	}
+
+	// Then: skill file still contains expected content (no corruption).
+	deployedPath := filepath.Join(tmpDir, ".cistern", "skills", skillName, "SKILL.md")
+	data, err := os.ReadFile(deployedPath)
+	if err != nil {
+		t.Fatalf("skill not found after idempotent run: %v", err)
+	}
+	if string(data) != skillContent {
+		t.Errorf("content = %q, want %q", string(data), skillContent)
+	}
+}
+
+func TestHookGitSync_SkillsSyncGracefulWhenNoSkillsDir(t *testing.T) {
+	// Given: an origin repo with NO skills/ directory.
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+
+	// Create origin with just an empty commit (no skills/).
+	originDir := filepath.Join(tmpDir, "origin.git")
+	mustRunGit(t, "init", "--bare", originDir)
+	workDir := filepath.Join(tmpDir, "work")
+	mustRunGit(t, "clone", originDir, workDir)
+	mustRunGit(t, "-C", workDir, "config", "user.email", "test@example.com")
+	mustRunGit(t, "-C", workDir, "config", "user.name", "Test")
+
+	// Add a README so we have something to commit.
+	if err := os.WriteFile(filepath.Join(workDir, "README.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustRunGit(t, "-C", workDir, "add", "-A")
+	mustRunGit(t, "-C", workDir, "commit", "-m", "init")
+	mustRunGit(t, "-C", workDir, "push", "origin", "HEAD:main")
+
+	sandboxRoot := filepath.Join(tmpDir, "sandboxes")
+	sandboxClone := filepath.Join(sandboxRoot, "noskills-repo", "worker1")
+	mustRunGit(t, "clone", originDir, sandboxClone)
+
+	cfg := &aqueduct.AqueductConfig{
+		Repos: []aqueduct.RepoConfig{
+			{Name: "noskills-repo", WorkflowPath: "aqueduct/workflow.yaml", Cataractae: 1, Prefix: "t"},
+		},
+	}
+
+	// When: hookGitSync runs.
+	// Then: no error, no crash — gracefully handles missing skills/ directory.
+	logger := discardLogger()
+	if _, err := hookGitSync(cfg, sandboxRoot, logger); err != nil {
+		t.Fatalf("hookGitSync: %v", err)
+	}
+
+	// Verify: no skills dir was created (nothing to deploy).
+	skillsDir := filepath.Join(tmpDir, ".cistern", "skills")
+	entries, _ := os.ReadDir(skillsDir)
+	// Filter out manifest.json if it exists.
+	var skillDirs int
+	for _, e := range entries {
+		if e.IsDir() {
+			skillDirs++
+		}
+	}
+	if skillDirs > 0 {
+		t.Errorf("expected no skill dirs, found %d", skillDirs)
 	}
 }

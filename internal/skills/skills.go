@@ -10,6 +10,7 @@
 package skills
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -97,6 +98,35 @@ func Update(name, url string) error {
 		SourceURL:   url,
 		InstalledAt: time.Now().UTC(),
 	})
+}
+
+// Deploy writes content directly to the skill's local path and records it in the
+// manifest with source_url "local". Returns true if the file was written (new or
+// updated), false if the existing content was identical (no-op). This is used by
+// git_sync to deploy in-repo skills from the git history without any network access.
+func Deploy(name string, content []byte) (bool, error) {
+	if err := validateName(name); err != nil {
+		return false, err
+	}
+	dest := LocalPath(name)
+	existing, _ := os.ReadFile(dest)
+	if bytes.Equal(existing, content) {
+		return false, nil
+	}
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return false, fmt.Errorf("skills: mkdir %s: %w", filepath.Dir(dest), err)
+	}
+	if err := os.WriteFile(dest, content, 0o644); err != nil {
+		return false, fmt.Errorf("skills: write %s: %w", dest, err)
+	}
+	if err := saveManifestEntry(ManifestEntry{
+		Name:        name,
+		SourceURL:   "local",
+		InstalledAt: time.Now().UTC(),
+	}); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // Remove deletes a skill from the local store and removes it from the manifest.

@@ -495,64 +495,6 @@ cataractae:
 	}
 }
 
-func TestRunDoctorExtendedChecks_PassesForInRepoSkill(t *testing.T) {
-	// Given: a workflow with an in-repo skill (path: field set) that is NOT
-	// installed in ~/.cistern/skills/ — doctor should not fail for it.
-	home := t.TempDir()
-
-	cisternDir := filepath.Join(home, ".cistern")
-	aqueductDir := filepath.Join(cisternDir, "aqueduct")
-	cataractaeDir := filepath.Join(cisternDir, "cataractae")
-	for _, d := range []string{aqueductDir, cataractaeDir, filepath.Join(cisternDir, "skills")} {
-		if err := os.MkdirAll(d, 0o755); err != nil {
-			t.Fatalf("mkdir %s: %v", d, err)
-		}
-	}
-
-	// Workflow with an in-repo skill (has path: field).
-	workflowWithInRepoSkill := `name: test
-cataractae:
-  - name: implement
-    type: agent
-    identity: tester
-    skills:
-      - name: in-repo-skill
-        path: skills/in-repo-skill
-    on_pass: done
-`
-	wfPath := filepath.Join(aqueductDir, "workflow.yaml")
-	if err := os.WriteFile(wfPath, []byte(workflowWithInRepoSkill), 0o644); err != nil {
-		t.Fatalf("write workflow: %v", err)
-	}
-
-	cfgPath := filepath.Join(cisternDir, "cistern.yaml")
-	if err := os.WriteFile(cfgPath, []byte(minimalCisternConfigYAML), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
-	// Write CLAUDE.md for tester so that check passes.
-	testerDir := filepath.Join(cataractaeDir, "tester")
-	if err := os.MkdirAll(testerDir, 0o755); err != nil {
-		t.Fatalf("mkdir tester: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(testerDir, "CLAUDE.md"), []byte("ct droplet pass"), 0o644); err != nil {
-		t.Fatalf("write CLAUDE.md: %v", err)
-	}
-
-	cfg, err := aqueduct.ParseAqueductConfig(cfgPath)
-	if err != nil {
-		t.Fatalf("parse config: %v", err)
-	}
-
-	// When: running extended checks.
-	// Then: should pass — in-repo skills don't need ~/.cistern/skills/ installation.
-	dbPath := filepath.Join(cisternDir, "cistern.db")
-	result := runDoctorExtendedChecks(cfg, cfgPath, home, dbPath)
-	if !result {
-		t.Error("expected extended checks to pass for in-repo skill (path: field set) even without installation")
-	}
-}
-
 func TestRunDoctorExtendedChecks_FailsWhenWorkflowInvalid(t *testing.T) {
 	home := t.TempDir()
 

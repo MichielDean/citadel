@@ -194,9 +194,8 @@ func runDoctorExtendedChecks(cfg *aqueduct.AqueductConfig, cfgPath, home, dbPath
 		}
 
 		// Check 2: Skills installed at ~/.cistern/skills/<name>/SKILL.md.
-		// In-repo skills (path: field set) are loaded directly from the sandbox
-		// worktree at runtime — no installation required. Only external skills
-		// (no path: field) must be present in ~/.cistern/skills/.
+		// All skills must be present in ~/.cistern/skills/ — in-repo skills are
+		// deployed there automatically by the git_sync drought hook.
 		for _, step := range wf.Cataractae {
 			for _, skill := range step.Skills {
 				if seenSkills[skill.Name] {
@@ -204,17 +203,12 @@ func runDoctorExtendedChecks(cfg *aqueduct.AqueductConfig, cfgPath, home, dbPath
 				}
 				seenSkills[skill.Name] = true
 
-				// Skip the installation check for in-repo skills.
-				if skill.Path != "" {
-					continue
-				}
-
 				name := skill.Name
 				mdPath := filepath.Join(skillsDir, name, "SKILL.md")
 				mdPathCopy := mdPath
 				ok = checkWithFix("skill: "+name, func() error {
 					if _, statErr := os.Stat(mdPathCopy); statErr != nil {
-						return fmt.Errorf("not installed — run: ct skills install %s <url>", name)
+						return fmt.Errorf("not installed — run git_sync or: ct skills install %s <url>", name)
 					}
 					return nil
 				}, nil) && ok

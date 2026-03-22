@@ -722,10 +722,6 @@ cataractae:
 	if impl.Skills[0].Name != "my-skill" {
 		t.Errorf("skill name = %q, want %q", impl.Skills[0].Name, "my-skill")
 	}
-	// URL field removed — skills are name-only in YAML, installed separately.
-	if impl.Skills[0].Path != "" {
-		t.Errorf("expected no path for externally installed skill, got %q", impl.Skills[0].Path)
-	}
 }
 
 func TestYAMLRoundTrip_SkillsOmittedWhenEmpty(t *testing.T) {

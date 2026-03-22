@@ -134,3 +134,120 @@ func TestInstall_Update(t *testing.T) {
 		t.Errorf("HTTP server called %d times, want 2 (force re-fetch)", callCount)
 	}
 }
+
+// --- Deploy tests ---
+
+func TestDeploy_WritesContentToLocalPath(t *testing.T) {
+	// Given: no skill installed.
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	content := []byte("# Deployed Skill\nContent from git.\n")
+
+	// When: Deploy is called with skill content.
+	changed, err := Deploy("git-skill", content)
+
+	// Then: file written, changed=true, no error.
+	if err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+	if !changed {
+		t.Error("expected changed=true for new skill")
+	}
+	data, err := os.ReadFile(LocalPath("git-skill"))
+	if err != nil {
+		t.Fatalf("skill file not created: %v", err)
+	}
+	if string(data) != string(content) {
+		t.Errorf("content = %q, want %q", string(data), string(content))
+	}
+}
+
+func TestDeploy_UpdatesManifestWithLocalSource(t *testing.T) {
+	// Given: no skill installed.
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	// When: Deploy is called.
+	if _, err := Deploy("manifest-skill", []byte("# Skill\n")); err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+
+	// Then: manifest records the skill with source_url "local".
+	entries, err := ListInstalled()
+	if err != nil {
+		t.Fatalf("ListInstalled: %v", err)
+	}
+	var found bool
+	for _, e := range entries {
+		if e.Name == "manifest-skill" {
+			found = true
+			if e.SourceURL != "local" {
+				t.Errorf("source_url = %q, want %q", e.SourceURL, "local")
+			}
+		}
+	}
+	if !found {
+		t.Error("skill not found in manifest after Deploy")
+	}
+}
+
+func TestDeploy_NoOpWhenContentUnchanged(t *testing.T) {
+	// Given: skill already deployed with same content.
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	content := []byte("# Skill\nSame content.\n")
+	if _, err := Deploy("noop-skill", content); err != nil {
+		t.Fatalf("first Deploy: %v", err)
+	}
+
+	// When: Deploy called again with identical content.
+	changed, err := Deploy("noop-skill", content)
+
+	// Then: no-op (changed=false, no error).
+	if err != nil {
+		t.Fatalf("second Deploy: %v", err)
+	}
+	if changed {
+		t.Error("expected changed=false when content is identical")
+	}
+}
+
+func TestDeploy_WritesNewContentWhenChanged(t *testing.T) {
+	// Given: skill deployed with v1 content.
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	v1 := []byte("# Skill v1\n")
+	v2 := []byte("# Skill v2\n")
+	if _, err := Deploy("update-skill", v1); err != nil {
+		t.Fatalf("Deploy v1: %v", err)
+	}
+
+	// When: Deploy called with new content.
+	changed, err := Deploy("update-skill", v2)
+
+	// Then: file updated, changed=true.
+	if err != nil {
+		t.Fatalf("Deploy v2: %v", err)
+	}
+	if !changed {
+		t.Error("expected changed=true when content differs")
+	}
+	data, _ := os.ReadFile(LocalPath("update-skill"))
+	if string(data) != string(v2) {
+		t.Errorf("content = %q, want %q", string(data), string(v2))
+	}
+}
+
+func TestDeploy_RejectsInvalidName(t *testing.T) {
+	// Given: an invalid skill name with path traversal.
+	// When: Deploy is called.
+	_, err := Deploy("../../evil", []byte("bad"))
+
+	// Then: error returned.
+	if err == nil {
+		t.Fatal("expected error for invalid skill name, got nil")
+	}
+}

@@ -23,8 +23,8 @@ Castellarius never fetches skills automatically during agent spawn.
 To use a skill in a cataractae, add it to the cataractae's skills: list in your
 aqueduct YAML, then run ct cataractae generate to rebuild CLAUDE.md files.
 
-In-repo skills (path: field) are copied directly from the agent's sandbox
-worktree — no installation needed.`,
+In-repo skills (located under skills/ in the repository) are deployed
+automatically into ~/.cistern/skills/ by the git_sync drought hook.`,
 }
 
 // --- ct skills install <name> <url> ---
@@ -90,6 +90,10 @@ If no name is given, all skills in the manifest are updated.`,
 				fmt.Fprintf(os.Stderr, "skip %s: no source URL recorded\n", e.Name)
 				continue
 			}
+			if e.SourceURL == "local" {
+				fmt.Fprintf(os.Stderr, "skip %s: managed by git_sync (run drought hook to update)\n", e.Name)
+				continue
+			}
 			if err := skills.Update(e.Name, e.SourceURL); err != nil {
 				fmt.Fprintf(os.Stderr, "error updating %s: %v\n", e.Name, err)
 				continue
@@ -147,9 +151,6 @@ func runSkillsList(cmd *cobra.Command, args []string) error {
 		}
 		for _, cat := range w.Cataractae {
 			for _, sk := range cat.Skills {
-				if sk.Path != "" {
-					continue // in-repo skills don't need installing
-				}
 				if usedBy[sk.Name] == nil {
 					usedBy[sk.Name] = &usage{}
 				}

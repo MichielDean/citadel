@@ -10,9 +10,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/MichielDean/cistern/internal/aqueduct"
+	"github.com/MichielDean/cistern/internal/skills"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -115,8 +117,9 @@ func RunDroughtHooks(hooks []aqueduct.DroughtHook, cfg *aqueduct.AqueductConfig,
 	}
 }
 
-// hookGitSync fetches the latest workflow YAML from origin/main for each repo and
-// updates the deployed copy under ~/.cistern/aqueduct/ if anything changed.
+// hookGitSync fetches the latest workflow YAML and skills from origin/main for
+// each repo and deploys them locally. Workflow changes are tracked for restart
+// purposes; skills sync is independent and never triggers a restart.
 // Uses `git fetch` + `git show origin/main:<path>` — safe to run while agents are
 // on feature branches because it never touches the working tree.
 // Must run before cataractae_generate so roles are rebuilt from the freshest YAML.
@@ -125,6 +128,7 @@ func hookGitSync(cfg *aqueduct.AqueductConfig, sandboxRoot string, logger *slog.
 	if hErr != nil {
 		return false, fmt.Errorf("git_sync: home dir: %w", hErr)
 	}
+	skillsDir := filepath.Join(home, ".cistern", "skills")
 
 	for _, repo := range cfg.Repos {
 		if repo.WorkflowPath == "" {
@@ -168,34 +172,66 @@ func hookGitSync(cfg *aqueduct.AqueductConfig, sandboxRoot string, logger *slog.
 		newContent, err := exec.Command("git", "-C", cloneDir, "show", "origin/main:"+repoRelPath).Output()
 		if err != nil {
 			logger.Warn("git_sync: cannot read from origin/main", "repo", repo.Name, "path", repoRelPath, "error", err)
-			continue
+			// Don't continue — still attempt skills sync below.
+		} else {
+			// Resolve deployed path (may be absolute or relative to ~/.cistern/).
+			deployedPath := repo.WorkflowPath
+			if !filepath.IsAbs(deployedPath) {
+				deployedPath = filepath.Join(home, ".cistern", deployedPath)
+			}
+
+			// Skip write if content is identical.
+			existing, _ := os.ReadFile(deployedPath)
+			if !bytes.Equal(existing, newContent) {
+				if err := os.MkdirAll(filepath.Dir(deployedPath), 0o755); err != nil {
+					logger.Warn("git_sync: mkdir failed", "path", deployedPath, "error", err)
+				} else if err := os.WriteFile(deployedPath, newContent, 0o644); err != nil {
+					logger.Warn("git_sync: write failed", "path", deployedPath, "error", err)
+				} else {
+					logger.Info("git_sync: workflow updated", "repo", repo.Name, "path", deployedPath)
+					changed = true
+				}
+			} else {
+				logger.Info("git_sync: workflow up to date", "repo", repo.Name)
+			}
 		}
 
-		// Resolve deployed path (may be absolute or relative to ~/.cistern/).
-		deployedPath := repo.WorkflowPath
-		if !filepath.IsAbs(deployedPath) {
-			deployedPath = filepath.Join(home, ".cistern", deployedPath)
-		}
-
-		// Skip write if content is identical.
-		existing, _ := os.ReadFile(deployedPath)
-		if bytes.Equal(existing, newContent) {
-			logger.Info("git_sync: workflow up to date", "repo", repo.Name)
-			continue
-		}
-
-		if err := os.MkdirAll(filepath.Dir(deployedPath), 0o755); err != nil {
-			logger.Warn("git_sync: mkdir failed", "path", deployedPath, "error", err)
-			continue
-		}
-		if err := os.WriteFile(deployedPath, newContent, 0o644); err != nil {
-			logger.Warn("git_sync: write failed", "path", deployedPath, "error", err)
-			continue
-		}
-		logger.Info("git_sync: workflow updated", "repo", repo.Name, "path", deployedPath)
-		changed = true
+		// Sync skills from the skills/ tree in origin/main into ~/.cistern/skills/.
+		// This runs independently of the workflow sync — skills are deployed even if
+		// the workflow YAML is missing or unchanged.
+		syncSkillsFromRepo(cloneDir, skillsDir, repo.Name, logger)
 	}
 	return changed, nil
+}
+
+// syncSkillsFromRepo deploys all skills from the skills/ tree in origin/main into
+// the local skills directory. Each skills/<name>/SKILL.md is extracted and written
+// to skillsDir/<name>/SKILL.md via skills.Deploy. Errors are logged but not fatal.
+func syncSkillsFromRepo(cloneDir, skillsDir, repoName string, logger *slog.Logger) {
+	// List skill names directly inside origin/main:skills (colon syntax lists tree contents).
+	out, err := exec.Command("git", "-C", cloneDir, "ls-tree", "--name-only", "origin/main:skills").Output()
+	if err != nil {
+		// skills/ directory may not exist in origin/main — silently skip.
+		return
+	}
+
+	for _, name := range strings.Fields(strings.TrimSpace(string(out))) {
+		skillPath := "skills/" + name + "/SKILL.md"
+		content, err := exec.Command("git", "-C", cloneDir, "show", "origin/main:"+skillPath).Output()
+		if err != nil {
+			logger.Warn("git_sync: skill SKILL.md not found", "repo", repoName, "skill", name)
+			continue
+		}
+
+		changed, err := skills.Deploy(name, content)
+		if err != nil {
+			logger.Warn("git_sync: deploy skill failed", "repo", repoName, "skill", name, "error", err)
+			continue
+		}
+		if changed {
+			logger.Info("git_sync: skill deployed", "repo", repoName, "skill", name)
+		}
+	}
 }
 
 // hookCataractaeGenerate checks if any workflow YAML mtime is newer than the oldest

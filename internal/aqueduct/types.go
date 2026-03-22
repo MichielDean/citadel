@@ -21,16 +21,12 @@ const (
 
 // SkillRef references a locally installed skill by name.
 //
-// In-repo skills (e.g. a SKILL.md that lives in the same repo the agents work
-// on) may set Path to a repo-relative path — the runner copies it directly from
-// the agent's sandbox worktree without any network access.
-//
-// External skills must be installed ahead of time via `ct skills install <name>
-// <url>` and are referenced by name only. The runtime never fetches skills
-// automatically; it only reads from ~/.cistern/skills/<name>/SKILL.md.
+// All skills must be installed in ~/.cistern/skills/<name>/SKILL.md before use.
+// In-repo skills are deployed automatically by the git_sync drought hook, which
+// extracts skills/<name>/SKILL.md from origin/main into ~/.cistern/skills/.
+// External skills are installed via `ct skills install <name> <url>`.
 type SkillRef struct {
 	Name string `yaml:"name"`
-	Path string `yaml:"path,omitempty"` // repo-relative path (in-repo skills only)
 }
 
 // WorkflowCataractae defines a single step in an aqueduct.

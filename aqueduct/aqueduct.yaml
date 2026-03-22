@@ -23,11 +23,8 @@ cataractae:
     context: full_codebase
     skills:
       - name: cistern-droplet-state
-        path: skills/cistern-droplet-state/SKILL.md
       - name: cistern-git
-        path: skills/cistern-git/SKILL.md
       - name: github-workflow
-        path: skills/github-workflow/SKILL.md
     timeout_minutes: 30
     on_pass: simplify
     on_fail: blocked
@@ -40,11 +37,8 @@ cataractae:
     context: full_codebase
     skills:
       - name: cistern-droplet-state
-        path: skills/cistern-droplet-state/SKILL.md
       - name: cistern-git
-        path: skills/cistern-git/SKILL.md
       - name: code-simplifier
-        path: skills/code-simplifier/SKILL.md
     timeout_minutes: 20
     skip_for: [1] # trivial droplets skip simplification
     on_pass: adversarial-review
@@ -59,15 +53,10 @@ cataractae:
     context: diff_only
     skills:
       - name: cistern-droplet-state
-        path: skills/cistern-droplet-state/SKILL.md
       - name: critical-code-reviewer
-        path: skills/critical-code-reviewer/SKILL.md
       - name: cistern-git
-        path: skills/cistern-git/SKILL.md
       - name: github-workflow
-        path: skills/github-workflow/SKILL.md
       - name: adversarial-reviewer
-        path: skills/adversarial-reviewer/SKILL.md
     timeout_minutes: 15
     skip_for: [1] # trivial droplets skip this cataractae
     on_pass: qa
@@ -82,9 +71,7 @@ cataractae:
     context: full_codebase
     skills:
       - name: cistern-droplet-state
-        path: skills/cistern-droplet-state/SKILL.md
       - name: cistern-git
-        path: skills/cistern-git/SKILL.md
     timeout_minutes: 20
     skip_for: [1, 2] # trivial and standard droplets skip this cataractae
     on_pass: security-review
@@ -99,7 +86,6 @@ cataractae:
     context: diff_only
     skills:
       - name: cistern-droplet-state
-        path: skills/cistern-droplet-state/SKILL.md
     timeout_minutes: 15
     skip_for: [1, 2, 3] # only critical droplets run security review
     on_pass: docs
@@ -114,9 +100,7 @@ cataractae:
     context: full_codebase
     skills:
       - name: cistern-droplet-state
-        path: skills/cistern-droplet-state/SKILL.md
       - name: cistern-git
-        path: skills/cistern-git/SKILL.md
     timeout_minutes: 20
     skip_for: [1] # trivial droplets skip docs
     on_pass: delivery
@@ -129,11 +113,8 @@ cataractae:
     identity: delivery
     skills:
       - name: github-workflow
-        path: skills/github-workflow/SKILL.md
       - name: cistern-droplet-state
-        path: skills/cistern-droplet-state/SKILL.md
       - name: cistern-git
-        path: skills/cistern-git/SKILL.md
     timeout_minutes: 60
     on_pass: done
     on_recirculate: implement
