@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -665,10 +666,13 @@ func TestWsTui_WSReaderExitsOnConnClose(t *testing.T) {
 // and calls cancel() when the read deadline fires with no client frames,
 // simulating a network partition with an idle PTY.
 func TestWsTui_WSReaderReadDeadlineExitsOnPartition(t *testing.T) {
-	server, _ := net.Pipe()
+	server, client := net.Pipe()
 	defer server.Close()
 	// client is intentionally not closed — simulates a network partition
 	// where no TCP FIN arrives, so server cannot distinguish idle from dead.
+	// runtime.KeepAlive(client) at the end prevents the GC from finalizing the
+	// connection before the deadline fires, which would cause an early exit via
+	// a connection-close error instead of the read-deadline path under test.
 
 	br := bufio.NewReader(server)
 
@@ -701,6 +705,7 @@ func TestWsTui_WSReaderReadDeadlineExitsOnPartition(t *testing.T) {
 	default:
 		t.Error("cancel() was not called by WS reader goroutine on read deadline")
 	}
+	runtime.KeepAlive(client)
 }
 
 // TestWsReadClientFrame_PayloadSizeLimit verifies wsMaxClientPayload enforcement:

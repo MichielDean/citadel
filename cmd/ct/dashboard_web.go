@@ -452,7 +452,9 @@ func newDashboardMux(cfgPath, dbPath string) http.Handler {
 			defer cancel() // arm watchdog (C) on any exit
 			buf := make([]byte, wsMaxClientPayload)
 			for {
-				conn.SetReadDeadline(time.Now().Add(wsWriteTimeout)) //nolint:errcheck
+				if err := conn.SetReadDeadline(time.Now().Add(wsWriteTimeout)); err != nil {
+				return
+			}
 				opcode, payload, nb, err := wsReadClientFrame(brw.Reader, buf)
 				buf = nb
 				if err != nil {
