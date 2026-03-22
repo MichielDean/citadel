@@ -1,40 +1,44 @@
 # Context
 
-## Item: ci-8hhrs
+## Item: ci-07t3j
 
-**Title:** Castellarius: detect and recover stuck delivery agents
+**Title:** fix: /ws/tui — run TUI in a PTY so xterm.js renders the real Bubble Tea dashboard
 **Status:** in_progress
-**Priority:** 1
+**Priority:** 2
 
 ### Description
 
-A delivery agent can get stuck in a CI-polling loop even after all checks pass. This happened with sc-zy2y2: the agent polled for 67+ minutes while PR #164 had been fully green and mergeable, but the branch fell behind main after other PRs merged. The agent never detected the branch-behind condition and never attempted a rebase.
+The current /ws/tui WebSocket endpoint pipes RunDashboard() (plain text renderer) to xterm.js. This produces the older monochrome text output, not the Bubble Tea TUI with aqueduct arches, colors, and animations.
 
-The Castellarius should detect this and recover automatically.
+The correct approach: run RunDashboardTUI() inside a PTY and pipe the PTY output to xterm.js. Bubble Tea requires a real PTY to render properly — it won't output ANSI correctly to a plain io.Writer.
 
-## Detection criteria
-A delivery cataractae is considered stuck when ALL of the following are true:
-- Droplet has been in 'delivery' stage for longer than the delivery timeout_minutes (currently 45m)
-- The agent process is still alive (tmux session exists, process running)
-- The associated PR exists and is in a recoverable state (OPEN, not CLOSED/MERGED)
+## Implementation
 
-## Recovery protocol
-When a stuck delivery is detected, the Castellarius should:
-1. Kill the stuck agent process (send SIGTERM to the tmux pane)
-2. Fetch the PR URL from GitHub for the droplet's branch (search by droplet ID or branch pattern feat/<droplet-id>)
-3. Check PR state:
-   a. If MERGED: signal pass — the work is done, agent just didn't notice
-   b. If OPEN + branch behind main: rebase branch onto main, push --force-with-lease, enable --auto merge, signal pass
-   c. If OPEN + CI failing: recirculate the droplet with notes describing the CI failure
-   d. If CLOSED (not merged): recirculate with notes
-4. Log the recovery action with reason
+Add github.com/creack/pty to go.mod (MIT license, widely used, minimal dependency).
 
-## Implementation notes
-- Add a 'stuck delivery' check to the Castellarius drought protocol or as a periodic health check (every 5 minutes)
-- The timeout threshold should be configurable — default: 1.5x the delivery timeout_minutes
-- Rebase logic already exists in the delivery cataractae instructions; the Castellarius needs a Go implementation of: git fetch origin main && git rebase origin/main && git push --force-with-lease
-- Use the gh CLI for PR state checks (already available in the sandbox environment)
-- This should be idempotent — safe to run multiple times on the same stuck droplet
+Replace the /ws/tui handler body in newDashboardMux:
+
+  1. Start RunDashboardTUI in a goroutine attached to a PTY:
+       ptmx, err := pty.Start(exec.Command(os.Args[0], "dashboard")) 
+     OR since we can't exec ourselves cleanly, use pty.Open() + run the TUI directly:
+       ptmx, tty, err := pty.Open()
+       go RunDashboardTUI(cfgPath, dbPath) -- but wired to tty's fd
+     
+     The cleanest approach: use os/exec to run 'ct dashboard' as a subprocess attached to the PTY:
+       cmd := exec.Command(os.Args[0], "dashboard", "--db", dbPath)
+       ptmx, err := pty.Start(cmd)
+     Then pipe ptmx reads → WebSocket frames.
+
+  2. On WebSocket close: kill the subprocess, close the PTY.
+
+  3. Set PTY window size to match xterm.js terminal size. xterm.js sends resize events — handle them by calling pty.Setsize().
+
+## Notes
+- os.Args[0] is the ct binary itself — this is safe and self-contained
+- The subprocess gets its own PTY so Bubble Tea renders fully
+- No changes to RunDashboardTUI needed
+- creack/pty is the standard Go PTY library (used by VS Code server, ttyd, etc.)
+- Remove the RunDashboard (plain text) wiring from the current /ws/tui handler
 
 ## Current Step: simplify
 
@@ -44,35 +48,21 @@ When a stuck delivery is detected, the Castellarius should:
 
 ## Recent Step Notes
 
-### From: manual
+### From: scheduler
 
-Phase 2: Three issues.
-
-Issue 1 (unchecked error on critical write): All 8+ calls to client.SetOutcome() use _ = and discard the return error. If SetOutcome fails after killStuckSession has already run, the droplet is stranded with Outcome=="" and a dead session. On the next 5-minute cycle, isTmuxAlive returns false, the item is skipped, and there is no retry path. This is the exact failure mode the feature is supposed to prevent.
-
-Issue 2 (missing tests — core routing logic has zero coverage): recoverStuckDelivery and recoverOpenPR contain 10+ routing branches (MERGED, CLOSED, OPEN+BEHIND succeed, OPEN+BEHIND rebase fail, OPEN+BLOCKED, OPEN+UNSTABLE, OPEN+CLEAN direct-merge, OPEN+CLEAN auto-merge fallback, OPEN+CLEAN both fail, OPEN+DIRTY/UNKNOWN, PR lookup failure, no PR found). None of these branches have tests. The 9 tests in the diff cover only threshold arithmetic, filter skipping, and rebaseAndPush git mechanics — not the Castellarius routing decisions, which are the core purpose of this feature.
-
-Issue 3 (wrong error variable in note): stuck_delivery.go recoverOpenPR CLEAN case: when both direct-merge and auto-merge fail, the recirculate note is built with err (the direct-merge error) instead of autoErr. The note says 'all merge attempts failed' but shows only the direct-merge error, misleading operators about the failure cause.
-
-### From: manual
-
-Fixed three Phase 2 issues:
-
-Issue 3 (wrong error in note): recoverOpenPR CLEAN case now uses autoErr instead of err in the 'all merge attempts failed' note — the regression is caught by TestRecoverOpenPR_CleanBothFail_RecirculatesWithAutoErr.
-
-Issue 1 (unchecked SetOutcome errors): replaced all 12 '_ = client.SetOutcome(...)' calls with s.logSetOutcome(), which logs at Error level if the write fails. Added 4 injectable function fields (findPRFn, killSessionFn, rebaseAndPushFn, ghMergeFn) to Castellarius and initialized defaults in both New() and NewFromParts().
-
-Issue 2 (missing routing tests): added 16 new tests covering all routing branches in recoverStuckDelivery (MERGED, CLOSED, PR-lookup-fail, no-PR, unexpected-state, session-kill) and recoverOpenPR (BEHIND-rebase-ok, BEHIND-rebase-fail, BEHIND-auto-merge-fail, BLOCKED, UNSTABLE, CLEAN-direct-ok, CLEAN-direct-fail-auto-ok, CLEAN-both-fail, DIRTY, UNKNOWN).
-
-All 9 packages pass (25 stuck-delivery tests total, 0 regressions).
+Dispatch blocked: worktree has uncommitted files from a prior session: md/ct/dashboard_web.go, go.mod, go.sum. These must be committed or discarded before proceeding.
 
 ### From: scheduler
 
-Implement pass rejected: HEAD has not advanced since last review (commit: dbde664595bb904e1ee96df40b48a5afb8700473). No new commits were found. You must commit your changes before signaling pass.
+Dispatch blocked: worktree has uncommitted files from a prior session: md/ct/dashboard_web.go, go.mod, go.sum. These must be committed or discarded before proceeding.
 
-### From: manual
+### From: scheduler
 
-Implemented stuck-delivery detection and recovery. Committed: 20e20e6 in feat/ci-8hhrs (marcia worktree). All 9 packages pass. 25 stuck-delivery tests covering: threshold calc (2), filter skipping (5), recoverStuckDelivery routing (6: MERGED, CLOSED, PR-lookup-fail, no-PR, unexpected-state, session-kill), recoverOpenPR routing (10: BEHIND-rebase-ok, BEHIND-rebase-fail, BEHIND-auto-merge-fail, BLOCKED, UNSTABLE, CLEAN-direct-ok, CLEAN-direct-fail-auto-ok, CLEAN-both-fail, DIRTY, UNKNOWN), defaultRebaseAndPush git mechanics (2). SetOutcome added to CisternClient interface; 4 injectable fields (findPRFn, killSessionFn, rebaseAndPushFn, ghMergeFn) in New() and NewFromParts(); 5min stuck-delivery goroutine in Run().
+Dispatch blocked: worktree has uncommitted files from a prior session: md/ct/dashboard_web.go, go.mod, go.sum. These must be committed or discarded before proceeding.
+
+### From: scheduler
+
+Dispatch blocked: worktree has uncommitted files from a prior session: md/ct/dashboard_web.go, go.mod, go.sum. These must be committed or discarded before proceeding.
 
 <available_skills>
   <skill>
@@ -92,16 +82,16 @@ Implemented stuck-delivery detection and recovery. Committed: 20e20e6 in feat/ci
 When your work is done, signal your outcome using the `ct` CLI:
 
 **Pass (work complete, move to next step):**
-    ct droplet pass ci-8hhrs
+    ct droplet pass ci-07t3j
 
 **Recirculate (needs rework — send back upstream):**
-    ct droplet recirculate ci-8hhrs
-    ct droplet recirculate ci-8hhrs --to implement
+    ct droplet recirculate ci-07t3j
+    ct droplet recirculate ci-07t3j --to implement
 
 **Block (genuinely blocked, cannot proceed):**
-    ct droplet block ci-8hhrs
+    ct droplet block ci-07t3j
 
 Add notes before signaling:
-    ct droplet note ci-8hhrs "What you did / found"
+    ct droplet note ci-07t3j "What you did / found"
 
 The `ct` binary is on your PATH.

@@ -115,16 +115,12 @@ func (a *Adapter) spawnAutomated(ctx context.Context, req castellarius.Cataracta
 	result := a.executor.RunStep(ctx, req.Step.Name, bc)
 
 	// Write notes to DB (visible to downstream steps).
+	// Errors are ignored — the outcome is more important than the note.
 	if result.Notes != "" {
-		if err := client.AddNote(req.Item.ID, req.Step.Name, result.Notes); err != nil {
-			// Log but continue — the outcome is more important than the note.
-			_ = err
-		}
+		_ = client.AddNote(req.Item.ID, req.Step.Name, result.Notes)
 	}
 	for k, v := range result.Annotations {
-		if err := client.AddNote(req.Item.ID, req.Step.Name, fmt.Sprintf("meta:%s=%s", k, v)); err != nil {
-			_ = err
-		}
+		_ = client.AddNote(req.Item.ID, req.Step.Name, fmt.Sprintf("meta:%s=%s", k, v))
 	}
 
 	// Write outcome to DB. The observe phase routes the item on the next tick.

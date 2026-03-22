@@ -1201,7 +1201,6 @@ func WriteContext(dir string, notes []cistern.CataractaeNote) error {
 	return os.WriteFile(filepath.Join(dir, "CONTEXT.md"), b, 0o644)
 }
 
-// parkWorktree detaches HEAD in a worker's sandbox so the feature branch is
 // ensureCataractaeIntegrity checks each agent cataractae's CLAUDE.md for the
 // sentinel string that proves it was generated from the YAML (not corrupted).
 // If any file is missing or lacks the sentinel, it is regenerated automatically.

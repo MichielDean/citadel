@@ -279,9 +279,6 @@ func newDashboardMux(cfgPath, dbPath string) http.Handler {
 		pr, pw := io.Pipe()
 		inputCh := make(chan byte, 4)
 
-		ctx, cancel := context.WithCancel(r.Context())
-		defer cancel()
-
 		// Run the dashboard render loop in a goroutine, writing ANSI to pw.
 		// Use a stripping writer to remove clearScreen sequences (\033[2J\033[H)
 		// — xterm.js handles cursor movement natively; raw clear codes cause
@@ -304,7 +301,7 @@ func newDashboardMux(cfgPath, dbPath string) http.Handler {
 			if err != nil {
 				return
 			}
-			if ctx.Err() != nil {
+			if r.Context().Err() != nil {
 				return
 			}
 		}

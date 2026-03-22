@@ -1419,3 +1419,74 @@ func TestObserve_FirstPass(t *testing.T) {
 		t.Errorf("expected first pass to route to 'review', got %q", client.steps["ph-3"])
 	}
 }
+
+// TestDispatch_DirtyWorktree verifies that when a worktree has uncommitted files
+// from a prior session, the scheduler recirculates the droplet with a diagnostic
+// note rather than spawning the agent into dirty state.
+func TestDispatch_DirtyWorktree(t *testing.T) {
+	sandboxRoot := t.TempDir()
+
+	const itemID = "dirty-1"
+	client := newMockClient()
+	client.readyItems = append(client.readyItems, &cistern.Droplet{
+		ID:                itemID,
+		CurrentCataractae: "implement",
+		Status:            "open",
+	})
+
+	// Create the worktree directory and initialize a git repo inside it.
+	// Per-droplet worktrees are at sandboxRoot/<repo>/<dropletID>.
+	sandboxDir := filepath.Join(sandboxRoot, "test-repo", itemID)
+	if err := os.MkdirAll(sandboxDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	makeGitSandbox(t, sandboxDir)
+
+	// Create the feature branch so prepareDropletWorktree's checkout succeeds.
+	cmd := exec.Command("git", "checkout", "-b", "feat/"+itemID)
+	cmd.Dir = sandboxDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git checkout -b feat/%s: %v\n%s", itemID, err, out)
+	}
+
+	// Modify a tracked file without committing — creates the dirty state.
+	if err := os.WriteFile(filepath.Join(sandboxDir, "README.md"), []byte("dirty\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	runner := newMockRunner(client)
+	config := testConfig()
+	workflows := map[string]*aqueduct.Workflow{"test-repo": testWorkflow()}
+	clients := map[string]CisternClient{"test-repo": client}
+	sched := NewFromParts(config, workflows, clients, runner,
+		WithSandboxRoot(sandboxRoot))
+
+	sched.Tick(context.Background())
+	time.Sleep(50 * time.Millisecond)
+
+	client.mu.Lock()
+	defer client.mu.Unlock()
+
+	// Item must stay at implement, not advance to review.
+	if client.steps[itemID] != "implement" {
+		t.Errorf("expected item to stay at 'implement', got %q", client.steps[itemID])
+	}
+
+	// A dirty-worktree note must have been attached.
+	hasNote := false
+	for _, n := range client.attached {
+		if n.id == itemID && strings.Contains(n.notes, "uncommitted files") {
+			hasNote = true
+		}
+	}
+	if !hasNote {
+		t.Errorf("expected dirty worktree note, got: %v", client.attached)
+	}
+
+	// Runner must not have been called — agent must not spawn into dirty state.
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	if len(runner.calls) != 0 {
+		t.Errorf("expected no runner calls for dirty worktree, got %d", len(runner.calls))
+	}
+}

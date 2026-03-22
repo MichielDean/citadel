@@ -58,7 +58,7 @@
 - Replaces the CSS arch section and all JS rendering functions with a single full-viewport xterm.js terminal
 - xterm.js 5.3.0 + FitAddon 0.8.0 loaded from CDN (no build step); handles ANSI codes, Unicode box-drawing chars, and cursor movement natively
 - `lipgloss.SetColorProfile(TrueColor)` set in `RunDashboardWeb` so the server produces ANSI colour output even when stdout is not a terminal
-- FitAddon auto-sizes the terminal to the browser window; window resize reconnects with updated `cols`/`rows` query params
+- FitAddon auto-sizes the terminal to the browser window on load and on every `window resize` event
 - Automatic 3 s reconnection on WebSocket close
 - SSE (`/api/dashboard/events`) and peek WebSocket (`/ws/aqueducts/{name}/peek`) endpoints preserved for programmatic consumers
 
