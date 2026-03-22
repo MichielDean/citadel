@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"strconv"
 	"strings"
@@ -19,6 +20,7 @@ import (
 	"time"
 
 	"github.com/MichielDean/cistern/internal/cistern"
+	"github.com/creack/pty"
 )
 
 // wsWriteTimeout is the per-frame write deadline set on the hijacked net.Conn
@@ -265,9 +267,9 @@ func newDashboardMux(cfgPath, dbPath string) http.Handler {
 		}
 	})
 
-	// WS /ws/tui — streams raw TUI output (ANSI) to xterm.js in the browser.
-	// The TUI render loop runs in a goroutine writing to a pipe; the WebSocket
-	// handler reads from the pipe and forwards frames to the client.
+	// WS /ws/tui — runs ct dashboard in a PTY and streams raw ANSI to xterm.js.
+	// Bubble Tea requires a real PTY to render correctly; piping to io.Writer
+	// produces plain text only. This gives pixel-perfect TUI output in the browser.
 	mux.HandleFunc("/ws/tui", func(w http.ResponseWriter, r *http.Request) {
 		conn, brw, err := wsUpgrade(w, r)
 		if err != nil {
@@ -275,23 +277,30 @@ func newDashboardMux(cfgPath, dbPath string) http.Handler {
 		}
 		defer conn.Close()
 
-		// Pipe: TUI writes to pw, we read from pr and forward over WS.
-		pr, pw := io.Pipe()
-		inputCh := make(chan byte, 4)
+		// Spawn ct dashboard as a subprocess attached to a PTY.
+		exe, err := os.Executable()
+		if err != nil {
+			return
+		}
+		cmd := exec.Command(exe, "dashboard", "--db", dbPath)
+		cmd.Env = append(os.Environ(), "CT_CISTERN_CONFIG="+cfgPath)
 
-		// Run the dashboard render loop in a goroutine, writing ANSI to pw.
-		// Use a stripping writer to remove clearScreen sequences (\033[2J\033[H)
-		// — xterm.js handles cursor movement natively; raw clear codes cause
-		// the terminal to flash and can corrupt frame boundaries.
-		go func() {
-			defer pw.Close()
-			_ = RunDashboard(cfgPath, dbPath, inputCh, &stripClearWriter{w: pw})
+		ptmx, err := pty.Start(cmd)
+		if err != nil {
+			return
+		}
+		defer func() {
+			ptmx.Close()
+			cmd.Process.Kill() //nolint:errcheck
 		}()
 
-		// Read from pipe and forward as WebSocket text frames.
+		// Set initial PTY size.
+		_ = pty.Setsize(ptmx, &pty.Winsize{Rows: 40, Cols: 200})
+
+		// Forward PTY output → WebSocket.
 		buf := make([]byte, 4096)
 		for {
-			n, err := pr.Read(buf)
+			n, err := ptmx.Read(buf)
 			if n > 0 {
 				conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout)) //nolint:errcheck
 				if wsSendText(brw.Writer, string(buf[:n])) != nil {
@@ -299,9 +308,6 @@ func newDashboardMux(cfgPath, dbPath string) http.Handler {
 				}
 			}
 			if err != nil {
-				return
-			}
-			if r.Context().Err() != nil {
 				return
 			}
 		}
