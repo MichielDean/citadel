@@ -1483,6 +1483,114 @@ func TestDispatch_DirtyWorktree(t *testing.T) {
 	}
 }
 
+// TestDispatch_RebaseInProgress verifies that when a worktree is left with a
+// rebase in progress (e.g. from an interrupted delivery agent), the next
+// dispatch aborts the rebase and proceeds normally.
+func TestDispatch_RebaseInProgress(t *testing.T) {
+	sandboxRoot := t.TempDir()
+
+	const itemID = "rebase-1"
+	client := newMockClient()
+	client.readyItems = append(client.readyItems, &cistern.Droplet{
+		ID:                itemID,
+		CurrentCataractae: "implement",
+		Status:            "open",
+	})
+
+	// Create the worktree directory and initialize a git repo inside it.
+	sandboxDir := filepath.Join(sandboxRoot, "test-repo", itemID)
+	if err := os.MkdirAll(sandboxDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	makeGitSandbox(t, sandboxDir)
+
+	// Create the feature branch with a conflicting commit.
+	for _, args := range [][]string{
+		{"git", "checkout", "-b", "feat/" + itemID},
+		{"git", "checkout", "-b", "conflict-branch"},
+	} {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = sandboxDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%v: %v\n%s", args, err, out)
+		}
+	}
+
+	// Make a commit on conflict-branch that modifies README.md.
+	if err := os.WriteFile(filepath.Join(sandboxDir, "README.md"), []byte("conflict-branch content\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"git", "add", "README.md"},
+		{"git", "commit", "-m", "conflict on branch"},
+	} {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = sandboxDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%v: %v\n%s", args, err, out)
+		}
+	}
+
+	// Switch to the feature branch and make a conflicting commit.
+	cmd := exec.Command("git", "checkout", "feat/"+itemID)
+	cmd.Dir = sandboxDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("checkout feat branch: %v\n%s", err, out)
+	}
+	if err := os.WriteFile(filepath.Join(sandboxDir, "README.md"), []byte("feature-branch content\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"git", "add", "README.md"},
+		{"git", "commit", "-m", "conflict on feat"},
+	} {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = sandboxDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%v: %v\n%s", args, err, out)
+		}
+	}
+
+	// Start a rebase onto conflict-branch — this will hit a conflict and
+	// leave the repo in a rebase-in-progress state.
+	rebase := exec.Command("git", "rebase", "conflict-branch")
+	rebase.Dir = sandboxDir
+	rebase.Run() // expected to fail with conflict
+
+	// Verify rebase is actually in progress.
+	status := exec.Command("git", "status")
+	status.Dir = sandboxDir
+	statusOut, _ := status.CombinedOutput()
+	if !strings.Contains(string(statusOut), "rebase") {
+		t.Fatalf("expected rebase in progress, got:\n%s", statusOut)
+	}
+
+	// Verify that "git checkout" would fail without the fix.
+	verifyCheckout := exec.Command("git", "checkout", "feat/"+itemID)
+	verifyCheckout.Dir = sandboxDir
+	if _, err := verifyCheckout.CombinedOutput(); err == nil {
+		t.Skip("git checkout succeeded despite rebase in progress — cannot test fix")
+	}
+
+	runner := newMockRunner(client)
+	config := testConfig()
+	workflows := map[string]*aqueduct.Workflow{"test-repo": testWorkflow()}
+	clients := map[string]CisternClient{"test-repo": client}
+	sched := NewFromParts(config, workflows, clients, runner,
+		WithSandboxRoot(sandboxRoot))
+
+	sched.Tick(context.Background())
+	time.Sleep(50 * time.Millisecond)
+
+	// The dispatch should have succeeded — rebase --abort clears the state
+	// before checkout.
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	if len(runner.calls) != 1 {
+		t.Errorf("expected 1 runner call (dispatch succeeded after rebase abort), got %d", len(runner.calls))
+	}
+}
+
 // --- dirtyNonContextFiles unit tests ---
 
 func TestDirtyNonContextFiles_Error(t *testing.T) {
