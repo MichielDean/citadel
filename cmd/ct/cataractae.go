@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"os/exec"
@@ -233,120 +232,6 @@ func runCataractaeEdit(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// --- roles reset ---
-
-var cataractaeResetCmd = &cobra.Command{
-	Use:   "reset [role]",
-	Short: "Restore a cataractae to its built-in default PERSONA.md and INSTRUCTIONS.md",
-	Args:  cobra.MaximumNArgs(1),
-	RunE:  runCataractaeReset,
-}
-
-func runCataractaeReset(cmd *cobra.Command, args []string) error {
-	wfPath, err := resolveWorkflowPath()
-	if err != nil {
-		return err
-	}
-
-	w, err := aqueduct.ParseWorkflow(wfPath)
-	if err != nil {
-		return fmt.Errorf("parse workflow: %w", err)
-	}
-
-	cataractaeDir := filepath.Clean(filepath.Join(filepath.Dir(wfPath), "..", "cataractae"))
-
-	resettable := make([]string, 0, len(aqueduct.BuiltinCataractaeDefinitions))
-	for k := range aqueduct.BuiltinCataractaeDefinitions {
-		resettable = append(resettable, k)
-	}
-	sort.Strings(resettable)
-
-	if len(args) == 1 {
-		// Reset a single role.
-		roleName := args[0]
-		builtin, ok := aqueduct.BuiltinCataractaeDefinitions[roleName]
-		if !ok {
-			return fmt.Errorf("no built-in default for role %q", roleName)
-		}
-
-		fmt.Printf("Reset %s to built-in default? [y/N] ", roleName)
-		reader := bufio.NewReader(os.Stdin)
-		input, _ := reader.ReadString('\n')
-		input = strings.TrimSpace(strings.ToLower(input))
-		if input != "y" && input != "yes" {
-			fmt.Println("aborted")
-			return nil
-		}
-
-		if err := writeBuiltinToCataractaeDir(cataractaeDir, roleName, builtin); err != nil {
-			return err
-		}
-
-		written, err := aqueduct.GenerateCataractaeFiles(w, cataractaeDir)
-		if err != nil {
-			return err
-		}
-		for _, path := range written {
-			if strings.Contains(path, roleName) {
-				fmt.Printf("Drop %s back to source. %s refreshed.\n", roleName, path)
-			}
-		}
-		return nil
-	}
-
-	// No arg — list all resettable roles and prompt for all.
-	if len(resettable) == 0 {
-		fmt.Println("no built-in defaults available")
-		return nil
-	}
-
-	fmt.Println("Resettable roles:")
-	for _, k := range resettable {
-		b := aqueduct.BuiltinCataractaeDefinitions[k]
-		fmt.Printf("  %-20s %s\n", k, b.Description)
-	}
-	fmt.Print("\nReset all to defaults? [y/N] ")
-	reader := bufio.NewReader(os.Stdin)
-	input, _ := reader.ReadString('\n')
-	input = strings.TrimSpace(strings.ToLower(input))
-	if input != "y" && input != "yes" {
-		fmt.Println("aborted")
-		return nil
-	}
-
-	for _, k := range resettable {
-		if err := writeBuiltinToCataractaeDir(cataractaeDir, k, aqueduct.BuiltinCataractaeDefinitions[k]); err != nil {
-			return err
-		}
-	}
-
-	written, err := aqueduct.GenerateCataractaeFiles(w, cataractaeDir)
-	if err != nil {
-		return err
-	}
-	for _, path := range written {
-		fmt.Printf("Drop back to source. %s refreshed.\n", path)
-	}
-	return nil
-}
-
-// writeBuiltinToCataractaeDir writes PERSONA.md and INSTRUCTIONS.md for a role
-// from the built-in default definition.
-func writeBuiltinToCataractaeDir(cataractaeDir, name string, builtin aqueduct.CataractaeDefinition) error {
-	dir := filepath.Join(cataractaeDir, name)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("create dir %s: %w", dir, err)
-	}
-	persona := fmt.Sprintf("# Role: %s\n\n%s\n", builtin.Name, builtin.Description)
-	if err := os.WriteFile(filepath.Join(dir, "PERSONA.md"), []byte(persona), 0o644); err != nil {
-		return fmt.Errorf("write PERSONA.md: %w", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "INSTRUCTIONS.md"), []byte(builtin.Instructions), 0o644); err != nil {
-		return fmt.Errorf("write INSTRUCTIONS.md: %w", err)
-	}
-	return nil
-}
-
 // resolveWorkflowPath returns the workflow YAML path, either from the
 // --workflow flag or by reading the first repo in the aqueduct config.
 func resolveWorkflowPath() (string, error) {
@@ -447,8 +332,6 @@ func init() {
 	cataractaeEditCmd.Flags().StringVar(&cataractaeGenerateWorkflow, "workflow", "", "path to workflow YAML file")
 	cataractaeAddCmd.Flags().StringVar(&cataractaeGenerateWorkflow, "workflow", "", "path to workflow YAML file")
 
-	cataractaeResetCmd.Flags().StringVar(&cataractaeGenerateWorkflow, "workflow", "", "path to workflow YAML file")
-
-	cataractaeCmd.AddCommand(cataractaeGenerateCmd, cataractaeListCmd, cataractaeEditCmd, cataractaeResetCmd, cataractaeStatusCmd, cataractaeAddCmd)
+	cataractaeCmd.AddCommand(cataractaeGenerateCmd, cataractaeListCmd, cataractaeEditCmd, cataractaeStatusCmd, cataractaeAddCmd)
 	rootCmd.AddCommand(cataractaeCmd)
 }

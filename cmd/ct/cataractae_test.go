@@ -132,9 +132,6 @@ func TestCataractaeCmd_WorkflowFlagRegistered(t *testing.T) {
 	if cataractaeAddCmd.Flags().Lookup("workflow") == nil {
 		t.Error("--workflow not registered on add")
 	}
-	if cataractaeResetCmd.Flags().Lookup("workflow") == nil {
-		t.Error("--workflow not registered on reset")
-	}
 }
 
 // --- runCataractaeGenerate ---
@@ -331,82 +328,6 @@ func TestRunCataractaeEdit_UpdatesClaudeMdAfterEdit(t *testing.T) {
 	}
 }
 
-// --- runCataractaeReset ---
-
-func TestRunCataractaeReset_ErrorForUnknownBuiltin(t *testing.T) {
-	_, wfPath := makeWorkflowDir(t, testWorkflowYAML)
-	setWorkflow(t, wfPath)
-
-	err := runCataractaeReset(cataractaeResetCmd, []string{"nonexistent_role"})
-	if err == nil {
-		t.Fatal("expected error for unknown builtin role, got nil")
-	}
-	if !strings.Contains(err.Error(), "no built-in default") {
-		t.Errorf("error = %q, want 'no built-in default'", err.Error())
-	}
-}
-
-func TestRunCataractaeReset_AbortOnN(t *testing.T) {
-	_, wfPath := makeWorkflowDir(t, testWorkflowYAML)
-	setWorkflow(t, wfPath)
-	replaceStdin(t, "n\n")
-
-	// Prompts for confirmation; answering "n" aborts without error.
-	if err := runCataractaeReset(cataractaeResetCmd, []string{"implementer"}); err != nil {
-		t.Fatalf("runCataractaeReset abort: %v", err)
-	}
-}
-
-func TestRunCataractaeReset_BuiltinRole_ResetsFiles(t *testing.T) {
-	tmpDir, wfPath := makeWorkflowDir(t, testWorkflowYAML)
-	setWorkflow(t, wfPath)
-	replaceStdin(t, "y\n")
-
-	if err := runCataractaeReset(cataractaeResetCmd, []string{"implementer"}); err != nil {
-		t.Fatalf("runCataractaeReset: %v", err)
-	}
-
-	implDir := filepath.Join(tmpDir, "cataractae", "implementer")
-	if _, err := os.Stat(filepath.Join(implDir, "PERSONA.md")); os.IsNotExist(err) {
-		t.Error("PERSONA.md not created by reset")
-	}
-	if _, err := os.Stat(filepath.Join(implDir, "INSTRUCTIONS.md")); os.IsNotExist(err) {
-		t.Error("INSTRUCTIONS.md not created by reset")
-	}
-}
-
-func TestRunCataractaeReset_NoArg_AbortOnN(t *testing.T) {
-	_, wfPath := makeWorkflowDir(t, testWorkflowYAML)
-	setWorkflow(t, wfPath)
-	replaceStdin(t, "n\n")
-
-	// No args → lists all resettable roles, prompts. "n" aborts.
-	if err := runCataractaeReset(cataractaeResetCmd, nil); err != nil {
-		t.Fatalf("runCataractaeReset no-arg abort: %v", err)
-	}
-}
-
-func TestRunCataractaeReset_NoArg_ResetsAllBuiltins(t *testing.T) {
-	tmpDir, wfPath := makeWorkflowDir(t, testWorkflowYAML)
-	setWorkflow(t, wfPath)
-	replaceStdin(t, "y\n")
-
-	if err := runCataractaeReset(cataractaeResetCmd, nil); err != nil {
-		t.Fatalf("runCataractaeReset no-arg reset all: %v", err)
-	}
-
-	// All built-in roles should have PERSONA.md and INSTRUCTIONS.md.
-	for name := range aqueduct.BuiltinCataractaeDefinitions {
-		dir := filepath.Join(tmpDir, "cataractae", name)
-		if _, err := os.Stat(filepath.Join(dir, "PERSONA.md")); os.IsNotExist(err) {
-			t.Errorf("PERSONA.md not created for builtin %q", name)
-		}
-		if _, err := os.Stat(filepath.Join(dir, "INSTRUCTIONS.md")); os.IsNotExist(err) {
-			t.Errorf("INSTRUCTIONS.md not created for builtin %q", name)
-		}
-	}
-}
-
 // --- readPersonaName ---
 
 func TestReadPersonaName_WithRoleHeader(t *testing.T) {
@@ -440,57 +361,3 @@ func TestReadPersonaName_FallbackToTitleCaseWhenNoRoleHeader(t *testing.T) {
 	}
 }
 
-// --- writeBuiltinToCataractaeDir ---
-
-func TestWriteBuiltinToCataractaeDir_WritesPersonaAndInstructions(t *testing.T) {
-	tmpDir := t.TempDir()
-	builtin := aqueduct.CataractaeDefinition{
-		Name:         "Test Role",
-		Description:  "A test role.",
-		Instructions: "Do test things.",
-	}
-
-	if err := writeBuiltinToCataractaeDir(tmpDir, "test_role", builtin); err != nil {
-		t.Fatalf("writeBuiltinToCataractaeDir: %v", err)
-	}
-
-	roleDir := filepath.Join(tmpDir, "test_role")
-	data, err := os.ReadFile(filepath.Join(roleDir, "PERSONA.md"))
-	if err != nil {
-		t.Fatalf("read PERSONA.md: %v", err)
-	}
-	if !strings.Contains(string(data), "# Role: Test Role") {
-		t.Errorf("PERSONA.md missing role header, got:\n%s", data)
-	}
-
-	data, err = os.ReadFile(filepath.Join(roleDir, "INSTRUCTIONS.md"))
-	if err != nil {
-		t.Fatalf("read INSTRUCTIONS.md: %v", err)
-	}
-	if string(data) != "Do test things." {
-		t.Errorf("INSTRUCTIONS.md = %q, want %q", string(data), "Do test things.")
-	}
-}
-
-func TestWriteBuiltinToCataractaeDir_IsIdempotent(t *testing.T) {
-	tmpDir := t.TempDir()
-	builtin := aqueduct.CataractaeDefinition{
-		Name:         "Test Role",
-		Description:  "A test role.",
-		Instructions: "Do test things.",
-	}
-
-	for i := 0; i < 2; i++ {
-		if err := writeBuiltinToCataractaeDir(tmpDir, "test_role", builtin); err != nil {
-			t.Fatalf("run %d: writeBuiltinToCataractaeDir: %v", i+1, err)
-		}
-	}
-
-	data, err := os.ReadFile(filepath.Join(tmpDir, "test_role", "PERSONA.md"))
-	if err != nil {
-		t.Fatalf("read PERSONA.md: %v", err)
-	}
-	if !strings.Contains(string(data), "# Role: Test Role") {
-		t.Errorf("PERSONA.md content wrong after idempotent write, got:\n%s", data)
-	}
-}
