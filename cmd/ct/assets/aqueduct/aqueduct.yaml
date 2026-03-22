@@ -56,7 +56,7 @@ cataractae:
     type: agent
     identity: reviewer
     model: sonnet
-    context: diff_only
+    context: full_codebase
     skills:
       - name: cistern-droplet-state
         path: skills/cistern-droplet-state/SKILL.md

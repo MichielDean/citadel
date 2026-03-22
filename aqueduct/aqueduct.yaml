@@ -50,7 +50,7 @@ cataractae:
     type: agent
     identity: reviewer
     model: sonnet
-    context: diff_only
+    context: full_codebase
     skills:
       - name: cistern-droplet-state
       - name: critical-code-reviewer

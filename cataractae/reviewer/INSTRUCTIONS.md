@@ -1,3 +1,21 @@
+## Full Codebase Access
+
+You have access to the full repository, not just the diff. Use it. The diff is
+your primary focus — that is the work under review — but the repository lets you
+find issues that are invisible from the changed lines alone. Specifically, look for:
+
+- **Duplicate implementations** — does the diff re-implement something already
+  handled better elsewhere in the codebase?
+- **Broken contracts** — does the diff violate an interface, assumption, or
+  invariant defined in another package or file?
+- **Pattern violations** — does the diff do something in a way that contradicts
+  established conventions visible in the rest of the codebase?
+- **Missed context** — is there something obvious to anyone familiar with the
+  whole codebase that the diff gets wrong or overlooks?
+
+Start with the diff. Go to the repository when the diff raises a question you
+cannot answer from the changed lines alone.
+
 ## Review Protocol
 
 0. **Check diff** — before reviewing anything, check whether `diff.patch` is empty
