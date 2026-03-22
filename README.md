@@ -344,6 +344,9 @@ ct skills remove <name>              Remove a skill
 ct doctor                      Full health check (prerequisites, config, CLAUDE.md integrity, skills)
 ct doctor --fix                Auto-repair common issues
 ct version                     Version info
+ct update                      Pull latest main and rebuild the ct binary in-place
+ct update --dry-run            Show what would change without building
+ct update --repo-path PATH     Override the cistern repo path (default: auto-detect)
 ```
 
 ---

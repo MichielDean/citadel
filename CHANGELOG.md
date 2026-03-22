@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### ct update: self-update command (ci-j5d48)
+- New `ct update` subcommand pulls the latest `main` and rebuilds the `ct` binary in-place — no manual `git pull` or `go build` required
+- Auto-detects the cistern repo location in priority order: `CT_REPO_PATH` env var → sibling of the binary (e.g. `~/go/bin/ct` → `~/cistern`) → `~/.cistern/repo`; use `--repo-path PATH` to override
+- Prints old and new commit SHAs after a successful update; says "already up to date" and exits 0 if nothing changed
+- `--dry-run` fetches `origin/main` and shows what would change without building or modifying anything
+- If the build fails, the previous binary is automatically restored from a `.bak` copy and a non-zero exit is returned
+- Prints a warning if the Castellarius is running (it will restart automatically via binary-mtime detection after the update)
+
 ### Castellarius: stuck delivery detection and recovery (ci-8hhrs)
 - The Castellarius now detects delivery agents that have been running past 1.5× the delivery `timeout_minutes` (default 45 m → 67.5 m threshold) and recovers them automatically — no human intervention required
 - A background goroutine checks every 5 minutes; a stuck agent is one whose tmux session is still alive past the threshold with no outcome written
