@@ -143,12 +143,16 @@ repos:
       - marcia
 ```
 
-Each aqueduct runs its own isolated git worktree, backed by a shared primary clone at `~/.cistern/sandboxes/<repo>/_primary/`. Objects are shared — only the working tree is duplicated per aqueduct, reducing disk cost roughly 3× at scale. Each tmux session is named `<repo>-<aqueduct>`. Every `tmux ls` shows the cistern in motion:
+Aqueduct names are **concurrency slots** — they control how many droplets run in parallel per repo. Each active droplet gets its own isolated git worktree at `~/.cistern/sandboxes/<repo>/<droplet-id>/` on branch `feat/<droplet-id>`. Worktrees are created when a droplet enters the `implement` step and removed once it reaches a terminal state (`done`, `blocked`, `escalated`, or `human`).
+
+All per-droplet worktrees share a single primary clone object store at `~/.cistern/sandboxes/<repo>/_primary/` — objects are shared, only the working tree is per-droplet, keeping disk cost low. Each tmux session is named `<repo>-<aqueduct>`. Every `tmux ls` shows the cistern in motion:
 
 ```
 myproject-virgo: 1 windows (adversarial-review)
 myproject-marcia: 1 windows (implement)
 ```
+
+Before dispatching a droplet, the Castellarius checks the worktree for uncommitted files. If non-`CONTEXT.md` files are dirty, the droplet is recirculated with a diagnostic note rather than spawning an agent into inconsistent state.
 
 By convention, aqueduct names are drawn from historic Roman aqueducts (`virgo`, `marcia`, `claudia`, `traiana`, `julia`, `appia`, `anio`, `tepula`, `alexandrina`, …), but any names work.
 
