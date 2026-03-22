@@ -468,7 +468,7 @@ const dashboardHTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Cistern</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -539,6 +539,74 @@ window.addEventListener('resize', fitAndResize);
 
 /* Initial fit after the element is visible */
 requestAnimationFrame(function() { fitAndResize(); });
+
+/* Pinch-to-zoom: adjust xterm.js fontSize with two-finger gesture.
+   Works on mobile (touchstart/touchmove) and desktop trackpads (gesturestart/gesturechange). */
+var baseFontSize = 13;
+var minFontSize = 7;
+var maxFontSize = 28;
+var pinchStartDist = 0;
+var pinchStartSize = 13;
+
+function clampFontSize(size) {
+  return Math.max(minFontSize, Math.min(maxFontSize, Math.round(size)));
+}
+
+function setFontSize(size) {
+  var clamped = clampFontSize(size);
+  term.options.fontSize = clamped;
+  fitAddon.fit();
+}
+
+/* Touch events (mobile) */
+document.getElementById('terminal').addEventListener('touchstart', function(e) {
+  if (e.touches.length === 2) {
+    var dx = e.touches[0].clientX - e.touches[1].clientX;
+    var dy = e.touches[0].clientY - e.touches[1].clientY;
+    pinchStartDist = Math.sqrt(dx*dx + dy*dy);
+    pinchStartSize = term.options.fontSize;
+    e.preventDefault();
+  }
+}, {passive: false});
+
+document.getElementById('terminal').addEventListener('touchmove', function(e) {
+  if (e.touches.length === 2) {
+    var dx = e.touches[0].clientX - e.touches[1].clientX;
+    var dy = e.touches[0].clientY - e.touches[1].clientY;
+    var dist = Math.sqrt(dx*dx + dy*dy);
+    if (pinchStartDist > 0) {
+      setFontSize(pinchStartSize * (dist / pinchStartDist));
+    }
+    e.preventDefault();
+  }
+}, {passive: false});
+
+document.getElementById('terminal').addEventListener('touchend', function(e) {
+  if (e.touches.length < 2) {
+    pinchStartDist = 0;
+    baseFontSize = term.options.fontSize;
+  }
+}, {passive: false});
+
+/* Gesture events (Safari desktop/iPad trackpad) */
+document.getElementById('terminal').addEventListener('gesturestart', function(e) {
+  pinchStartSize = term.options.fontSize;
+  e.preventDefault();
+}, {passive: false});
+
+document.getElementById('terminal').addEventListener('gesturechange', function(e) {
+  setFontSize(pinchStartSize * e.scale);
+  e.preventDefault();
+}, {passive: false});
+
+/* Ctrl+scroll zoom (desktop) */
+document.getElementById('terminal').addEventListener('wheel', function(e) {
+  if (e.ctrlKey || e.metaKey) {
+    e.preventDefault();
+    var delta = e.deltaY > 0 ? -1 : 1;
+    setFontSize(term.options.fontSize + delta);
+  }
+}, {passive: false});
 
 function connect() {
   var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
