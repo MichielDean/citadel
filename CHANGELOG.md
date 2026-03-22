@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Castellarius: dispatch-loop detection and auto-recovery (ci-ae5o8)
+- The Castellarius now detects droplets stuck in a tight **dispatch loop** — repeatedly failing to spawn an agent (e.g. dirty worktree, missing worktree) with no session ever starting — and attempts ordered self-recovery automatically
+- Detection threshold: 5 or more dispatch failures within any 2-minute window with no successful agent spawn
+- Recovery is ordered by invasiveness:
+  1. **Dirty worktree**: runs `git reset --hard HEAD && git clean -fd` on the droplet's worktree, then allows the next dispatch to proceed normally
+  2. **Missing or corrupt worktree**: removes and recreates the worktree from the primary clone
+  3. **Persistent failure**: if recovery fails 3 times without a clean dispatch, the droplet is escalated to `stagnant` with a note — a human can investigate and use `ct droplet restart` to re-enter
+- All recovery attempts are attached as notes on the droplet (`ct droplet show <id>`) and logged by the Castellarius with a `dispatch-loop recovery:` prefix
+- A successful agent spawn resets the failure counter; a droplet that recovers cleanly leaves no permanent trace
+
 ### ct update: self-update command (ci-j5d48)
 - New `ct update` subcommand pulls the latest `main` and rebuilds the `ct` binary in-place — no manual `git pull` or `go build` required
 - Auto-detects the cistern repo location in priority order: `CT_REPO_PATH` env var → sibling of the binary (e.g. `~/go/bin/ct` → `~/cistern`) → `~/.cistern/repo`; use `--repo-path PATH` to override

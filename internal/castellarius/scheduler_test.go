@@ -1421,8 +1421,8 @@ func TestObserve_FirstPass(t *testing.T) {
 }
 
 // TestDispatch_DirtyWorktree verifies that when a worktree has uncommitted files
-// from a prior session, the scheduler recirculates the droplet with a diagnostic
-// note rather than spawning the agent into dirty state.
+// from a prior session, prepareDropletWorktree hard-resets them away (commit #86
+// behaviour) and the agent spawns normally into a clean state.
 func TestDispatch_DirtyWorktree(t *testing.T) {
 	sandboxRoot := t.TempDir()
 
@@ -1464,29 +1464,20 @@ func TestDispatch_DirtyWorktree(t *testing.T) {
 	sched.Tick(context.Background())
 	time.Sleep(50 * time.Millisecond)
 
-	client.mu.Lock()
-	defer client.mu.Unlock()
-
-	// Item must stay at implement, not advance to review.
-	if client.steps[itemID] != "implement" {
-		t.Errorf("expected item to stay at 'implement', got %q", client.steps[itemID])
-	}
-
-	// A dirty-worktree note must have been attached.
-	hasNote := false
-	for _, n := range client.attached {
-		if n.id == itemID && strings.Contains(n.notes, "uncommitted files") {
-			hasNote = true
-		}
-	}
-	if !hasNote {
-		t.Errorf("expected dirty worktree note, got: %v", client.attached)
-	}
-
-	// Runner must not have been called — agent must not spawn into dirty state.
+	// prepareDropletWorktree hard-resets on resume (commit #86), so the dirty
+	// file is cleaned before the dirty check runs. Spawn proceeds normally.
 	runner.mu.Lock()
 	defer runner.mu.Unlock()
-	if len(runner.calls) != 0 {
-		t.Errorf("expected no runner calls for dirty worktree, got %d", len(runner.calls))
+	if len(runner.calls) != 1 {
+		t.Errorf("expected spawn to proceed after hard-reset cleaned dirty file, got %d runner calls", len(runner.calls))
+	}
+
+	// No dirty-worktree note should be attached — the reset handled it silently.
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	for _, n := range client.attached {
+		if n.id == itemID && strings.Contains(n.notes, "uncommitted files") {
+			t.Errorf("unexpected dirty-worktree note (hard-reset should have cleaned it): %v", n)
+		}
 	}
 }

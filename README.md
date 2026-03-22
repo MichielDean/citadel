@@ -381,6 +381,26 @@ The stuck threshold is configurable via `timeout_minutes` on the `delivery` step
 
 ---
 
+## Automatic Dispatch-Loop Recovery
+
+The Castellarius detects and recovers droplets stuck in a **dispatch loop** — where the Castellarius repeatedly tries to spawn an agent but fails every time, leaving no tmux session and no progress.
+
+A droplet is considered dispatch-looping when it accumulates **5 or more dispatch failures within any 2-minute window** with no successful agent spawn.
+
+When a dispatch loop is detected, the Castellarius attempts ordered self-recovery before the next dispatch:
+
+| Failure Pattern | Recovery Action |
+|---|---|
+| Dirty worktree | `git reset --hard HEAD && git clean -fd` on the droplet worktree |
+| Worktree missing or corrupt | Remove and recreate the worktree from the primary clone |
+| No applicable pattern found | Note the failure and retry next cycle |
+
+After **3 failed self-fix attempts**, the droplet is escalated to `stagnant` with a note describing the failure. Use `ct droplet show <id>` to inspect the recovery history, then `ct droplet restart <id> --cataractae <step>` to re-enter once the underlying issue is resolved.
+
+Recovery attempts are attached as notes on the droplet and logged by the Castellarius with the prefix `dispatch-loop recovery:`. A successful agent spawn resets all counters — a droplet that recovers cleanly leaves no permanent trace.
+
+---
+
 ## Recovery
 
 When a delivery fails mid-flight (merge conflict, CI failure, permission issue) or a droplet gets

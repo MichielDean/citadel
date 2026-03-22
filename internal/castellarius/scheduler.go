@@ -90,6 +90,10 @@ type Castellarius struct {
 	killSessionFn   func(sessionID string) error
 	rebaseAndPushFn func(ctx context.Context, sandboxDir string) error
 	ghMergeFn       func(ctx context.Context, sandboxDir, prURL string, autoMerge bool) error
+
+	// Dispatch-loop detection — tracks per-droplet failure counts to detect and
+	// recover from tight loops where no agent session ever starts.
+	dispatchLoop *dispatchLoopTracker
 }
 
 // isSupervisedProcess returns true when the Castellarius is being managed by
@@ -162,6 +166,7 @@ func New(config aqueduct.AqueductConfig, dbPath string, runner CataractaeRunner,
 		killSessionFn:      defaultKillSession,
 		rebaseAndPushFn:    defaultRebaseAndPush,
 		ghMergeFn:          defaultGhMerge,
+		dispatchLoop:       newDispatchLoopTracker(),
 	}
 	for _, o := range opts {
 		o(s)
@@ -237,6 +242,7 @@ func NewFromParts(
 		killSessionFn:     defaultKillSession,
 		rebaseAndPushFn:   defaultRebaseAndPush,
 		ghMergeFn:         defaultGhMerge,
+		dispatchLoop:      newDispatchLoopTracker(),
 	}
 	for _, o := range opts {
 		o(s)
@@ -685,6 +691,18 @@ func (s *Castellarius) dispatchRepo(ctx context.Context, repo aqueduct.RepoConfi
 
 		w := worker // capture for goroutine
 		go func() {
+			// Dispatch-loop detection: if this droplet has been failing repeatedly
+			// without ever spawning an agent, attempt ordered recovery before retrying.
+			if s.dispatchLoop.recentFailureCount(req.Item.ID) >= dispatchLoopThreshold {
+				s.recoverDispatchLoop(client, req.Item, req.RepoConfig)
+				if err2 := client.Assign(req.Item.ID, "", req.Step.Name); err2 != nil {
+					s.logger.Error("dispatch-loop recovery: reset failed",
+						"droplet", req.Item.ID, "error", err2)
+				}
+				pool.Release(w)
+				return
+			}
+
 			// Prepare the per-droplet worktree before spawning the agent.
 			// Castellarius owns worktree lifecycle — agents never call git worktree add.
 			// Skipped when sandboxRoot is unset (test environments without real repos).
@@ -699,6 +717,7 @@ func (s *Castellarius) dispatchRepo(ctx context.Context, repo aqueduct.RepoConfi
 						"droplet", req.Item.ID,
 						"error", err,
 					)
+					s.dispatchLoop.recordFailure(req.Item.ID)
 					if err2 := client.Assign(req.Item.ID, "", req.Step.Name); err2 != nil {
 						s.logger.Error("reset after worktree failure", "droplet", req.Item.ID, "error", err2)
 					}
@@ -718,6 +737,7 @@ func (s *Castellarius) dispatchRepo(ctx context.Context, repo aqueduct.RepoConfi
 						"droplet", req.Item.ID,
 						"files", dirtyFiles,
 					)
+					s.dispatchLoop.recordFailure(req.Item.ID)
 					_ = client.AddNote(req.Item.ID, "scheduler", note)
 					if err2 := client.Assign(req.Item.ID, "", req.Step.Name); err2 != nil {
 						s.logger.Error("reset after dirty check", "droplet", req.Item.ID, "error", err2)
@@ -736,13 +756,17 @@ func (s *Castellarius) dispatchRepo(ctx context.Context, repo aqueduct.RepoConfi
 					"cataractae", req.Step.Name,
 					"error", err,
 				)
+				s.dispatchLoop.recordFailure(req.Item.ID)
 				// Reset to open so the item can be re-dispatched to same aqueduct.
 				if err2 := client.Assign(req.Item.ID, "", req.Step.Name); err2 != nil {
 					s.logger.Error("reset after spawn failure",
 						"droplet", req.Item.ID, "error", err2)
 				}
 				pool.Release(w)
+				return
 			}
+			// Successful spawn — reset the dispatch-loop counter.
+			s.dispatchLoop.reset(req.Item.ID)
 			// On success: worker stays busy; observe phase releases it when the
 			// outcome is written to the DB.
 		}()
