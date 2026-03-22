@@ -470,6 +470,12 @@ var cataractaeStatusCmd = &cobra.Command{
 	},
 }
 
+// cisternCataractaeDir returns the cataractae directory derived from a workflow file path.
+// The cataractae directory lives one level above the aqueduct directory containing the workflow.
+func cisternCataractaeDir(wfPath string) string {
+	return filepath.Clean(filepath.Join(filepath.Dir(wfPath), "..", "cataractae"))
+}
+
 func init() {
 	cataractaeGenerateCmd.Flags().StringVar(&cataractaeGenerateWorkflow, "workflow", "", "path to workflow YAML file")
 	cataractaeListCmd.Flags().StringVar(&cataractaeGenerateWorkflow, "workflow", "", "path to workflow YAML file")
