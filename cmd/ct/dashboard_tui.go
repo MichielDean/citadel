@@ -210,15 +210,13 @@ func (m dashboardTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Multiple active aqueducts: show picker so user can choose.
 			if m.data != nil {
 				active := activeAqueducts(m.data.Cataractae)
-				switch len(active) {
-				case 1:
+				switch {
+				case len(active) == 1:
 					m = m.openPeekOn(active[0])
 					return m, m.peek.Init()
-				default: // > 1
-					if len(active) > 1 {
-						m.peekSelectMode = true
-						m.peekSelectIndex = 0
-					}
+				case len(active) > 1:
+					m.peekSelectMode = true
+					m.peekSelectIndex = 0
 				}
 			}
 		case "up", "k":
