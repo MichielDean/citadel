@@ -9,7 +9,7 @@ import (
 
 // TestBuiltins_ReturnsExpectedPresetNames verifies the five built-in presets are present.
 func TestBuiltins_ReturnsExpectedPresetNames(t *testing.T) {
-	want := []string{"claude", "codex", "gemini", "copilot", "opencode", "fakeagent"}
+	want := []string{"claude", "codex", "gemini", "copilot", "opencode"}
 	got := Builtins()
 
 	if len(got) != len(want) {
@@ -80,17 +80,6 @@ func TestBuiltins_OpencodePreset(t *testing.T) {
 
 	assertStr(t, "Command", "opencode", got.Command)
 	assertStr(t, "InstructionsFile", "AGENTS.md", got.InstructionsFile)
-}
-
-// TestBuiltins_FakeagentPreset validates each field of the fakeagent built-in.
-func TestBuiltins_FakeagentPreset(t *testing.T) {
-	got := builtinByName(t, "fakeagent")
-
-	assertStr(t, "Command", "fakeagent", got.Command)
-	assertStrs(t, "Args", []string{"--dangerously-skip-permissions"}, got.Args)
-	assertStr(t, "ModelFlag", "--model", got.ModelFlag)
-	assertStr(t, "AddDirFlag", "--add-dir", got.AddDirFlag)
-	assertStr(t, "InstructionsFile", "CLAUDE.md", got.InstructionsFile)
 }
 
 // TestBuiltins_ReturnsCopy verifies that mutating the returned slice does not affect the built-ins.

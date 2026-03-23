@@ -227,6 +227,33 @@ func TestClaudePresetBackwardCompat(t *testing.T) {
 			t.Errorf("backward compat broken (spaces in path):\nwant: %q\ngot:  %q", want, got)
 		}
 	})
+
+	// This subtest verifies the LookPath contract: when claudePath() resolves to
+	// an absolute path (e.g. /usr/local/bin/claude via exec.LookPath), the preset's
+	// Command field must carry that same resolved path for buildPresetCmd to produce
+	// a command identical to buildClaudeCmd. The test patches claudePathFn directly
+	// so that neither CLAUDE_PATH nor a real binary installation is required.
+	t.Run("LookPath resolution — preset Command must carry resolved absolute path", func(t *testing.T) {
+		// Clear the parent's CLAUDE_PATH=claude to exercise the LookPath code path.
+		t.Setenv("CLAUDE_PATH", "")
+
+		// Patch claudePathFn to simulate LookPath resolving to an absolute path.
+		const resolvedPath = "/opt/test/claude"
+		orig := claudePathFn
+		claudePathFn = func() string { return resolvedPath }
+		t.Cleanup(func() { claudePathFn = orig })
+
+		// The preset must carry the same resolved path; without it the commands diverge.
+		resolvedPreset := claudePreset
+		resolvedPreset.Command = resolvedPath
+
+		s := &Session{ID: "test", WorkDir: "/tmp"}
+		want := s.buildClaudeCmd(skillsDir)
+		got := s.buildPresetCmd(resolvedPreset, skillsDir)
+		if got != want {
+			t.Errorf("LookPath compat broken — preset.Command must match resolved path:\nwant: %q\ngot:  %q", want, got)
+		}
+	})
 }
 
 // buildTestBin compiles the Go package at importPath into a temp directory

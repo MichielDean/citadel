@@ -89,6 +89,10 @@ func (s *Server) record(r *http.Request) {
 // handleMessages responds to POST /v1/messages with a well-formed Anthropic
 // Messages API response containing [HardcodedProposalsJSON] as the text block.
 func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	s.record(r)
 	w.Header().Set("Content-Type", "application/json")
 	resp := map[string]any{
@@ -108,6 +112,10 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 // well-formed OpenAI chat completion response containing [HardcodedProposalsJSON]
 // as the assistant message content.
 func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	s.record(r)
 	w.Header().Set("Content-Type", "application/json")
 	resp := map[string]any{

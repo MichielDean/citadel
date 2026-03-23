@@ -89,17 +89,6 @@ var builtins = []ProviderPreset{
 		Command:          "opencode",
 		InstructionsFile: "AGENTS.md",
 	},
-	// fakeagent is a test-only preset. Tests build the binary and point
-	// CLAUDE_PATH (or preset.Command) at it to exercise the full session
-	// spawn → isAlive → outcome pipeline without a real LLM CLI.
-	{
-		Name:             "fakeagent",
-		Command:          "fakeagent",
-		Args:             []string{"--dangerously-skip-permissions"},
-		ModelFlag:        "--model",
-		AddDirFlag:       "--add-dir",
-		InstructionsFile: "CLAUDE.md",
-	},
 }
 
 // Builtins returns a deep copy of the built-in provider preset slice.

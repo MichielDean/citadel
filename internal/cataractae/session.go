@@ -90,7 +90,7 @@ func (s *Session) buildClaudeCmd(skillsDir string) string {
 		flagsStr = "--model " + s.Model + " "
 	}
 	return fmt.Sprintf("%s --dangerously-skip-permissions --add-dir %s %s-p '%s'",
-		claudePath(), shellQuote(skillsDir), flagsStr, prompt)
+		claudePathFn(), shellQuote(skillsDir), flagsStr, prompt)
 }
 
 // buildPresetCmd constructs the shell command string for a ProviderPreset.
@@ -193,6 +193,11 @@ func (s *Session) isAlive() bool {
 	err := exec.Command("tmux", "has-session", "-t", s.ID).Run()
 	return err == nil
 }
+
+// claudePathFn resolves the path to the claude executable. It is a variable so
+// tests can substitute it to inject a known absolute path without modifying the
+// process environment or requiring the binary to exist on the test machine.
+var claudePathFn = claudePath
 
 // claudePath returns the absolute path to the claude binary.
 func claudePath() string {
