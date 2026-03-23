@@ -124,14 +124,35 @@ type Workflow struct {
 	Complexity ComplexityConfig     `yaml:"complexity"`
 }
 
+// ProviderConfig holds the provider block that can appear at the top level of
+// AqueductConfig or on an individual RepoConfig. Non-empty fields are applied on
+// top of the resolved built-in preset during provider resolution.
+type ProviderConfig struct {
+	// Name is the built-in preset name (e.g. "claude", "codex") or "custom".
+	// Defaults to "claude" when omitted at both levels.
+	Name string `yaml:"name,omitempty"`
+	// Model is the default model passed via the preset's ModelFlag at launch time.
+	// An empty string means "use the preset's own default".
+	Model string `yaml:"model,omitempty"`
+	// Command overrides the preset's executable (e.g. point at a wrapper script).
+	Command string `yaml:"command,omitempty"`
+	// Args are extra arguments appended to the preset's fixed args.
+	Args []string `yaml:"args,omitempty"`
+	// Env maps additional environment variable names to values injected into the
+	// agent process alongside the preset's EnvPassthrough list.
+	Env map[string]string `yaml:"env,omitempty"`
+}
+
 // RepoConfig defines a repository managed by the farm.
 type RepoConfig struct {
-	Name         string   `yaml:"name"`
-	URL          string   `yaml:"url"`
-	WorkflowPath string   `yaml:"workflow_path"`
-	Cataractae      int      `yaml:"cataractae"`
-	Names        []string `yaml:"names,omitempty"`
-	Prefix       string   `yaml:"prefix"`
+	Name         string          `yaml:"name"`
+	URL          string          `yaml:"url"`
+	WorkflowPath string          `yaml:"workflow_path"`
+	Cataractae   int             `yaml:"cataractae"`
+	Names        []string        `yaml:"names,omitempty"`
+	Prefix       string          `yaml:"prefix"`
+	// Provider overrides the top-level provider config for this repo only.
+	Provider *ProviderConfig `yaml:"provider,omitempty"`
 }
 
 // DroughtHook defines an action to run when the scheduler enters drought (idle) state.
@@ -176,4 +197,8 @@ type AqueductConfig struct {
 	// DeliveryAddr is the TCP listen address for the delivery cataractae HTTP
 	// server (e.g. ":8080"). An empty string disables the HTTP server.
 	DeliveryAddr          string           `yaml:"delivery_addr,omitempty"`
+	// Provider sets the default agent provider for all repos. Individual repos
+	// may override this with their own provider block.
+	// When omitted, the "claude" built-in preset is used.
+	Provider              *ProviderConfig  `yaml:"provider,omitempty"`
 }

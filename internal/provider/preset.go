@@ -47,6 +47,9 @@ type ProviderPreset struct {
 	ResumeFlag string `json:"resume_flag,omitempty"`
 	// ResumeStyle controls whether resuming uses a flag or a positional subcommand.
 	ResumeStyle ResumeStyle `json:"resume_style,omitempty"`
+	// ExtraEnv maps additional environment variable names to values injected into
+	// the agent process. These are set in addition to (and may override) EnvPassthrough.
+	ExtraEnv map[string]string `json:"extra_env,omitempty"`
 }
 
 // builtins is the canonical set of provider presets shipped with Cistern.
@@ -99,6 +102,13 @@ func Builtins() []ProviderPreset {
 		p.Args = slices.Clone(p.Args)
 		p.EnvPassthrough = slices.Clone(p.EnvPassthrough)
 		p.ProcessNames = slices.Clone(p.ProcessNames)
+		if p.ExtraEnv != nil {
+			c := make(map[string]string, len(p.ExtraEnv))
+			for k, v := range p.ExtraEnv {
+				c[k] = v
+			}
+			p.ExtraEnv = c
+		}
 		out[i] = p
 	}
 	return out

@@ -104,6 +104,16 @@ func TestBuiltins_ReturnsCopy(t *testing.T) {
 			t.Errorf("Builtins() Args[0] = %q after mutation, want %q — slice field shares backing array with global state", second[0].Args[0], original)
 		}
 	})
+
+	t.Run("extra_env map mutation is isolated", func(t *testing.T) {
+		first := Builtins()
+		first[0].ExtraEnv = map[string]string{"injected": "value"}
+
+		second := Builtins()
+		if second[0].ExtraEnv != nil {
+			t.Error("Builtins() ExtraEnv is not isolated — mutation leaked into global state")
+		}
+	})
 }
 
 // TestLoadUserPresets_NoFileReturnsBuiltins verifies that a missing file returns built-ins unchanged.
