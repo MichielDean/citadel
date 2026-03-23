@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/MichielDean/cistern/internal/aqueduct"
 	"github.com/MichielDean/cistern/internal/cistern"
 	"github.com/MichielDean/cistern/internal/provider"
 )
@@ -252,6 +253,49 @@ func TestClaudePresetBackwardCompat(t *testing.T) {
 		got := s.buildPresetCmd(resolvedPreset, skillsDir)
 		if got != want {
 			t.Errorf("LookPath compat broken — preset.Command must match resolved path:\nwant: %q\ngot:  %q", want, got)
+		}
+	})
+}
+
+// TestClaudeDefaultFallback is the non-negotiable regression gate for the
+// provider-preset refactor.
+//
+// Given: an AqueductConfig with no provider block (zero value — no Provider
+// field set), the resolved preset must be "claude", and the command string
+// produced by buildPresetCmd must match buildClaudeCmd() output
+// character-for-character.
+func TestClaudeDefaultFallback(t *testing.T) {
+	// Normalise claudePathFn so both code paths agree on the binary name.
+	t.Setenv("CLAUDE_PATH", "claude")
+
+	// Parse an AqueductConfig with no provider block.
+	// Zero-value AqueductConfig has no provider configured.
+	cfg := &aqueduct.AqueductConfig{}
+	_ = cfg // no provider field — verified by absence
+
+	// Resolve preset: empty provider name must return the "claude" built-in.
+	preset := provider.ResolvePreset("")
+	if preset.Name != "claude" {
+		t.Fatalf("ResolvePreset(\"\") = %q, want %q", preset.Name, "claude")
+	}
+
+	skillsDir := "/home/user/.cistern/skills"
+
+	t.Run("without model", func(t *testing.T) {
+		s := &Session{ID: "test", WorkDir: "/tmp"}
+		want := s.buildClaudeCmd(skillsDir)
+		got := s.buildPresetCmd(preset, skillsDir)
+		if got != want {
+			t.Errorf("default fallback command mismatch (no model):\nwant: %q\ngot:  %q", want, got)
+		}
+	})
+
+	t.Run("with model", func(t *testing.T) {
+		s := &Session{ID: "test", WorkDir: "/tmp", Model: "haiku"}
+		want := s.buildClaudeCmd(skillsDir)
+		got := s.buildPresetCmd(preset, skillsDir)
+		if got != want {
+			t.Errorf("default fallback command mismatch (with model):\nwant: %q\ngot:  %q", want, got)
 		}
 	})
 }

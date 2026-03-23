@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -13,6 +16,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/MichielDean/cistern/internal/cistern"
+	"github.com/MichielDean/cistern/internal/provider"
 )
 
 // DropletProposal is one proposed droplet from the LLM refinement pass.
@@ -98,6 +102,98 @@ func callRefineAPI(title, description string) ([]DropletProposal, error) {
 	}
 
 	return extractProposals(responseText.String())
+}
+
+// callRefineAPIWith calls the refine API using the given LLM provider config.
+// For "anthropic" it delegates to callRefineAPI (Anthropic SDK, honouring
+// ANTHROPIC_BASE_URL for test injection). All other providers use the
+// OpenAI-compatible /v1/chat/completions endpoint at llm.BaseURL.
+func callRefineAPIWith(llm provider.LLMProvider, title, description string) ([]DropletProposal, error) {
+	if llm.ApiKeyEnv != "" && os.Getenv(llm.ApiKeyEnv) == "" {
+		return nil, fmt.Errorf("%s API key (%s) is not set", llm.Name, llm.ApiKeyEnv)
+	}
+	if llm.Name == "anthropic" {
+		return callRefineAPI(title, description)
+	}
+	return callRefineAPIChatCompletions(llm, title, description)
+}
+
+// openAIChatRequest is the request body for /v1/chat/completions.
+type openAIChatRequest struct {
+	Model     string          `json:"model"`
+	Messages  []openAIMessage `json:"messages"`
+	MaxTokens int             `json:"max_tokens"`
+}
+
+// openAIMessage is a single message in an OpenAI-compatible chat request.
+type openAIMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+// openAIChatResponse is the response from /v1/chat/completions.
+type openAIChatResponse struct {
+	Choices []struct {
+		Message openAIMessage `json:"message"`
+	} `json:"choices"`
+}
+
+// callRefineAPIChatCompletions calls an OpenAI-compatible /v1/chat/completions
+// endpoint and returns parsed droplet proposals.
+func callRefineAPIChatCompletions(llm provider.LLMProvider, title, description string) ([]DropletProposal, error) {
+	userPrompt := "Title: " + title
+	if description != "" {
+		userPrompt += "\nDescription: " + description
+	}
+
+	reqBody := openAIChatRequest{
+		Model: llm.DefaultModel,
+		Messages: []openAIMessage{
+			{Role: "system", Content: filterSystemPrompt},
+			{Role: "user", Content: userPrompt},
+		},
+		MaxTokens: 4096,
+	}
+
+	bodyBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, llm.BaseURL+"/v1/chat/completions", bytes.NewReader(bodyBytes))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if llm.ApiKeyEnv != "" {
+		if key := os.Getenv(llm.ApiKeyEnv); key != "" {
+			req.Header.Set("Authorization", "Bearer "+key)
+		}
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("%s API call failed: %w", llm.Name, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("%s API returned status %d: %s", llm.Name, resp.StatusCode, body)
+	}
+
+	var chatResp openAIChatResponse
+	if err := json.NewDecoder(resp.Body).Decode(&chatResp); err != nil {
+		return nil, fmt.Errorf("decode %s response: %w", llm.Name, err)
+	}
+	if len(chatResp.Choices) == 0 {
+		return nil, fmt.Errorf("%s returned no choices", llm.Name)
+	}
+
+	return extractProposals(chatResp.Choices[0].Message.Content)
 }
 
 // extractProposals parses a JSON array of DropletProposals from LLM output.

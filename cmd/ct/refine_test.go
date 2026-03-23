@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MichielDean/cistern/internal/provider"
 	"github.com/MichielDean/cistern/internal/testutil/mockllm"
 )
 
@@ -327,4 +328,77 @@ func postToMock(url string) (int, error) {
 	}
 	resp.Body.Close()
 	return resp.StatusCode, nil
+}
+
+// TestRefineWithMockServer is a table-driven test that calls callRefineAPIWith
+// for each built-in LLM provider using the mock server, and asserts:
+//   - correct proposals are returned
+//   - an auth credential is sent for providers that require a key
+//   - the correct model name is in the request body (non-Anthropic providers)
+func TestRefineWithMockServer(t *testing.T) {
+	for _, llm := range provider.LLMBuiltins() {
+		llm := llm // capture range variable
+		t.Run(llm.Name, func(t *testing.T) {
+			mock := mockllm.New()
+			defer mock.Close()
+
+			// Inject a test API key for providers that require one.
+			const testKey = "test-key-refine"
+			if llm.ApiKeyEnv != "" {
+				t.Setenv(llm.ApiKeyEnv, testKey)
+			}
+
+			// For Anthropic the SDK reads ANTHROPIC_BASE_URL; for all other
+			// providers override BaseURL on the struct so callRefineAPIChatCompletions
+			// targets the mock server.
+			testLLM := llm
+			if llm.Name == "anthropic" {
+				t.Setenv("ANTHROPIC_BASE_URL", mock.URL)
+			} else {
+				testLLM.BaseURL = mock.URL
+			}
+
+			proposals, err := callRefineAPIWith(testLLM, "Test title", "Test description")
+			if err != nil {
+				t.Fatalf("callRefineAPIWith(%s): %v", llm.Name, err)
+			}
+			if len(proposals) == 0 {
+				t.Fatalf("%s: expected proposals, got none", llm.Name)
+			}
+			if proposals[0].Title != "mock proposal" {
+				t.Errorf("%s: Title = %q, want %q", llm.Name, proposals[0].Title, "mock proposal")
+			}
+			if proposals[0].Description != "test description" {
+				t.Errorf("%s: Description = %q, want %q", llm.Name, proposals[0].Description, "test description")
+			}
+
+			reqs := mock.Requests()
+			if len(reqs) == 0 {
+				t.Fatalf("%s: mock received no requests", llm.Name)
+			}
+			req := reqs[0]
+
+			// Assert an auth credential is present for providers that require a key.
+			if llm.ApiKeyEnv != "" {
+				apiKeyHeader := req.Headers.Get("X-Api-Key")
+				authHeader := req.Headers.Get("Authorization")
+				if apiKeyHeader == "" && authHeader == "" {
+					t.Errorf("%s: request missing auth credential (X-Api-Key or Authorization)", llm.Name)
+				}
+			}
+
+			// For non-Anthropic providers, assert the model field in the request body
+			// matches the provider's DefaultModel.
+			if llm.Name != "anthropic" {
+				var body map[string]any
+				if err := json.Unmarshal(req.Body, &body); err != nil {
+					t.Fatalf("%s: parse request body: %v", llm.Name, err)
+				}
+				model, _ := body["model"].(string)
+				if model != llm.DefaultModel {
+					t.Errorf("%s: model = %q, want %q", llm.Name, model, llm.DefaultModel)
+				}
+			}
+		})
+	}
 }

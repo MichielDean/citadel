@@ -220,6 +220,162 @@ func TestLoadUserPresets_MultipleOverridesAndAppends(t *testing.T) {
 	}
 }
 
+// TestProviderConfigMerge verifies that MergePresets correctly applies layered
+// overrides: repo-level overrides shadow top-level ones, and top-level overrides
+// shadow built-in preset defaults.
+func TestProviderConfigMerge(t *testing.T) {
+	t.Run("top-level shadows built-in defaults", func(t *testing.T) {
+		topLevel := []ProviderPreset{
+			{Name: "claude", Command: "claude-custom", ModelFlag: "--custom-model"},
+		}
+		merged := MergePresets(Builtins(), topLevel)
+
+		claude := findByName(merged, "claude")
+		if claude == nil {
+			t.Fatal("claude not found after top-level override")
+		}
+		assertStr(t, "Command", "claude-custom", claude.Command)
+		assertStr(t, "ModelFlag", "--custom-model", claude.ModelFlag)
+
+		// Other built-ins must still be present.
+		if findByName(merged, "codex") == nil {
+			t.Error("codex missing after top-level override")
+		}
+		if findByName(merged, "gemini") == nil {
+			t.Error("gemini missing after top-level override")
+		}
+	})
+
+	t.Run("repo-level shadows top-level", func(t *testing.T) {
+		// Apply a top-level override first.
+		afterTopLevel := MergePresets(Builtins(), []ProviderPreset{
+			{Name: "claude", Command: "claude-top-level"},
+		})
+		// Then apply a repo-level override on top.
+		afterRepoLevel := MergePresets(afterTopLevel, []ProviderPreset{
+			{Name: "claude", Command: "claude-repo"},
+		})
+
+		claude := findByName(afterRepoLevel, "claude")
+		if claude == nil {
+			t.Fatal("claude not found after repo-level override")
+		}
+		assertStr(t, "Command", "claude-repo", claude.Command)
+	})
+
+	t.Run("new preset appended survives further merge", func(t *testing.T) {
+		// A new preset added at top-level must survive a repo-level merge.
+		afterTopLevel := MergePresets(Builtins(), []ProviderPreset{
+			{Name: "project-agent", Command: "project-bin"},
+		})
+		afterRepoLevel := MergePresets(afterTopLevel, []ProviderPreset{
+			{Name: "project-agent", Command: "repo-bin"},
+		})
+
+		agent := findByName(afterRepoLevel, "project-agent")
+		if agent == nil {
+			t.Fatal("project-agent not found after repo-level merge")
+		}
+		assertStr(t, "Command", "repo-bin", agent.Command)
+
+		// Original built-ins are still intact.
+		if findByName(afterRepoLevel, "claude") == nil {
+			t.Error("claude missing after layered merge")
+		}
+	})
+
+	t.Run("MergePresets does not mutate base slice", func(t *testing.T) {
+		base := Builtins()
+		originalCmd := base[0].Command
+		MergePresets(base, []ProviderPreset{{Name: base[0].Name, Command: "mutated"}})
+		if base[0].Command != originalCmd {
+			t.Errorf("MergePresets mutated base slice: Command = %q, want %q", base[0].Command, originalCmd)
+		}
+	})
+}
+
+// TestUserPresetsJSON writes a providers.json with both an override and a custom
+// preset, loads it via LoadUserPresets, and verifies the result merges correctly
+// and the custom provider is resolvable.
+func TestUserPresetsJSON(t *testing.T) {
+	user := []ProviderPreset{
+		{
+			Name:     "claude",
+			Command:  "claude-patched",
+			Args:     []string{"--dangerously-skip-permissions", "--extra-flag"},
+			ModelFlag: "--model",
+		},
+		{
+			Name:             "my-custom-agent",
+			Command:          "my-custom-bin",
+			Args:             []string{"--no-confirm"},
+			EnvPassthrough:   []string{"MY_KEY"},
+			InstructionsFile: "MY.md",
+		},
+	}
+	path := writePresetsJSON(t, user)
+
+	presets, err := LoadUserPresets(path)
+	if err != nil {
+		t.Fatalf("LoadUserPresets: %v", err)
+	}
+
+	// Claude override is applied.
+	claude := findByName(presets, "claude")
+	if claude == nil {
+		t.Fatal("claude not found after JSON load")
+	}
+	assertStr(t, "claude Command", "claude-patched", claude.Command)
+	assertStrs(t, "claude Args", []string{"--dangerously-skip-permissions", "--extra-flag"}, claude.Args)
+	assertStr(t, "claude ModelFlag", "--model", claude.ModelFlag)
+
+	// Custom provider is resolvable by name.
+	custom := findByName(presets, "my-custom-agent")
+	if custom == nil {
+		t.Fatal("my-custom-agent not found after JSON load")
+	}
+	assertStr(t, "custom Command", "my-custom-bin", custom.Command)
+	assertStrs(t, "custom Args", []string{"--no-confirm"}, custom.Args)
+	assertStrs(t, "custom EnvPassthrough", []string{"MY_KEY"}, custom.EnvPassthrough)
+	assertStr(t, "custom InstructionsFile", "MY.md", custom.InstructionsFile)
+
+	// Built-ins other than claude are still present.
+	if findByName(presets, "codex") == nil {
+		t.Error("codex built-in missing after JSON load")
+	}
+	if findByName(presets, "gemini") == nil {
+		t.Error("gemini built-in missing after JSON load")
+	}
+}
+
+// TestResolvePreset_DefaultsToClaudeWhenEmpty verifies that ResolvePreset("")
+// returns the "claude" preset as the default fallback.
+func TestResolvePreset_DefaultsToClaudeWhenEmpty(t *testing.T) {
+	p := ResolvePreset("")
+	if p.Name != "claude" {
+		t.Errorf("ResolvePreset(\"\") = %q, want %q", p.Name, "claude")
+	}
+}
+
+// TestResolvePreset_ReturnsMatchByName verifies that a known name is resolved.
+func TestResolvePreset_ReturnsMatchByName(t *testing.T) {
+	for _, name := range []string{"claude", "codex", "gemini", "copilot", "opencode"} {
+		p := ResolvePreset(name)
+		if p.Name != name {
+			t.Errorf("ResolvePreset(%q) = %q, want %q", name, p.Name, name)
+		}
+	}
+}
+
+// TestResolvePreset_UnknownNameFallsBackToClaude verifies the fallback for
+// an unknown provider name.
+func TestResolvePreset_UnknownNameFallsBackToClaude(t *testing.T) {
+	p := ResolvePreset("does-not-exist")
+	if p.Name != "claude" {
+		t.Errorf("ResolvePreset(\"does-not-exist\") = %q, want %q", p.Name, "claude")
+	}
+}
+
 // --- helpers ---
 
 func builtinByName(t *testing.T, name string) ProviderPreset {

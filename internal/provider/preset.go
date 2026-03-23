@@ -112,16 +112,51 @@ func Builtins() []ProviderPreset {
 	return out
 }
 
+// MergePresets applies overrides on top of base and returns the merged slice.
+// Entries in overrides that match a base preset by Name replace it; entries
+// with unknown names are appended. Neither slice is modified.
+func MergePresets(base, overrides []ProviderPreset) []ProviderPreset {
+	result := make([]ProviderPreset, len(base))
+	for i, p := range base {
+		p.Args = slices.Clone(p.Args)
+		p.EnvPassthrough = slices.Clone(p.EnvPassthrough)
+		p.ProcessNames = slices.Clone(p.ProcessNames)
+		result[i] = p
+	}
+	for _, u := range overrides {
+		idx := slices.IndexFunc(result, func(p ProviderPreset) bool {
+			return p.Name == u.Name
+		})
+		if idx >= 0 {
+			result[idx] = u
+		} else {
+			result = append(result, u)
+		}
+	}
+	return result
+}
+
+// ResolvePreset returns the built-in preset matching name.
+// If name is empty or no preset matches, the "claude" preset is returned as
+// the default fallback.
+func ResolvePreset(name string) ProviderPreset {
+	for _, p := range Builtins() {
+		if p.Name == name {
+			return p
+		}
+	}
+	// Default: return the first built-in (claude).
+	return Builtins()[0]
+}
+
 // LoadUserPresets reads a JSON array of ProviderPreset values from path and
 // merges them on top of the built-in presets. A user entry with a Name that
 // matches a built-in replaces the built-in; entries with unknown names are
 // appended. If path does not exist the built-ins are returned unchanged.
 func LoadUserPresets(path string) ([]ProviderPreset, error) {
-	presets := Builtins()
-
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		return presets, nil
+		return Builtins(), nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("provider: read %s: %w", path, err)
@@ -132,16 +167,5 @@ func LoadUserPresets(path string) ([]ProviderPreset, error) {
 		return nil, fmt.Errorf("provider: parse %s: %w", path, err)
 	}
 
-	for _, u := range user {
-		idx := slices.IndexFunc(presets, func(p ProviderPreset) bool {
-			return p.Name == u.Name
-		})
-		if idx >= 0 {
-			presets[idx] = u
-		} else {
-			presets = append(presets, u)
-		}
-	}
-
-	return presets, nil
+	return MergePresets(Builtins(), user), nil
 }
