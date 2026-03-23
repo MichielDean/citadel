@@ -43,43 +43,32 @@ Do **not** review for:
 - Whether the change is a good idea (you have no requirements context)
 - Naming preferences (unless a name is actively misleading)
 
-## Severity Classification
-
-Each finding must have exactly one severity:
-
-| Severity | Meaning | Effect on verdict |
-|----------|---------|-------------------|
-| `blocking` | Will cause data loss, security breach, or crash in production | Forces `revision` |
-| `required` | Incorrect behavior or missing coverage that must be fixed | Forces `revision` |
-| `suggestion` | Improvement that would strengthen the code but is not required | Does not force `revision` |
-
 ## Signaling Outcome
 
 Use the `ct` CLI (the item ID is in CONTEXT.md):
 
-**Pass (no blocking or required issues found):**
+**Pass (no findings):**
 ```
-ct droplet pass <id> --notes "No blocking or required issues found. 2 suggestions."
+ct droplet pass <id> --notes "No findings."
 ```
 
-**Recirculate (one or more blocking or required issues — code returns to implementer):**
+**Recirculate (any findings — code returns to implementer):**
 ```
-ct droplet recirculate <id> --notes "Required: missing error handling on GetReady at line 42. Blocking: nil dereference on empty response."
+ct droplet recirculate <id> --notes "3 findings. (1) missing error handling on GetReady at line 42. (2) nil dereference on empty response. (3) ..."
 ```
 
 Your outcome must be pass or recirculate only. Never use block. A reviewer finding
 issues is normal — that is recirculate, not failure.
 
-**The rule is simple:** if ANY annotation has severity `blocking` or `required`,
-the result MUST be `recirculate`. No exceptions. No judgment calls. This is
-mechanical.
+**The rule is simple:** if you have ANY findings, the result MUST be `recirculate`.
+No exceptions. No judgment calls. This is mechanical.
 
 Before signaling, add detailed notes via:
 ```
-ct droplet note <id> "Finding: <file>:<line> [severity] — <specific issue and fix>"
+ct droplet note <id> "Finding: <file>:<line> — <specific issue and fix>"
 ```
 
-Every finding must include the file, line, severity, and a specific actionable comment
+Every finding must include the file, line, and a specific actionable comment
 stating what is wrong and what the fix should be.
 
 ## Adversarial Mindset

@@ -232,7 +232,7 @@ Skills are referenced by name in your aqueduct YAML under each cataractae's `ski
 | `cistern-git` | Git conventions: exclude CONTEXT.md, merge-base diff, no stash | implement, simplify, docs, delivery |
 | `cistern-github` | PR creation, CI checks, squash-merge, and automatic conflict resolution for Cistern delivery | implement, adversarial-review, delivery |
 | `code-simplifier` | Simplification heuristics and patterns | simplify |
-| `cistern-reviewer` | Adversarial code review for Go, TypeScript/Next.js, and TypeScript/React — Blocking/Required/Suggestions severity tiers | adversarial-review |
+| `cistern-reviewer` | Adversarial code review for Go, TypeScript/Next.js, and TypeScript/React — all findings equal, recirculate on any finding, pass only when nothing remains | adversarial-review |
 
 The `cistern-git` skill encodes hard-won rules: always use `git add -A -- ':!CONTEXT.md'`, always use merge-base diff (`git diff $(git merge-base HEAD origin/main)..HEAD`) instead of two-dot — two-dot includes other PRs that merged to main after branching on unrebased branches, never stash in per-droplet worktrees.
 
