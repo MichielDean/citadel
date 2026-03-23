@@ -145,6 +145,26 @@ func wsSendFrame(w *bufio.Writer, opcode byte, payload []byte) error {
 	return w.Flush()
 }
 
+// handleTuiTextFrame processes a WebSocket text frame received by the /ws/tui
+// handler. If payload decodes to a resize JSON message the resize callback is
+// invoked with the requested dimensions. For any other payload (non-JSON, JSON
+// without a "resize" key, etc.) the raw bytes are forwarded verbatim to ptmx as
+// keystroke input — this is how xterm.js onData sequences (e.g. "\x1b[A" for
+// up arrow) reach the running TUI subprocess.
+func handleTuiTextFrame(payload []byte, ptmx io.Writer, resize func(cols, rows uint16)) {
+	var msg struct {
+		Resize *struct {
+			Cols uint16 `json:"cols"`
+			Rows uint16 `json:"rows"`
+		} `json:"resize"`
+	}
+	if json.Unmarshal(payload, &msg) == nil && msg.Resize != nil {
+		resize(msg.Resize.Cols, msg.Resize.Rows)
+		return
+	}
+	_, _ = ptmx.Write(payload)
+}
+
 // wsReadClientFrame reads one WebSocket frame from a client (potentially masked).
 // It returns the opcode, payload, and any read error. buf is reused across calls
 // to avoid per-frame allocation; if the payload exceeds len(buf), a new slice is
@@ -461,19 +481,10 @@ func newDashboardMux(cfgPath, dbPath string) http.Handler {
 					return
 				}
 				switch opcode {
-				case wsOpcodeText: // control message (resize)
-					var msg struct {
-						Resize *struct {
-							Cols uint16 `json:"cols"`
-							Rows uint16 `json:"rows"`
-						} `json:"resize"`
-					}
-					if json.Unmarshal(payload, &msg) == nil && msg.Resize != nil {
-						_ = pty.Setsize(ptmx, &pty.Winsize{
-							Rows: msg.Resize.Rows,
-							Cols: msg.Resize.Cols,
-						})
-					}
+				case wsOpcodeText:
+					handleTuiTextFrame(payload, ptmx, func(cols, rows uint16) {
+						_ = pty.Setsize(ptmx, &pty.Winsize{Rows: rows, Cols: cols})
+					})
 				case wsOpcodeClose:
 					return
 				}
@@ -601,6 +612,15 @@ var term = new Terminal({
 var fitAddon = new FitAddon.FitAddon();
 term.loadAddon(fitAddon);
 term.open(document.getElementById('terminal'));
+
+/* Forward all keystrokes to the PTY via WebSocket. xterm.js fires onData
+   for every keypress with the raw terminal escape sequence (e.g. "\x1b[A"
+   for up arrow). The server writes these bytes directly to the PTY stdin. */
+term.onData(function(data) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(data);
+  }
+});
 
 var ws = null;
 var scale = 0.75; /* default: render ~133% more content, scaled down to fit */

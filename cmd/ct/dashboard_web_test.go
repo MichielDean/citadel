@@ -767,6 +767,109 @@ func TestWsReadClientFrame_RejectsUnmaskedFrame(t *testing.T) {
 	}
 }
 
+// TestHandleTuiTextFrame_ResizeMessage_CallsResize verifies that a well-formed
+// resize JSON frame calls the resize function with the correct dimensions and
+// does not write any bytes to the PTY.
+func TestHandleTuiTextFrame_ResizeMessage_CallsResize(t *testing.T) {
+	payload := []byte(`{"resize":{"cols":120,"rows":40}}`)
+	var buf bytes.Buffer
+	var gotCols, gotRows uint16
+
+	handleTuiTextFrame(payload, &buf, func(cols, rows uint16) {
+		gotCols = cols
+		gotRows = rows
+	})
+
+	if gotCols != 120 {
+		t.Errorf("resize cols = %d, want 120", gotCols)
+	}
+	if gotRows != 40 {
+		t.Errorf("resize rows = %d, want 40", gotRows)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("PTY should not receive data on resize, got %d bytes", buf.Len())
+	}
+}
+
+// TestHandleTuiTextFrame_NonJSONForwardedToPTY verifies that a non-JSON payload
+// (e.g. a raw escape sequence from xterm.js onData) is written verbatim to the
+// PTY and does not trigger the resize callback.
+func TestHandleTuiTextFrame_NonJSONForwardedToPTY(t *testing.T) {
+	payload := []byte("\x1b[A") // up arrow
+	var buf bytes.Buffer
+	resizeCalled := false
+
+	handleTuiTextFrame(payload, &buf, func(cols, rows uint16) {
+		resizeCalled = true
+	})
+
+	if resizeCalled {
+		t.Error("resize should not be called for non-JSON payload")
+	}
+	if got := buf.Bytes(); !bytes.Equal(got, payload) {
+		t.Errorf("PTY received %q, want %q", got, payload)
+	}
+}
+
+// TestHandleTuiTextFrame_JSONWithoutResizeField_ForwardedToPTY verifies that a
+// valid JSON frame whose top-level object has no "resize" key is treated as raw
+// keystroke data and forwarded to the PTY unchanged.
+func TestHandleTuiTextFrame_JSONWithoutResizeField_ForwardedToPTY(t *testing.T) {
+	payload := []byte(`{"other":"value"}`)
+	var buf bytes.Buffer
+	resizeCalled := false
+
+	handleTuiTextFrame(payload, &buf, func(cols, rows uint16) {
+		resizeCalled = true
+	})
+
+	if resizeCalled {
+		t.Error("resize should not be called for JSON without resize field")
+	}
+	if got := buf.Bytes(); !bytes.Equal(got, payload) {
+		t.Errorf("PTY received %q, want %q", got, payload)
+	}
+}
+
+// TestHandleTuiTextFrame_TableDriven exercises handleTuiTextFrame across
+// multiple keystroke sequences to confirm each is forwarded to the PTY.
+func TestHandleTuiTextFrame_TableDriven(t *testing.T) {
+	cases := []struct {
+		name    string
+		payload []byte
+	}{
+		{"up_arrow", []byte("\x1b[A")},
+		{"down_arrow", []byte("\x1b[B")},
+		{"enter", []byte("\r")},
+		{"q_key", []byte("q")},
+		{"ctrl_c", []byte("\x03")},
+		{"r_key", []byte("r")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			handleTuiTextFrame(tc.payload, &buf, func(cols, rows uint16) {
+				t.Error("resize should not be called for keystroke payload")
+			})
+			if got := buf.Bytes(); !bytes.Equal(got, tc.payload) {
+				t.Errorf("PTY received %q, want %q", got, tc.payload)
+			}
+		})
+	}
+}
+
+// TestDashboardHTML_OnDataForwardsKeystrokes verifies that the web dashboard
+// HTML includes a term.onData handler that sends keystroke data to the server
+// via WebSocket, enabling interactive TUI control in the browser.
+func TestDashboardHTML_OnDataForwardsKeystrokes(t *testing.T) {
+	if !strings.Contains(dashboardHTML, "term.onData") {
+		t.Error("dashboardHTML must contain term.onData handler for keystroke forwarding")
+	}
+	if !strings.Contains(dashboardHTML, "ws.send(data)") {
+		t.Error("dashboardHTML term.onData handler must forward keystrokes via ws.send(data)")
+	}
+}
+
 // readWSTextFrame reads one unmasked WebSocket text frame from br and returns the payload.
 func readWSTextFrame(br *bufio.Reader) (string, error) {
 	header := make([]byte, 2)
