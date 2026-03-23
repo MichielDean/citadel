@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### TUI dashboard: apply arch-designer constants from user session (ci-sdvst)
+- Updated arch constants in `tuiAqueductRow`: `colW` 14→19, `archTopW` 9→10, `taperRows` 4→3, `pierRows` 1→4, `brickW` 4→2
+- Expanded `wfRows` from `[10]string` to `[14]string`; added 4 new settling-pool sub-rows (10–13)
+
 ### arch-designer: web UI with xterm.js terminal and on-screen button panel (ci-gyt7d)
 - `arch-designer --web` starts an HTTP server on port 5738 (default) serving the TUI in a browser via xterm.js — pixel-perfect block-character rendering, exact 1:1 terminal output
 - `--port N` overrides the listen port (e.g. `arch-designer --web --port 5739`)
