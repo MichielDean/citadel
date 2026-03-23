@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### arch-designer: web UI with xterm.js terminal and on-screen button panel (ci-gyt7d)
+- `arch-designer --web` starts an HTTP server on port 5738 (default) serving the TUI in a browser via xterm.js — pixel-perfect block-character rendering, exact 1:1 terminal output
+- `--port N` overrides the listen port (e.g. `arch-designer --web --port 5739`)
+- On-screen touch-friendly button panel drives the TUI without a keyboard:
+  - **Prev / Next** (Shift+Tab / Tab) — cycle through parameters
+  - **↑ / ↓** — adjust selected parameter by ±1
+  - **+5 / −5** (Shift+↑ / Shift+↓) — adjust by ±5
+  - **[L] Preset** — load defaults
+  - **[R] Reset** — reset to defaults
+  - **[S] Save & Copy** — print Go constants and copy them to clipboard via `navigator.clipboard`
+- PTY bridge: browser sends keystrokes as WebSocket text frames; server forwards them to PTY stdin. PTY output is streamed as binary WebSocket frames to xterm.js (same protocol as `/ws/tui` in the dashboard)
+- Automatic 3 s reconnection on WebSocket close
+- TUI mode (no flags) is unchanged
+- `cistern-arch-designer.service` — systemd user service starts `arch-designer --web --port 5738` on login; logs to `~/.cistern/arch-designer.log`
+
 ### TUI dashboard: higher-density arch rendering (ci-qijob)
 - Arch constants updated for higher visual fidelity at smaller scale: `colW` 20→14 (30% narrower), `archTopW` 10→9, `taperRows` 3→4 (more curve steps = sharper arch shape)
 - `wfRows` expanded from 8 to 10 sub-rows to match the new `(taperRows+pierRows)×2 = 10` layout
