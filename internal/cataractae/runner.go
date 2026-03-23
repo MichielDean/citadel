@@ -199,7 +199,7 @@ func (r *Runner) SpawnStep(w *Worker, item *cistern.Droplet, step *aqueduct.Work
 	// sandboxDirOverride. If it's missing, fail loudly rather than silently
 	// producing an empty diff.patch.
 	if step.Context == aqueduct.ContextDiffOnly && sandboxDirOverride == "" {
-		return fmt.Errorf("diff_only step %q: per-droplet SandboxDir not set — Castellarius must provide worktree path", step.Name)
+		return fmt.Errorf("%s step %q: per-droplet SandboxDir not set — Castellarius must provide worktree path", step.Context, step.Name)
 	}
 
 	// 1. Prepare context directory and CONTEXT.md.
