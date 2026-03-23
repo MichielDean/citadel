@@ -624,59 +624,95 @@ func TestTuiAqueductRow_LabelRowAboveArch(t *testing.T) {
 // TestTuiAqueductRow_WaterFillsOnlyToActiveStep verifies that the channel water row
 // contains wave characters only up to and including the active step's column,
 // and the remaining columns are empty (dry channel).
+// It also verifies that the row never overflows its expected visual width even
+// when the info string is longer than the wet section (edge case: first step active).
 func TestTuiAqueductRow_WaterFillsOnlyToActiveStep(t *testing.T) {
 	m := newDashboardTUIModel("", "")
 	steps := []string{"implement", "review", "merge"}
 
-	// Active at "review" (0-based index 1 of 3 steps).
-	ch := CataractaeInfo{
-		Name:            "virgo",
-		DropletID:       "ci-abc12",
-		Step:            "review",
-		Steps:           steps,
-		CataractaeIndex: 2,
-		TotalCataractae: 3,
-	}
-	lines := m.tuiAqueductRow(ch, 0)
-
-	// lines[2] is the channel water row (label at [0], channel top at [1]).
-	chanWater := stripANSITest(lines[2])
-	runes := []rune(chanWater)
-
-	// Visual layout:
-	//   prefix(14) + "█"(1) + inner(chanW-2) + "█"(1) + wfExit(4+)
-	//   chanW = 3 * 28 = 84, innerW = 82
-	//   activeIdx=1: wetInnerW = 2*28 = 56, dryInnerW = 82-56 = 26
 	const (
-		prefixLen  = 14
-		pillarW    = 28
-		chanW      = 3 * pillarW
-		innerW     = chanW - 2
-		wetInnerW  = 2 * pillarW
-		dryInnerW  = innerW - wetInnerW
+		prefixLen = 14
+		pillarW   = 28
+		nSteps    = 3
+		chanW     = nSteps * pillarW
+		innerW    = chanW - 2
+		wfExitLen = 4 // "░▒▓▓" — visible chars in wfExit
 	)
-	innerStart := prefixLen + 1 // skip prefix and left wall
-	dryStart   := innerStart + wetInnerW
-	dryEnd     := dryStart + dryInnerW
+	// Expected total visible width of the channel water row (line [2]).
+	const expectedRowLen = prefixLen + 1 + innerW + 1 + wfExitLen // 102
 
-	if len(runes) < dryEnd {
-		t.Fatalf("channel water row too short: got %d runes, need at least %d\nrow: %q",
-			len(runes), dryEnd, chanWater)
+	cases := []struct {
+		name            string
+		step            string
+		activeIdx       int
+		cataractaeIndex int
+		elapsed         time.Duration
+	}{
+		{
+			// activeIdx=0: wetInnerW=(1*28-1)=27, infoStr with "1m 0s" is 29 chars —
+			// exercises the truncation path in buildChanWater.
+			name:            "first step active (activeIdx=0)",
+			step:            "implement",
+			activeIdx:       0,
+			cataractaeIndex: 1,
+			elapsed:         60 * time.Second,
+		},
+		{
+			// activeIdx=1: wetInnerW=(2*28-1)=55, dryInnerW=27.
+			name:            "second step active (activeIdx=1)",
+			step:            "review",
+			activeIdx:       1,
+			cataractaeIndex: 2,
+			elapsed:         0,
+		},
 	}
 
-	// The dry portion (after the active step's column) must be all spaces.
-	for i := dryStart; i < dryEnd; i++ {
-		if runes[i] != ' ' {
-			t.Errorf("dry channel at rune %d should be ' ', got %q\nrow: %q",
-				i, runes[i], chanWater)
-			break
-		}
-	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ch := CataractaeInfo{
+				Name:            "virgo",
+				DropletID:       "ci-abc12",
+				Step:            tc.step,
+				Steps:           steps,
+				CataractaeIndex: tc.cataractaeIndex,
+				TotalCataractae: nSteps,
+				Elapsed:         tc.elapsed,
+			}
+			lines := m.tuiAqueductRow(ch, 0)
 
-	// The wet portion must contain wave characters (░▒▓≈), not all spaces.
-	wetSection := string(runes[innerStart : innerStart+wetInnerW])
-	if !strings.ContainsAny(wetSection, "░▒▓≈") {
-		t.Errorf("wet channel portion should contain wave characters (░▒▓≈)\nwet section: %q", wetSection)
+			// lines[2] is the channel water row (label at [0], channel top at [1]).
+			chanWater := stripANSITest(lines[2])
+			runes := []rune(chanWater)
+
+			// Row must not overflow — catch buildChanWater returning more than wetInnerW chars.
+			if len(runes) != expectedRowLen {
+				t.Fatalf("channel water row visual width: got %d, want %d\nrow: %q",
+					len(runes), expectedRowLen, chanWater)
+			}
+
+			// Visual layout:
+			//   prefix(14) + "█"(1) + inner(82) + "█"(1) + wfExit(4)
+			//   wetInnerW = (activeIdx+1)*pillarW - 1  (off-by-one corrected)
+			wetInnerW := (tc.activeIdx+1)*pillarW - 1
+			dryInnerW := innerW - wetInnerW
+			innerStart := prefixLen + 1 // skip prefix and left wall
+			dryStart   := innerStart + wetInnerW
+
+			// The dry portion must be all spaces.
+			for i := dryStart; i < dryStart+dryInnerW; i++ {
+				if runes[i] != ' ' {
+					t.Errorf("dry channel at rune %d should be ' ', got %q\nrow: %q",
+						i, runes[i], chanWater)
+					break
+				}
+			}
+
+			// The wet portion must contain non-space content (wave chars or info text).
+			wetSection := string(runes[innerStart : innerStart+wetInnerW])
+			if !strings.ContainsAny(wetSection, "░▒▓≈") {
+				t.Errorf("wet channel portion should contain wave characters (░▒▓≈)\nwet section: %q", wetSection)
+			}
+		})
 	}
 }
 

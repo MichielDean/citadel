@@ -448,13 +448,23 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string
 	}
 
 	// buildChanWater builds wave-animated water content of width w,
-	// centering infoStr within it.
+	// centering infoStr within it. If infoStr is wider than w it is truncated
+	// with an ellipsis so the result never exceeds w characters.
 	buildChanWater := func(infoStr string, infoStyle lipgloss.Style, w int) string {
 		if w <= 0 {
 			return ""
 		}
+		lbl := []rune(infoStr)
+		if len(lbl) > w {
+			if w > 1 {
+				lbl = append(lbl[:w-1], '…')
+			} else {
+				lbl = lbl[:w]
+			}
+			infoStr = string(lbl)
+		}
 		info    := infoStyle.Render(infoStr)
-		infoViz := len([]rune(infoStr))
+		infoViz := len(lbl)
 		sideW   := (w - infoViz) / 2
 		if sideW < 0 {
 			sideW = 0
@@ -474,7 +484,10 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string
 	innerW := chanW - 2
 	wetInnerW := 0
 	if activeIdx >= 0 {
-		wetInnerW = (activeIdx + 1) * pillarW
+		// Subtract 1 to account for the left wall occupying the first column of
+		// the pillar grid; without the correction the wet region extends one
+		// character past the active pillar's visual right boundary.
+		wetInnerW = (activeIdx+1)*pillarW - 1
 		if wetInnerW > innerW {
 			wetInnerW = innerW
 		}
