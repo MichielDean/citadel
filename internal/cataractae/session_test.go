@@ -1,10 +1,16 @@
 package cataractae
 
 import (
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/MichielDean/cistern/internal/cistern"
+	"github.com/MichielDean/cistern/internal/provider"
 )
 
 func TestBuildClaudeCmd_ContainsAddDir(t *testing.T) {
@@ -164,5 +170,175 @@ func TestClaudePath_LookPath(t *testing.T) {
 	got := claudePath()
 	if got != fakeClaude {
 		t.Errorf("claudePath() = %q, want %q", got, fakeClaude)
+	}
+}
+
+// TestClaudePresetBackwardCompat is the backward-compatibility regression test
+// for the session.go refactor (ci-sc2wl).
+//
+// Given: an AqueductConfig with no provider block (defaults to the "claude"
+// built-in preset), when buildPresetCmd is called with that preset it must
+// produce a command string byte-for-byte identical to what the legacy
+// buildClaudeCmd produces today.
+//
+// This test must stay green before ci-sc2wl merges.
+func TestClaudePresetBackwardCompat(t *testing.T) {
+	// Normalise claudePath() to "claude" so both code paths agree on the
+	// executable name regardless of what is installed on this machine.
+	t.Setenv("CLAUDE_PATH", "claude")
+
+	var claudePreset provider.ProviderPreset
+	for _, p := range provider.Builtins() {
+		if p.Name == "claude" {
+			claudePreset = p
+			break
+		}
+	}
+	if claudePreset.Name == "" {
+		t.Fatal("claude preset not found in Builtins()")
+	}
+
+	skillsDir := "/home/user/.cistern/skills"
+
+	t.Run("without model", func(t *testing.T) {
+		s := &Session{ID: "test", WorkDir: "/tmp"}
+		want := s.buildClaudeCmd(skillsDir)
+		got := s.buildPresetCmd(claudePreset, skillsDir)
+		if got != want {
+			t.Errorf("backward compat broken (no model):\nwant: %q\ngot:  %q", want, got)
+		}
+	})
+
+	t.Run("with model", func(t *testing.T) {
+		s := &Session{ID: "test", WorkDir: "/tmp", Model: "haiku"}
+		want := s.buildClaudeCmd(skillsDir)
+		got := s.buildPresetCmd(claudePreset, skillsDir)
+		if got != want {
+			t.Errorf("backward compat broken (with model):\nwant: %q\ngot:  %q", want, got)
+		}
+	})
+
+	t.Run("skills dir with spaces", func(t *testing.T) {
+		s := &Session{ID: "test", WorkDir: "/tmp"}
+		dir := "/home/john doe/.cistern/skills"
+		want := s.buildClaudeCmd(dir)
+		got := s.buildPresetCmd(claudePreset, dir)
+		if got != want {
+			t.Errorf("backward compat broken (spaces in path):\nwant: %q\ngot:  %q", want, got)
+		}
+	})
+}
+
+// buildFakeagentBin compiles the fakeagent binary into a temp directory and
+// returns its absolute path. The directory is automatically cleaned up.
+func buildFakeagentBin(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "fakeagent")
+	out, err := exec.Command(
+		"go", "build",
+		"-o", bin,
+		"github.com/MichielDean/cistern/internal/testutil/fakeagent",
+	).CombinedOutput()
+	if err != nil {
+		t.Fatalf("build fakeagent: %v\n%s", err, out)
+	}
+	return bin
+}
+
+// buildCtBin compiles the ct CLI binary into a temp directory and returns its
+// absolute path.
+func buildCtBin(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "ct")
+	out, err := exec.Command(
+		"go", "build",
+		"-o", bin,
+		"github.com/MichielDean/cistern/cmd/ct",
+	).CombinedOutput()
+	if err != nil {
+		t.Fatalf("build ct: %v\n%s", err, out)
+	}
+	return bin
+}
+
+// TestFakeagent_SpawnOutcomeCycle exercises the full Session.Spawn →
+// Session.isAlive → droplet outcome pipeline using the fakeagent binary.
+//
+// The test is skipped when tmux is unavailable (e.g. in minimal CI
+// environments) so that 'go test ./...' never hard-fails on missing
+// infrastructure.
+func TestFakeagent_SpawnOutcomeCycle(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not available — skipping integration test")
+	}
+
+	// Build fakeagent and ct.
+	fakeagentBin := buildFakeagentBin(t)
+	ctBin := buildCtBin(t)
+
+	// Add both binaries to a temporary PATH so fakeagent can call 'ct'.
+	binDir := filepath.Dir(ctBin)
+	t.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
+
+	// Create an isolated cistern DB.
+	dbDir := t.TempDir()
+	dbPath := filepath.Join(dbDir, "test.db")
+	t.Setenv("CT_DB", dbPath)
+	t.Setenv("CT_NO_ASCII_LOGO", "1")
+
+	c, err := cistern.New(dbPath, "fa")
+	if err != nil {
+		t.Fatalf("cistern.New: %v", err)
+	}
+	defer c.Close()
+
+	// Add a test droplet so fakeagent has an ID to pass.
+	droplet, err := c.Add("testrepo", "fakeagent test", "desc", 1, 2)
+	if err != nil {
+		t.Fatalf("cistern.Add: %v", err)
+	}
+
+	// Write CONTEXT.md into the WorkDir with the droplet ID.
+	workDir := t.TempDir()
+	contextContent := fmt.Sprintf("# Context\n\n## Item: %s\n\n**Title:** fakeagent test\n", droplet.ID)
+	if err := os.WriteFile(filepath.Join(workDir, "CONTEXT.md"), []byte(contextContent), 0o644); err != nil {
+		t.Fatalf("write CONTEXT.md: %v", err)
+	}
+
+	// Point CLAUDE_PATH at the fakeagent binary.
+	t.Setenv("CLAUDE_PATH", fakeagentBin)
+
+	// Spawn the session.
+	sessionID := "ci-t3xo9-fa-" + droplet.ID
+	s := &Session{
+		ID:      sessionID,
+		WorkDir: workDir,
+	}
+	if err := s.Spawn(); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	t.Cleanup(func() { s.kill() })
+
+	// Wait for the session to die (fakeagent exits after calling ct droplet pass).
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		if !s.isAlive() {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if s.isAlive() {
+		t.Fatal("session still alive after 15s — fakeagent did not exit")
+	}
+
+	// Verify the outcome was recorded.
+	got, err := c.Get(droplet.ID)
+	if err != nil {
+		t.Fatalf("cistern.Get: %v", err)
+	}
+	if got.Outcome != "pass" {
+		t.Errorf("droplet outcome = %q, want %q", got.Outcome, "pass")
 	}
 }

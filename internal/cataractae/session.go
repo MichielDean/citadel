@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/MichielDean/cistern/internal/provider"
 )
 
 // Session manages a Claude Code execution inside a tmux session.
@@ -62,6 +64,9 @@ func (s *Session) spawn() error {
 	if s.Identity != "" {
 		args = append(args, "-e", "CT_CATARACTA_NAME="+s.Identity)
 	}
+	if db := os.Getenv("CT_DB"); db != "" {
+		args = append(args, "-e", "CT_DB="+db)
+	}
 	args = append(args, claudeCmd)
 	cmd := exec.Command("tmux", args...)
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -86,6 +91,29 @@ func (s *Session) buildClaudeCmd(skillsDir string) string {
 	}
 	return fmt.Sprintf("%s --dangerously-skip-permissions --add-dir %s %s-p '%s'",
 		claudePath(), shellQuote(skillsDir), flagsStr, prompt)
+}
+
+// buildPresetCmd constructs the shell command string for a ProviderPreset.
+// The output is byte-for-byte identical to buildClaudeCmd when called with the
+// built-in "claude" preset and CLAUDE_PATH set to "claude".
+func (s *Session) buildPresetCmd(preset provider.ProviderPreset, skillsDir string) string {
+	prompt := strings.ReplaceAll(s.buildPrompt(), "'", `'\''`)
+
+	var parts []string
+	parts = append(parts, preset.Command)
+	parts = append(parts, preset.Args...)
+
+	if preset.AddDirFlag != "" {
+		parts = append(parts, preset.AddDirFlag, shellQuote(skillsDir))
+	}
+
+	if s.Model != "" && preset.ModelFlag != "" {
+		parts = append(parts, preset.ModelFlag, s.Model)
+	}
+
+	parts = append(parts, "-p", "'"+prompt+"'")
+
+	return strings.Join(parts, " ")
 }
 
 // shellQuote wraps s in single quotes, escaping any single quotes within s,
