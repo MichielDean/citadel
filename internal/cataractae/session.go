@@ -36,7 +36,7 @@ type Session struct {
 	Preset provider.ProviderPreset
 }
 
-// Spawn creates a new tmux session running claude and returns immediately.
+// Spawn creates a new tmux session running the agent and returns immediately.
 // The Castellarius observe loop detects completion via the outcome field in the DB —
 // agents signal their outcome by calling `ct droplet pass/recirculate/block <id>`.
 func (s *Session) Spawn() error {
@@ -54,17 +54,11 @@ func (s *Session) spawn() error {
 	}
 	skillsDir := filepath.Join(home, ".cistern", "skills")
 
+	args := []string{"new-session", "-d", "-s", s.ID, "-c", s.WorkDir}
+
 	var agentCmd string
 	if s.Preset.Name != "" {
 		agentCmd = s.buildPresetCmd(s.Preset, skillsDir)
-	} else {
-		// Legacy fallback: no preset configured — use the hardcoded claude path.
-		agentCmd = s.buildClaudeCmd(skillsDir)
-	}
-
-	args := []string{"new-session", "-d", "-s", s.ID, "-c", s.WorkDir}
-
-	if s.Preset.Name != "" {
 		// Preset-driven env passthrough: forward each listed var if set.
 		for _, envVar := range s.Preset.EnvPassthrough {
 			if val := os.Getenv(envVar); val != "" {
@@ -76,7 +70,8 @@ func (s *Session) spawn() error {
 			args = append(args, "-e", k+"="+v)
 		}
 	} else {
-		// Legacy hardcoded passthrough for backward compat.
+		// Legacy fallback: no preset configured — use the hardcoded claude path.
+		agentCmd = s.buildClaudeCmd(skillsDir)
 		if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
 			args = append(args, "-e", "ANTHROPIC_API_KEY="+key)
 		}

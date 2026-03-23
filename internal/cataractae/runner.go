@@ -46,9 +46,9 @@ type Config struct {
 	Repo             aqueduct.RepoConfig
 	Workflow         *aqueduct.Workflow
 	CisternClient    *cistern.Client
-	SandboxRoot      string                 // Override for sandbox root dir (default: ~/.cistern/sandboxes)
-	HandoffThreshold int                    // Token threshold for session handoff (default: 150000)
-	SkipInitialClone bool                   // Skip the startup clone (for tests with fake repo URLs)
+	SandboxRoot      string // Override for sandbox root dir (default: ~/.cistern/sandboxes)
+	HandoffThreshold int    // Token threshold for session handoff (default: 150000)
+	SkipInitialClone bool   // Skip the startup clone (for tests with fake repo URLs)
 	Preset           provider.ProviderPreset // Resolved provider preset; zero-value falls back to legacy claude path
 }
 
