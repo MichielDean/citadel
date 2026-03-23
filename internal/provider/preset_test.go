@@ -96,7 +96,7 @@ func TestBuiltins_ReturnsCopy(t *testing.T) {
 
 	t.Run("slice field mutation is isolated", func(t *testing.T) {
 		first := Builtins()
-		original := Builtins()[0].Args[0]
+		original := first[0].Args[0]
 		first[0].Args[0] = "mutated"
 
 		second := Builtins()

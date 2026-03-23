@@ -125,15 +125,12 @@ func LoadUserPresets(path string) ([]ProviderPreset, error) {
 	}
 
 	for _, u := range user {
-		merged := false
-		for i, p := range presets {
-			if p.Name == u.Name {
-				presets[i] = u
-				merged = true
-				break
-			}
-		}
-		if !merged {
+		idx := slices.IndexFunc(presets, func(p ProviderPreset) bool {
+			return p.Name == u.Name
+		})
+		if idx >= 0 {
+			presets[idx] = u
+		} else {
 			presets = append(presets, u)
 		}
 	}
