@@ -347,11 +347,11 @@ func (m dashboardTUIModel) viewIdleAqueductRow(ch CataractaeInfo) string {
 //	           implement        adv-review              qa              delivery
 func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string {
 	const (
-		colW      = 14  // narrower columns → smaller footprint, higher density
-		archTopW  = 9   // narrower pier top → span = colW-archTopW = 5 chars at keystone
-		taperRows = 4   // pier narrows by 2 per row — more curve steps = higher resolution
-		pierRows  = 1   // constant-width pier body rows
-		brickW    = 4   // brick face width before ▌ joint
+		colW      = 19  // column width
+		archTopW  = 10  // pier top width — span = 9 chars at keystone
+		taperRows = 3   // pier narrows by 2 per row
+		pierRows  = 4   // constant-width pier body rows
+		brickW    = 2   // brick face width before ▌ joint
 		nameW     = 10
 	)
 	pierW := archTopW - taperRows*2
@@ -506,10 +506,18 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string
 		sp(2) + wfDim.Render("░") + wfMid.Render("▒") + wfA(0).Render("▓") + wfMid.Render("▒") + wfDim.Render("░"),
 		// sub 7: wide pool — spray at edges, bright core, spreads both ways
 		sp(0) + wfDim.Render("░≈") + wfMid.Render("▒▒") + wfA(1).Render("▓▓") + wfMid.Render("▒▒") + wfDim.Render("≈░"),
-		// sub 8: pool continues spreading (extra row from taperRows=4)
+		// sub 8: pool continues spreading
 		sp(0) + wfDim.Render("≈░") + wfMid.Render("▒▒") + wfA(2).Render("▓▓") + wfMid.Render("▒▒") + wfDim.Render("░≈"),
 		// sub 9: settling pool — narrowing core, turbulence subsiding
 		sp(1) + wfDim.Render("░") + wfMid.Render("▒") + wfA(0).Render("▓▓") + wfMid.Render("▒") + wfDim.Render("░"),
+		// sub 10: settling pool — core narrows to single bright column
+		sp(1) + wfDim.Render("░") + wfMid.Render("▒") + wfA(1).Render("▓") + wfMid.Render("▒") + wfDim.Render("░"),
+		// sub 11: nearly settled — dim ripple flanks faint core
+		sp(2) + wfDim.Render("░") + wfA(2).Render("▓") + wfDim.Render("░"),
+		// sub 12: calm pool — mid ripple, minimal motion
+		sp(2) + wfMid.Render("▒") + wfA(0).Render("▓") + wfMid.Render("▒"),
+		// sub 13: surface ripple — pool fully settled, gentle shimmer
+		sp(2) + wfDim.Render("░") + wfA(1).Render("▒") + wfDim.Render("░"),
 	}
 
 	// Channel exit: compact spill — trim trailing two blocks (▒░) off the top row.
