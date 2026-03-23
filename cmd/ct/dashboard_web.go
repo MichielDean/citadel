@@ -471,10 +471,10 @@ func newDashboardMux(cfgPath, dbPath string) http.Handler {
 		go func() {
 			defer cancel() // arm watchdog (C) on any exit
 			buf := make([]byte, wsMaxClientPayload)
+			// No read deadline — this is an interactive session; the user may idle
+			// indefinitely between keystrokes. Goroutine C handles cleanup on disconnect.
+			_ = conn.SetReadDeadline(time.Time{})
 			for {
-				if err := conn.SetReadDeadline(time.Now().Add(wsWriteTimeout)); err != nil {
-					return
-				}
 				opcode, payload, nb, err := wsReadClientFrame(brw.Reader, buf)
 				buf = nb
 				if err != nil {
