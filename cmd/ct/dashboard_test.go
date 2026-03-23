@@ -1078,7 +1078,7 @@ func TestTuiAqueductRow_NameLineShowsAqueductAndRepo(t *testing.T) {
 }
 
 // TestTuiAqueductRow_InfoLineShowsDropletInfo_WhenActive verifies that lines[1]
-// contains the droplet ID, elapsed time, and progress bar chars for active aqueducts.
+// contains the droplet ID and elapsed time for active aqueducts, but no progress bar.
 func TestTuiAqueductRow_InfoLineShowsDropletInfo_WhenActive(t *testing.T) {
 	m := newDashboardTUIModel("", "")
 	steps := []string{"implement", "review", "merge"}
@@ -1104,8 +1104,8 @@ func TestTuiAqueductRow_InfoLineShowsDropletInfo_WhenActive(t *testing.T) {
 	if !strings.Contains(infoLine, "3m 7s") {
 		t.Errorf("info line should contain elapsed '3m 7s', got %q", infoLine)
 	}
-	if !strings.ContainsAny(infoLine, "░█") {
-		t.Errorf("info line should contain progress bar chars (░ or █), got %q", infoLine)
+	if strings.ContainsAny(infoLine, "░█") {
+		t.Errorf("info line must not contain progress bar chars (░ or █), got %q", infoLine)
 	}
 }
 

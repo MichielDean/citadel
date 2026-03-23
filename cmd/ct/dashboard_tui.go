@@ -406,11 +406,10 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string
 	}
 	nameLine := "  " + g.Render(padRight(ch.Name, nameW)) + "  " + dim.Render(repoLabel)
 
-	// Info line: droplet ID, elapsed, progress bar — shown only when active.
+	// Info line: droplet ID and elapsed time — shown only when active.
 	var infoLine string
 	if ch.DropletID != "" {
-		bar     := progressBar(ch.CataractaeIndex, ch.TotalCataractae, 10)
-		info    := ch.DropletID + "  " + formatElapsed(ch.Elapsed) + "  " + bar
+		info    := ch.DropletID + "  " + formatElapsed(ch.Elapsed)
 		infoLine = indent + g.Render(info)
 	}
 	chanW      := n * pillarW
