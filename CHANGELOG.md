@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Provider presets: ProviderPreset struct and built-in registry (ci-x6rof)
+- Introduces `internal/provider` package with `ProviderPreset` — the data model describing how to launch any agent CLI (command, fixed args, env passthrough, model flag, resume style, instructions file, and more)
+- Built-in presets ship for five providers: `claude` (ANTHROPIC_API_KEY, `--model`, `--add-dir`, `CLAUDE.md`), `codex` (OPENAI_API_KEY, subcommand resume, `AGENTS.md`), `gemini` (GEMINI_API_KEY, `--model`, `GEMINI.md`), `copilot` (GH_TOKEN, 5 s ready delay, `AGENTS.md`), `opencode` (`AGENTS.md`)
+- `LoadUserPresets(path)` reads `~/.cistern/providers.json` and merges user entries on top of built-ins — matching by name replaces the built-in; unknown names are appended; missing file returns built-ins unchanged
+- `Builtins()` returns a deep copy (slice fields cloned via `slices.Clone`) so callers cannot corrupt global preset state
+
 ### Web TUI: fix peek ctrl+c causes disconnect/reconnect loop (ci-rts88)
 - Pressing `p` to open peek in the browser (`/ws/tui`) no longer causes the dashboard subprocess to exit and reconnect in a loop
 - `ctrl+c` while the peek overlay or picker is active now closes the overlay (same as `q`/`esc`) rather than quitting the program; `ctrl+c` from the bare dashboard still quits as intended
