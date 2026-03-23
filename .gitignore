@@ -4,7 +4,6 @@ CONTEXT.md
 
 # Build artifacts
 /dist/
-/arch-designer
 
 # Go test cache
 *.test
