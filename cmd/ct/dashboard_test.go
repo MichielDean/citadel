@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
 
@@ -1232,5 +1233,301 @@ func TestTuiAqueductRow_WaterfallOnlyOnLastStep(t *testing.T) {
 					len(runes), wantLen, tc.wantWF, chanWater)
 			}
 		})
+	}
+}
+
+// --- TestActiveAqueducts ---
+
+func TestActiveAqueducts_ReturnsOnlyActive(t *testing.T) {
+	cataractae := []CataractaeInfo{
+		{Name: "virgo", DropletID: "ci-abc12"},
+		{Name: "marcia", DropletID: ""},
+		{Name: "leo", DropletID: "ci-xyz99"},
+	}
+	got := activeAqueducts(cataractae)
+	if len(got) != 2 {
+		t.Fatalf("want 2 active, got %d", len(got))
+	}
+	if got[0].Name != "virgo" {
+		t.Errorf("got[0].Name = %q, want virgo", got[0].Name)
+	}
+	if got[1].Name != "leo" {
+		t.Errorf("got[1].Name = %q, want leo", got[1].Name)
+	}
+}
+
+func TestActiveAqueducts_EmptyWhenAllIdle(t *testing.T) {
+	cataractae := []CataractaeInfo{
+		{Name: "virgo", DropletID: ""},
+		{Name: "marcia", DropletID: ""},
+	}
+	got := activeAqueducts(cataractae)
+	if len(got) != 0 {
+		t.Errorf("want 0, got %d", len(got))
+	}
+}
+
+// --- TestPeekSelect ---
+
+// makeModelWithNActive creates a dashboardTUIModel with n active aqueducts plus one idle.
+func makeModelWithNActive(n int) dashboardTUIModel {
+	m := newDashboardTUIModel("", "")
+	steps := []string{"implement", "review"}
+	var cataractae []CataractaeInfo
+	for i := 0; i < n; i++ {
+		cataractae = append(cataractae, CataractaeInfo{
+			Name:      fmt.Sprintf("aqueduct%d", i+1),
+			RepoName:  "myrepo",
+			DropletID: fmt.Sprintf("ci-id%d", i+1),
+			Step:      "implement",
+			Steps:     steps,
+		})
+	}
+	// Add one idle to make the data non-trivial.
+	cataractae = append(cataractae, CataractaeInfo{Name: "idle1", Steps: steps})
+	m.data = &DashboardData{Cataractae: cataractae}
+	return m
+}
+
+func TestPeekSelect_OneActive_OpensPeekDirectly(t *testing.T) {
+	m := makeModelWithNActive(1)
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	um := updated.(dashboardTUIModel)
+
+	if um.peekSelectMode {
+		t.Error("peekSelectMode should not be set when only one active aqueduct")
+	}
+	if !um.peekActive {
+		t.Error("peekActive should be true when only one active aqueduct")
+	}
+}
+
+func TestPeekSelect_MultipleActive_EntersPicker(t *testing.T) {
+	m := makeModelWithNActive(2)
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	um := updated.(dashboardTUIModel)
+
+	if !um.peekSelectMode {
+		t.Error("peekSelectMode should be set when multiple active aqueducts")
+	}
+	if um.peekActive {
+		t.Error("peekActive should not be set yet in picker mode")
+	}
+	if um.peekSelectIndex != 0 {
+		t.Errorf("peekSelectIndex should start at 0, got %d", um.peekSelectIndex)
+	}
+}
+
+func TestPeekSelect_NoActive_DoesNothing(t *testing.T) {
+	m := newDashboardTUIModel("", "")
+	m.data = &DashboardData{Cataractae: []CataractaeInfo{
+		{Name: "idle1", DropletID: ""},
+	}}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	um := updated.(dashboardTUIModel)
+
+	if um.peekSelectMode {
+		t.Error("peekSelectMode should not be set with no active aqueducts")
+	}
+	if um.peekActive {
+		t.Error("peekActive should not be set with no active aqueducts")
+	}
+}
+
+func TestPeekSelect_Esc_CancelsPicker(t *testing.T) {
+	m := makeModelWithNActive(2)
+	m.peekSelectMode = true
+	m.peekSelectIndex = 1
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	um := updated.(dashboardTUIModel)
+
+	if um.peekSelectMode {
+		t.Error("peekSelectMode should be cleared on esc")
+	}
+}
+
+func TestPeekSelect_Q_CancelsPicker(t *testing.T) {
+	m := makeModelWithNActive(2)
+	m.peekSelectMode = true
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	um := updated.(dashboardTUIModel)
+
+	if um.peekSelectMode {
+		t.Error("peekSelectMode should be cleared on q")
+	}
+}
+
+func TestPeekSelect_Down_IncrementsIndex(t *testing.T) {
+	m := makeModelWithNActive(2)
+	m.peekSelectMode = true
+	m.peekSelectIndex = 0
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	um := updated.(dashboardTUIModel)
+
+	if um.peekSelectIndex != 1 {
+		t.Errorf("peekSelectIndex should be 1 after down, got %d", um.peekSelectIndex)
+	}
+}
+
+func TestPeekSelect_Up_DecrementsIndex(t *testing.T) {
+	m := makeModelWithNActive(2)
+	m.peekSelectMode = true
+	m.peekSelectIndex = 1
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	um := updated.(dashboardTUIModel)
+
+	if um.peekSelectIndex != 0 {
+		t.Errorf("peekSelectIndex should be 0 after up, got %d", um.peekSelectIndex)
+	}
+}
+
+func TestPeekSelect_IndexClampedAtZero(t *testing.T) {
+	m := makeModelWithNActive(2)
+	m.peekSelectMode = true
+	m.peekSelectIndex = 0
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	um := updated.(dashboardTUIModel)
+
+	if um.peekSelectIndex != 0 {
+		t.Errorf("peekSelectIndex should stay at 0, got %d", um.peekSelectIndex)
+	}
+}
+
+func TestPeekSelect_IndexClampedAtMax(t *testing.T) {
+	m := makeModelWithNActive(2)
+	m.peekSelectMode = true
+	m.peekSelectIndex = 1 // last index for 2 active aqueducts
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	um := updated.(dashboardTUIModel)
+
+	if um.peekSelectIndex != 1 {
+		t.Errorf("peekSelectIndex should stay at 1, got %d", um.peekSelectIndex)
+	}
+}
+
+func TestPeekSelect_Enter_OpensPeekOnSelected(t *testing.T) {
+	m := makeModelWithNActive(2)
+	m.peekSelectMode = true
+	m.peekSelectIndex = 1 // select second active aqueduct
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	um := updated.(dashboardTUIModel)
+
+	if um.peekSelectMode {
+		t.Error("peekSelectMode should be cleared after enter")
+	}
+	if !um.peekActive {
+		t.Error("peekActive should be set after enter")
+	}
+	wantSession := "myrepo-aqueduct2"
+	if um.peek.session != wantSession {
+		t.Errorf("peek.session = %q, want %q", um.peek.session, wantSession)
+	}
+}
+
+func TestPeekSelect_View_ContainsAqueductNames(t *testing.T) {
+	lipgloss.SetColorProfile(termenv.Ascii)
+	m := makeModelWithNActive(2)
+	m.peekSelectMode = true
+	m.width = 100
+	m.height = 24
+
+	view := m.View()
+
+	if !strings.Contains(view, "aqueduct1") {
+		t.Error("picker view should contain aqueduct1")
+	}
+	if !strings.Contains(view, "aqueduct2") {
+		t.Error("picker view should contain aqueduct2")
+	}
+}
+
+func TestPeekSelect_View_ShowsKeyHints(t *testing.T) {
+	lipgloss.SetColorProfile(termenv.Ascii)
+	m := makeModelWithNActive(2)
+	m.peekSelectMode = true
+	m.width = 100
+	m.height = 24
+
+	view := m.View()
+
+	if !strings.Contains(view, "esc") {
+		t.Error("picker view should mention esc to cancel")
+	}
+	if !strings.Contains(view, "enter") {
+		t.Error("picker view should mention enter to connect")
+	}
+}
+
+// Issue 1: stale peekSelectIndex after data refresh
+
+func TestPeekSelect_DataRefresh_ClampsIndexWhenActiveDecreases(t *testing.T) {
+	// Given: picker is open with index pointing at second of two active aqueducts.
+	m := makeModelWithNActive(2)
+	m.peekSelectMode = true
+	m.peekSelectIndex = 1
+
+	// When: a data refresh arrives with only one active aqueduct.
+	oneActive := makeModelWithNActive(1)
+	updated, _ := m.Update(tuiDataMsg(oneActive.data))
+	um := updated.(dashboardTUIModel)
+
+	// Then: index is clamped to 0 (last valid index).
+	if um.peekSelectIndex != 0 {
+		t.Errorf("peekSelectIndex = %d after active decrease, want 0", um.peekSelectIndex)
+	}
+	if !um.peekSelectMode {
+		t.Error("peekSelectMode should remain true when there is still one active aqueduct")
+	}
+}
+
+func TestPeekSelect_DataRefresh_AutoClosesWhenNoActiveAqueducts(t *testing.T) {
+	// Given: picker is open.
+	m := makeModelWithNActive(2)
+	m.peekSelectMode = true
+	m.peekSelectIndex = 1
+
+	// When: a data refresh arrives with zero active aqueducts.
+	noneActive := makeModelWithNActive(0)
+	updated, _ := m.Update(tuiDataMsg(noneActive.data))
+	um := updated.(dashboardTUIModel)
+
+	// Then: picker is automatically closed.
+	if um.peekSelectMode {
+		t.Error("peekSelectMode should be cleared when no active aqueducts remain")
+	}
+}
+
+// Issue 2: missing tea.WindowSizeMsg handler in peekSelectMode
+
+func TestPeekSelect_WindowResize_UpdatesDimensions(t *testing.T) {
+	// Given: picker is open with initial dimensions.
+	m := makeModelWithNActive(2)
+	m.peekSelectMode = true
+	m.width = 80
+	m.height = 24
+
+	// When: a window resize event arrives.
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	um := updated.(dashboardTUIModel)
+
+	// Then: dimensions are updated and picker remains open.
+	if um.width != 120 {
+		t.Errorf("width = %d after resize, want 120", um.width)
+	}
+	if um.height != 40 {
+		t.Errorf("height = %d after resize, want 40", um.height)
+	}
+	if !um.peekSelectMode {
+		t.Error("peekSelectMode should remain true after resize")
 	}
 }

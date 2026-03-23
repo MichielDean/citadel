@@ -8,6 +8,13 @@
 - Water channel row is now a pure wave animation (`renderWave`) — `buildChanWater` and `infoStr` logic removed; channel top and water rows use a plain indent instead of the name/repo prefix
 - `tuiAqueductRow` now returns 14 lines (1 name + 1 info + 1 label + 2 channel + 9 pillar rows), up from 12
 
+### TUI dashboard: peek picker — auto-connect if one active, show inline selector if multiple (ci-wpd6w)
+- Pressing `p` when exactly one aqueduct is active now connects immediately (unchanged behaviour)
+- Pressing `p` when multiple aqueducts are active opens a centered picker overlay listing each active aqueduct: name, repo, droplet ID, and current step
+- Up/Down (or `k`/`j`) navigates the picker; Enter connects to the selected aqueduct; Escape or `q` cancels
+- If an aqueduct goes idle while the picker is open, `peekSelectIndex` is clamped to the new active count; if all aqueducts go idle the picker closes automatically
+- Terminal resize events (`WindowSizeMsg`) while the picker is open update `m.width`/`m.height` so the overlay remains centred on subsequent renders
+
 ### TUI dashboard: show dry arch with 'drought' header when all aqueducts are idle (ci-gbb64)
 - When all aqueducts are idle, `viewAqueductArches()` now renders a single dry pillar arch centered in the terminal instead of collapsing to idle text rows
 - A centered `drought` label in dim styling sits above the arch; the pillar uses dim grey (`#46465a`) to convey emptiness — no water channel, no waterfall, no step labels

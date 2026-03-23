@@ -33,15 +33,17 @@ const animInterval = 150 * time.Millisecond // water animation speed
 // --- Model ---
 
 type dashboardTUIModel struct {
-	cfgPath    string
-	dbPath     string
-	data       *DashboardData
-	frame      int  // animation frame counter — increments every animInterval
-	scrollY    int  // scroll offset in lines (0 = top)
-	width      int
-	height     int
-	peekActive bool
-	peek       peekModel
+	cfgPath         string
+	dbPath          string
+	data            *DashboardData
+	frame           int  // animation frame counter — increments every animInterval
+	scrollY         int  // scroll offset in lines (0 = top)
+	width           int
+	height          int
+	peekActive      bool
+	peek            peekModel
+	peekSelectMode  bool // picker overlay active when multiple aqueducts are flowing
+	peekSelectIndex int  // index of highlighted aqueduct in the picker
 }
 
 func newDashboardTUIModel(cfgPath, dbPath string) dashboardTUIModel {
@@ -74,6 +76,30 @@ func (m dashboardTUIModel) fetchDataCmd() tea.Cmd {
 	return func() tea.Msg {
 		return tuiDataMsg(fetchDashboardData(cfgPath, dbPath))
 	}
+}
+
+// activeAqueducts returns the subset of cataractae that have a flowing droplet.
+func activeAqueducts(cataractae []CataractaeInfo) []CataractaeInfo {
+	var active []CataractaeInfo
+	for _, ch := range cataractae {
+		if ch.DropletID != "" {
+			active = append(active, ch)
+		}
+	}
+	return active
+}
+
+// openPeekOn transitions the model into peek mode for the given aqueduct.
+func (m dashboardTUIModel) openPeekOn(ch CataractaeInfo) dashboardTUIModel {
+	session := ch.RepoName + "-" + ch.Name
+	header := fmt.Sprintf("[%s] %s — flowing %s", ch.DropletID, ch.Step, formatElapsed(ch.Elapsed))
+	pk := newPeekModel(defaultCapturer, session, header, 0)
+	pk.width = m.width
+	pk.height = m.height
+	m.peek = pk
+	m.peekActive = true
+	m.peekSelectMode = false
+	return m
 }
 
 func (m dashboardTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -114,6 +140,58 @@ func (m dashboardTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// When the picker overlay is active, handle only picker navigation.
+	if m.peekSelectMode {
+		switch msg := msg.(type) {
+		case tea.KeyMsg:
+			if m.data == nil {
+				m.peekSelectMode = false
+				return m, nil
+			}
+			active := activeAqueducts(m.data.Cataractae)
+			switch msg.String() {
+			case "ctrl+c":
+				return m, tea.Quit
+			case "q", "esc":
+				m.peekSelectMode = false
+				return m, nil
+			case "up", "k":
+				if m.peekSelectIndex > 0 {
+					m.peekSelectIndex--
+				}
+			case "down", "j":
+				if m.peekSelectIndex < len(active)-1 {
+					m.peekSelectIndex++
+				}
+			case "enter":
+				if m.peekSelectIndex < len(active) {
+					m = m.openPeekOn(active[m.peekSelectIndex])
+					return m, m.peek.Init()
+				}
+			}
+			return m, nil
+		case tea.WindowSizeMsg:
+			m.width = msg.Width
+			m.height = msg.Height
+			return m, nil
+		case tuiTickMsg:
+			return m, tea.Batch(m.fetchDataCmd(), tuiTick())
+		case tuiAnimMsg:
+			m.frame++
+			return m, tuiAnimTick()
+		case tuiDataMsg:
+			m.data = (*DashboardData)(msg)
+			active := activeAqueducts(m.data.Cataractae)
+			if len(active) == 0 {
+				m.peekSelectMode = false
+			} else if m.peekSelectIndex >= len(active) {
+				m.peekSelectIndex = len(active) - 1
+			}
+			return m, nil
+		}
+		return m, nil
+	}
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -138,19 +216,17 @@ func (m dashboardTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "r", "R":
 			return m, m.fetchDataCmd()
 		case "p", "enter":
-			// Open peek on the first active aqueduct.
+			// One active aqueduct: open peek directly.
+			// Multiple active aqueducts: show picker so user can choose.
 			if m.data != nil {
-				for _, ch := range m.data.Cataractae {
-					if ch.DropletID != "" {
-						session := ch.RepoName + "-" + ch.Name
-						header := fmt.Sprintf("[%s] %s — flowing %s", ch.DropletID, ch.Step, formatElapsed(ch.Elapsed))
-						pk := newPeekModel(defaultCapturer, session, header, 0)
-						pk.width = m.width
-						pk.height = m.height
-						m.peek = pk
-						m.peekActive = true
-						return m, m.peek.Init()
-					}
+				active := activeAqueducts(m.data.Cataractae)
+				switch {
+				case len(active) == 1:
+					m = m.openPeekOn(active[0])
+					return m, m.peek.Init()
+				case len(active) > 1:
+					m.peekSelectMode = true
+					m.peekSelectIndex = 0
 				}
 			}
 		case "up", "k":
@@ -187,6 +263,9 @@ func (m dashboardTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m dashboardTUIModel) View() string {
 	if m.peekActive {
 		return m.peek.View()
+	}
+	if m.peekSelectMode {
+		return m.viewPeekSelectOverlay()
 	}
 
 	if m.data == nil {
@@ -267,11 +346,10 @@ func (m dashboardTUIModel) viewAqueductArches() []string {
 		return []string{tuiStyleDim.Render("  No aqueducts configured")}
 	}
 
-	var active, idle []CataractaeInfo
+	active := activeAqueducts(m.data.Cataractae)
+	var idle []CataractaeInfo
 	for _, ch := range m.data.Cataractae {
-		if ch.DropletID != "" {
-			active = append(active, ch)
-		} else {
+		if ch.DropletID == "" {
 			idle = append(idle, ch)
 		}
 	}
@@ -365,6 +443,50 @@ func (m dashboardTUIModel) viewIdleAqueductRow(ch CataractaeInfo) string {
 		tuiStyleDim.Render(repo),
 		tuiStyleDim.Render("·  idle"),
 	)
+}
+
+// viewPeekSelectOverlay renders a centered picker overlay listing every active aqueduct.
+// The user navigates with Up/Down, confirms with Enter, and cancels with Esc or q.
+func (m dashboardTUIModel) viewPeekSelectOverlay() string {
+	if m.data == nil {
+		return "  Loading…\n"
+	}
+	active := activeAqueducts(m.data.Cataractae)
+
+	const lineW = 60
+	divider := strings.Repeat("─", lineW)
+
+	var rows []string
+	rows = append(rows, tuiStyleHeader.Render("  select aqueduct"))
+	rows = append(rows, tuiStyleDim.Render(divider))
+	for i, ch := range active {
+		line := fmt.Sprintf("  %-12s  %-12s  %-12s  %s",
+			ch.Name, ch.RepoName, ch.DropletID, ch.Step)
+		if i == m.peekSelectIndex {
+			rows = append(rows, tuiStyleGreen.Render(line))
+		} else {
+			rows = append(rows, line)
+		}
+	}
+	rows = append(rows, tuiStyleDim.Render(divider))
+	rows = append(rows, tuiStyleDim.Render("  ↑↓ navigate  enter connect  esc cancel"))
+
+	boxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#46465a")).
+		Padding(0, 1)
+
+	box := boxStyle.Render(strings.Join(rows, "\n"))
+
+	w := m.width
+	h := m.height
+	if w <= 0 {
+		w = 80
+	}
+	if h <= 0 {
+		h = 24
+	}
+	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, box)
 }
 
 // tuiAqueductRow renders a single aqueduct as a durdraw pillar diagram.
