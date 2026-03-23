@@ -576,8 +576,8 @@ func stripANSITest(s string) string {
 	return out.String()
 }
 
-// TestTuiAqueductRow_LineCount verifies tuiAqueductRow returns exactly 17 lines:
-// 2 channel rows + 14 pillar rows + 1 label row.
+// TestTuiAqueductRow_LineCount verifies tuiAqueductRow returns exactly 12 lines:
+// 2 channel rows + 9 pillar rows + 1 label row.
 func TestTuiAqueductRow_LineCount(t *testing.T) {
 	m := newDashboardTUIModel("", "")
 	tests := []struct {
@@ -596,7 +596,7 @@ func TestTuiAqueductRow_LineCount(t *testing.T) {
 			}
 			ch := CataractaeInfo{Name: "virgo", Steps: steps}
 			lines := m.tuiAqueductRow(ch, 0)
-			const wantLines = 17 // 2 channel + 14 pillar + 1 label
+			const wantLines = 12 // 2 channel + 9 pillar + 1 label
 			if len(lines) != wantLines {
 				t.Errorf("tuiAqueductRow() returned %d lines, want %d", len(lines), wantLines)
 			}
@@ -605,7 +605,7 @@ func TestTuiAqueductRow_LineCount(t *testing.T) {
 }
 
 // TestTuiAqueductRow_CrownRowIsSolidBlocks verifies that the arch crown row
-// (pillar row 5 = result[7]) contains N×28 ▒ characters in the pillar section.
+// (pillar row 5 = result[2]) contains N×28 ▒ characters in the pillar section.
 // This fails with the old brick arch (which used ▀/█/▌) and passes with the
 // new durdraw pillar template.
 func TestTuiAqueductRow_CrownRowIsSolidBlocks(t *testing.T) {
@@ -614,13 +614,13 @@ func TestTuiAqueductRow_CrownRowIsSolidBlocks(t *testing.T) {
 	ch := CataractaeInfo{Name: "virgo", Steps: steps}
 	lines := m.tuiAqueductRow(ch, 0)
 
-	if len(lines) < 8 {
+	if len(lines) < 3 {
 		t.Fatalf("not enough lines: got %d", len(lines))
 	}
 
-	// result[7] = archLines[5] = pillar row 5 (full-width crown).
+	// result[2] = archLines[0] = pillar row 5 (full-width crown, first rendered row).
 	// After stripping ANSI and prefix, the first N*28 runes must all be ▒.
-	crownLine := stripANSITest(lines[7])
+	crownLine := stripANSITest(lines[2])
 	runes := []rune(crownLine)
 
 	// Prefix visual width = "  " + nameW(10) + "  " = 14 chars.
@@ -648,9 +648,9 @@ func TestTuiAqueductRow_PierBodyRowHasCorrectStructure(t *testing.T) {
 	ch := CataractaeInfo{Name: "virgo", Steps: steps}
 	lines := m.tuiAqueductRow(ch, 0)
 
-	// result[11] = archLines[9] = pillar row 9 (first pier body row).
+	// result[6] = archLines[4] = pillar row 9 (first pier body row).
 	// After stripping ANSI and prefix: 12 spaces + ░ + 4 ▒ + 11 spaces (+ waterfall).
-	pierLine := stripANSITest(lines[11])
+	pierLine := stripANSITest(lines[6])
 	runes := []rune(pierLine)
 
 	const prefixLen = 14
@@ -708,14 +708,14 @@ func TestTuiAqueductRow_ActiveStepHasDifferentCrownColor(t *testing.T) {
 		Steps: steps,
 	}, 0)
 
-	// Crown row is result[7]. Active version must differ from idle (different color escape).
-	if active[7] == idle[7] {
+	// Crown row is result[2]. Active version must differ from idle (different color escape).
+	if active[2] == idle[2] {
 		t.Error("active crown row should have different ANSI color than idle crown row")
 	}
 
 	// Both versions must have the same plain-text content (same ▒ chars, just different colors).
-	if stripANSITest(active[7]) != stripANSITest(idle[7]) {
+	if stripANSITest(active[2]) != stripANSITest(idle[2]) {
 		t.Errorf("active and idle crown rows should have same plain text\nactive: %q\nidle:   %q",
-			stripANSITest(active[7]), stripANSITest(idle[7]))
+			stripANSITest(active[2]), stripANSITest(idle[2]))
 	}
 }

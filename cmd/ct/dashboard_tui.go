@@ -315,20 +315,19 @@ func (m dashboardTUIModel) viewIdleAqueductRow(ch CataractaeInfo) string {
 
 // tuiAqueductRow renders a single aqueduct as a durdraw pillar diagram.
 // The aqueduct channel sits at the top; below it, a static pillar template
-// (14 rows × 28 cols, fg=color3/olive on bg=black) is tiled once per
+// (9 rows × 28 cols, fg=color3/olive on bg=black) is tiled once per
 // cataractae step. The active step's pillar uses bright green for ▒ chars.
 //
 // Pillar row layout (28 chars wide):
 //
-//	rows 0–4: void/sky (28 spaces)
-//	row  5:   ▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒  (arch crown / road)
-//	row  6:         ░▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒       (arch opening widens)
-//	row  7:            ░▒▒▒▒▒▒▒▒▒            (arch narrowing)
-//	row  8:             ░▒▒▒▒▒▒▒             (arch narrowing)
-//	rows 9–13:            ░▒▒▒▒              (pier body)
+//	row 0:   ▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒  (arch crown / road)
+//	row 1:         ░▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒       (arch opening widens)
+//	row 2:            ░▒▒▒▒▒▒▒▒▒            (arch narrowing)
+//	row 3:             ░▒▒▒▒▒▒▒             (arch narrowing)
+//	rows 4–8:            ░▒▒▒▒              (pier body)
 func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string {
 	const (
-		pillarW = 28 // pillar width per step (14 rows × 28 cols)
+		pillarW = 28 // pillar width per step (9 rows × 28 cols)
 		nameW   = 10
 	)
 
@@ -477,9 +476,9 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string
 		}
 	}
 
-	// Build 14 arch lines: tile one pillar column per step, then append waterfall.
+	// Build 9 arch lines: tile one pillar column per step, then append waterfall.
 	var archLines []string
-	for r := 0; r < 14; r++ {
+	for r := 5; r < 14; r++ {
 		var sb strings.Builder
 		sb.WriteString(indent)
 		for _, step := range steps {
