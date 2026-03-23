@@ -111,6 +111,9 @@ func runNonInteractive(preset provider.ProviderPreset, systemPrompt, userPrompt 
 
 	out, err := cmd.Output()
 	if err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			return nil, fmt.Errorf("agent exec failed (exit %d): %s", ee.ExitCode(), strings.TrimSpace(string(ee.Stderr)))
+		}
 		return nil, fmt.Errorf("agent exec failed: %w", err)
 	}
 

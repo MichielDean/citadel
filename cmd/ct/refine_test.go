@@ -268,6 +268,36 @@ func TestRunNonInteractive_WithSubcommand(t *testing.T) {
 	}
 }
 
+// TestRunNonInteractive_AgentExecFailure verifies that when the agent binary exits
+// non-zero, runNonInteractive returns an error that includes the agent's stderr output.
+// Given a preset pointing at failagent (which writes a known message to stderr and exits 1),
+// when runNonInteractive is called,
+// then the error should contain the stderr content for diagnosability.
+func TestRunNonInteractive_AgentExecFailure(t *testing.T) {
+	failagentBin := buildTestBin(t, "failagent", "github.com/MichielDean/cistern/internal/testutil/failagent")
+
+	preset := provider.ProviderPreset{
+		Name:           "test-fail",
+		Command:        failagentBin,
+		EnvPassthrough: []string{"TEST_REQUIRED_KEY"},
+		NonInteractive: provider.NonInteractiveConfig{
+			PrintFlag:  "--print",
+			PromptFlag: "-p",
+		},
+	}
+
+	t.Setenv("TEST_REQUIRED_KEY", "test-value")
+
+	_, err := runNonInteractive(preset, "system", "user")
+	if err == nil {
+		t.Fatal("expected error when agent exits non-zero, got nil")
+	}
+	const wantStderr = "agent crashed: something went wrong"
+	if !strings.Contains(err.Error(), wantStderr) {
+		t.Errorf("error %q does not contain expected stderr %q", err.Error(), wantStderr)
+	}
+}
+
 // TestRunNonInteractive_MissingAuthKey verifies that runNonInteractive returns an
 // error when a required env var from EnvPassthrough is not set, without executing
 // the agent binary.
