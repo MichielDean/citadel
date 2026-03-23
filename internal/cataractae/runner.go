@@ -193,6 +193,15 @@ func (r *Runner) SpawnStep(w *Worker, item *cistern.Droplet, step *aqueduct.Work
 		sandboxDir = sandboxDirOverride
 	}
 
+	// diff_only steps require the per-droplet worktree path so generateDiff
+	// reads the feature branch — not the worker's own sandbox (which is on
+	// main and has no changes). The Castellarius always provides this via
+	// sandboxDirOverride. If it's missing, fail loudly rather than silently
+	// producing an empty diff.patch.
+	if step.Context == aqueduct.ContextDiffOnly && sandboxDirOverride == "" {
+		return fmt.Errorf("diff_only step %q: per-droplet SandboxDir not set — Castellarius must provide worktree path", step.Name)
+	}
+
 	// 1. Prepare context directory and CONTEXT.md.
 	// Branch setup is owned by the Castellarius and happens before this call.
 	notes, err := r.queue.GetNotes(item.ID)
