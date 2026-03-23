@@ -128,8 +128,14 @@ func (m peekModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "q", "ctrl+c", "esc":
+		case "q", "ctrl+c":
 			return m, tea.Quit
+		case "esc":
+			// esc is intercepted by the parent dashboardTUIModel to close the
+			// peek overlay without quitting the program.  Returning nil here
+			// ensures that, even if esc somehow reaches the embedded model
+			// directly, it does not propagate tea.Quit.
+			return m, nil
 		case " ", "p":
 			m.pinned = !m.pinned
 		case "up", "k":

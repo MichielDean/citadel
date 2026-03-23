@@ -1733,3 +1733,88 @@ func TestPeekSelect_WindowResize_UpdatesDimensions(t *testing.T) {
 		t.Error("peekSelectMode should remain true after resize")
 	}
 }
+
+// ── Peek overlay lifecycle: ctrl+c must not quit the program ────────────────
+//
+// In a web PTY context (xterm.js → WebSocket → PTY), the browser may send
+// ctrl+c (0x03) when the peek overlay opens — either as a copy-shortcut or as
+// part of a terminal capability response sequence.  Previously, ctrl+c while
+// peek was active returned tea.Quit, killing the subprocess and causing the
+// browser to reconnect in a loop.
+//
+// Fix: ctrl+c while peek or picker is active closes the overlay, not the
+// program.  ctrl+c in the bare dashboard view still quits (intentional).
+
+// TestDashboard_PeekActive_CtrlC_ClosesPeekNotQuit verifies that pressing
+// ctrl+c while the peek overlay is open closes the overlay without quitting
+// the Bubble Tea program.
+//
+// Given: dashboard with peek overlay open
+// When:  ctrl+c key is pressed
+// Then:  peek overlay closes (peekActive = false) and the returned cmd is nil
+func TestDashboard_PeekActive_CtrlC_ClosesPeekNotQuit(t *testing.T) {
+	m := makeModelWithNActive(1)
+	m.peekActive = true
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	um := updated.(dashboardTUIModel)
+
+	if um.peekActive {
+		t.Error("peekActive should be false after ctrl+c while peek is open")
+	}
+	if cmd != nil {
+		msg := cmd()
+		if _, ok := msg.(tea.QuitMsg); ok {
+			t.Error("ctrl+c while peek is open must not return tea.Quit — TUI should stay alive")
+		}
+	}
+}
+
+// TestDashboard_PeekActive_Esc_ClosesPeekNotQuit confirms that esc closes the
+// peek overlay without quitting (existing correct behaviour, guarded by test).
+//
+// Given: dashboard with peek overlay open
+// When:  esc key is pressed
+// Then:  peek overlay closes and cmd is nil
+func TestDashboard_PeekActive_Esc_ClosesPeekNotQuit(t *testing.T) {
+	m := makeModelWithNActive(1)
+	m.peekActive = true
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	um := updated.(dashboardTUIModel)
+
+	if um.peekActive {
+		t.Error("peekActive should be false after esc")
+	}
+	if cmd != nil {
+		msg := cmd()
+		if _, ok := msg.(tea.QuitMsg); ok {
+			t.Error("esc while peek is open must not return tea.Quit")
+		}
+	}
+}
+
+// TestDashboard_PeekSelectMode_CtrlC_CancelsPickerNotQuit verifies that
+// pressing ctrl+c while the aqueduct picker is open cancels the picker without
+// quitting the program (same fix applied to the picker overlay for consistency).
+//
+// Given: dashboard with aqueduct picker open (2 active aqueducts)
+// When:  ctrl+c key is pressed
+// Then:  picker closes (peekSelectMode = false) and the returned cmd is nil
+func TestDashboard_PeekSelectMode_CtrlC_CancelsPickerNotQuit(t *testing.T) {
+	m := makeModelWithNActive(2)
+	m.peekSelectMode = true
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	um := updated.(dashboardTUIModel)
+
+	if um.peekSelectMode {
+		t.Error("peekSelectMode should be false after ctrl+c while picker is open")
+	}
+	if cmd != nil {
+		msg := cmd()
+		if _, ok := msg.(tea.QuitMsg); ok {
+			t.Error("ctrl+c while picker is open must not return tea.Quit — TUI should stay alive")
+		}
+	}
+}

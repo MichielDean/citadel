@@ -114,11 +114,16 @@ func (m dashboardTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		case tea.KeyMsg:
 			switch msg.String() {
-			case "q", "esc":
+			case "q", "esc", "ctrl+c":
+				// ctrl+c is treated as "close peek" rather than "quit program"
+				// because in a web PTY context the browser may send ctrl+c (the
+				// copy shortcut, or as part of a terminal capability response)
+				// when the peek overlay opens.  Quitting the TUI on ctrl+c
+				// while peek is open causes a disconnect/reconnect loop in the
+				// web dashboard.  The user can still quit via ctrl+c from the
+				// main dashboard view (where peek is not active).
 				m.peekActive = false
 				return m, nil
-			case "ctrl+c":
-				return m, tea.Quit
 			default:
 				updated, cmd := m.peek.Update(msg)
 				m.peek = updated.(peekModel)
@@ -150,9 +155,9 @@ func (m dashboardTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			active := activeAqueducts(m.data.Cataractae)
 			switch msg.String() {
-			case "ctrl+c":
-				return m, tea.Quit
-			case "q", "esc":
+			case "ctrl+c", "q", "esc":
+				// ctrl+c cancels the picker for the same reason it cancels the
+				// peek overlay: to prevent accidental quit via browser ctrl+c.
 				m.peekSelectMode = false
 				return m, nil
 			case "up", "k":

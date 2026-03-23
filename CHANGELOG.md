@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Web TUI: fix peek ctrl+c causes disconnect/reconnect loop (ci-rts88)
+- Pressing `p` to open peek in the browser (`/ws/tui`) no longer causes the dashboard subprocess to exit and reconnect in a loop
+- `ctrl+c` while the peek overlay or picker is active now closes the overlay (same as `q`/`esc`) rather than quitting the program; `ctrl+c` from the bare dashboard still quits as intended
+- `peekModel.Update` separates `esc` from the `q`/`ctrl+c` quit case — `esc` returns `nil` instead of `tea.Quit`, preventing accidental quit propagation when the model is embedded in `dashboardTUIModel`
+
 ### Dashboard: filter active aqueduct steps by droplet complexity (ci-jefan)
 - Active aqueducts now show only the cataractae steps that will actually execute for the droplet's complexity level — steps whose `SkipFor` list includes the droplet's complexity are hidden
 - `TotalCataractae` and `CataractaeIndex` are both computed from the filtered step list, keeping progress calculations accurate when skipped steps precede the current step

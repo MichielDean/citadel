@@ -209,6 +209,30 @@ func TestPeekModel_WindowResize(t *testing.T) {
 // Note: tests 1–12 are numbered above; computeDiff tests are bonus coverage
 // within the same file.
 
+// TestPeekModel_EscKey_DoesNotQuit verifies that pressing esc in the peek
+// model returns a nil cmd rather than tea.Quit.
+//
+// When embedded in the dashboard the parent already intercepts esc and sets
+// peekActive = false.  If the peekModel itself returned tea.Quit for esc that
+// command could propagate and kill the program in edge cases.
+//
+// Given: a peek model
+// When:  esc key is pressed
+// Then:  returned cmd is nil (not tea.Quit)
+func TestPeekModel_EscKey_DoesNotQuit(t *testing.T) {
+	mc := mockCapturer{hasSession: true}
+	m := newPeekModel(mc, "s", "hdr", defaultPeekLines)
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+
+	if cmd != nil {
+		msg := cmd()
+		if _, ok := msg.(tea.QuitMsg); ok {
+			t.Error("peekModel: esc must not return tea.Quit — dashboard handles esc to close peek overlay")
+		}
+	}
+}
+
 func TestComputeDiff_Unchanged(t *testing.T) {
 	if computeDiff("same", "same") != "" {
 		t.Error("computeDiff should return empty string when content unchanged")
