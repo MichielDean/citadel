@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### TUI dashboard: show dry arch with 'drought' header when all aqueducts are idle (ci-gbb64)
+- When all aqueducts are idle, `viewAqueductArches()` now renders a single dry pillar arch centered in the terminal instead of collapsing to idle text rows
+- A centered `drought` label in dim styling sits above the arch; the pillar uses dim grey (`#46465a`) to convey emptiness — no water channel, no waterfall, no step labels
+- Arch geometry mirrors the existing pillar template (28 chars wide, 14 rows) but without active colour or channel rows, keeping the drought display visually coherent with the live arch style
+- `viewDroughtArch()` returns 15 lines (1 label + 14 pillar rows); existing idle row rendering is unchanged when at least one aqueduct is active
+
 ### TUI dashboard: replace procedural arch with durdraw pillar template (ci-a8j0v)
 - Replaced procedural arch rendering in `tuiAqueductRow` with a static durdraw pillar template (14 rows × 28 cols, fg=color3/olive, bg=black) tiled once per cataractae step
 - Removed `archCrownAtT`, `colW`, `archTopW`, `taperRows`, `pierRows`, `brickW` constants and `math` import

@@ -261,6 +261,7 @@ func (m dashboardTUIModel) viewStatusBar() string {
 
 // viewAqueductArches renders active aqueducts as full Roman arch diagrams,
 // and collapses idle aqueducts into a single compact text line each below.
+// When all aqueducts are idle (drought state), renders a single dry arch instead.
 func (m dashboardTUIModel) viewAqueductArches() []string {
 	if len(m.data.Cataractae) == 0 {
 		return []string{tuiStyleDim.Render("  No aqueducts configured")}
@@ -275,6 +276,11 @@ func (m dashboardTUIModel) viewAqueductArches() []string {
 		}
 	}
 
+	// Drought state: all aqueducts idle — show a single dry arch.
+	if len(active) == 0 {
+		return m.viewDroughtArch()
+	}
+
 	var lines []string
 
 	// Full arch diagrams for active aqueducts only.
@@ -287,14 +293,62 @@ func (m dashboardTUIModel) viewAqueductArches() []string {
 
 	// Compact idle section — one line per idle aqueduct.
 	if len(idle) > 0 {
-		if len(active) > 0 {
-			lines = append(lines, "")
-		}
+		lines = append(lines, "")
 		for _, ch := range idle {
 			lines = append(lines, m.viewIdleAqueductRow(ch))
 		}
 	}
 
+	return lines
+}
+
+// viewDroughtArch renders a single unlabeled dry pillar arch centered in the terminal.
+// Called when all aqueducts are idle (drought state). Shows:
+//   - "drought" label centered above the arch in dim styling
+//   - One 28-char-wide pillar rendered with dim grey (no water channel, no waterfall, no step labels)
+//
+// Returns 15 lines: 1 drought label + 14 pillar rows.
+func (m dashboardTUIModel) viewDroughtArch() []string {
+	const pillarW = 28
+
+	leftPad := (m.width - pillarW) / 2
+	if leftPad < 0 {
+		leftPad = 0
+	}
+	indent := strings.Repeat(" ", leftPad)
+
+	droughtLabel := tuiStyleDim.Render(tuiPadCenter("drought", m.width))
+
+	buildRow := func(r int) string {
+		switch r {
+		case 0, 1, 2, 3, 4:
+			return strings.Repeat(" ", pillarW)
+		case 5:
+			return tuiStyleDim.Render(strings.Repeat("▒", pillarW))
+		case 6:
+			return strings.Repeat(" ", 6) +
+				tuiStyleDim.Render("░"+strings.Repeat("▒", 16)) +
+				strings.Repeat(" ", 5)
+		case 7:
+			return strings.Repeat(" ", 9) +
+				tuiStyleDim.Render("░"+strings.Repeat("▒", 9)) +
+				strings.Repeat(" ", 9)
+		case 8:
+			return strings.Repeat(" ", 10) +
+				tuiStyleDim.Render("░"+strings.Repeat("▒", 7)) +
+				strings.Repeat(" ", 10)
+		default: // rows 9–13: pier body
+			return strings.Repeat(" ", 12) +
+				tuiStyleDim.Render("░"+strings.Repeat("▒", 4)) +
+				strings.Repeat(" ", 11)
+		}
+	}
+
+	lines := make([]string, 0, 15)
+	lines = append(lines, droughtLabel)
+	for r := 0; r < 14; r++ {
+		lines = append(lines, indent+buildRow(r))
+	}
 	return lines
 }
 

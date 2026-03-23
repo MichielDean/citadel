@@ -684,6 +684,155 @@ func TestTuiAqueductRow_PierBodyRowHasCorrectStructure(t *testing.T) {
 	}
 }
 
+// --- TestViewDroughtArch — drought display ---
+
+// TestViewDroughtArch_LineCount verifies viewDroughtArch returns exactly 15 lines:
+// 1 drought label + 14 pillar rows (no channel water, no waterfall, no step labels).
+func TestViewDroughtArch_LineCount(t *testing.T) {
+	m := newDashboardTUIModel("", "")
+	m.width = 80
+	lines := m.viewDroughtArch()
+	const wantLines = 15 // 1 label + 14 pillar rows
+	if len(lines) != wantLines {
+		t.Errorf("viewDroughtArch() returned %d lines, want %d", len(lines), wantLines)
+	}
+}
+
+// TestViewDroughtArch_LabelContainsDrought verifies the first line contains "drought".
+func TestViewDroughtArch_LabelContainsDrought(t *testing.T) {
+	m := newDashboardTUIModel("", "")
+	m.width = 80
+	lines := m.viewDroughtArch()
+	if !strings.Contains(stripANSITest(lines[0]), "drought") {
+		t.Errorf("first line should contain 'drought', got %q", lines[0])
+	}
+}
+
+// TestViewDroughtArch_CrownRowContainsBlocks verifies pillar row 5 (lines[6])
+// contains exactly 28 consecutive ▒ characters.
+func TestViewDroughtArch_CrownRowContainsBlocks(t *testing.T) {
+	m := newDashboardTUIModel("", "")
+	m.width = 80
+	lines := m.viewDroughtArch()
+
+	if len(lines) < 7 {
+		t.Fatalf("not enough lines: got %d", len(lines))
+	}
+
+	// lines[0] = drought label; lines[1..14] = pillar rows 0..13.
+	// Pillar row 5 (crown) = lines[6].
+	crownLine := stripANSITest(lines[6])
+
+	const pillarW = 28
+	if want := strings.Repeat("▒", pillarW); !strings.Contains(crownLine, want) {
+		t.Errorf("drought crown row should contain %d consecutive ▒ chars, got %q", pillarW, crownLine)
+	}
+}
+
+// TestViewDroughtArch_PierBodyRowHasCorrectStructure verifies a pier body row
+// (lines[10], corresponding to pillar row 9) has the expected 12sp+░+4▒+11sp pattern.
+func TestViewDroughtArch_PierBodyRowHasCorrectStructure(t *testing.T) {
+	const termWidth = 80
+	const pillarW   = 28
+	const leftPad   = (termWidth - pillarW) / 2 // = 26
+
+	m := newDashboardTUIModel("", "")
+	m.width = termWidth
+	lines := m.viewDroughtArch()
+
+	// lines[0] = drought label, lines[1..14] = pillar rows 0..13.
+	// Pillar row 9 (first pier body) = lines[10].
+	pierLine := stripANSITest(lines[10])
+	runes := []rune(pierLine)
+
+	if len(runes) < leftPad+pillarW {
+		t.Fatalf("pier row too short: %d runes, need at least %d", len(runes), leftPad+pillarW)
+	}
+	content := runes[leftPad : leftPad+pillarW]
+
+	// Expected structure: 12 spaces + ░ + 4 ▒ + 11 spaces.
+	for i := 0; i < 12; i++ {
+		if content[i] != ' ' {
+			t.Errorf("pier row content[%d] = %q, want ' '", i, content[i])
+			break
+		}
+	}
+	if content[12] != '░' {
+		t.Errorf("pier row content[12] = %q, want '░'", content[12])
+	}
+	for i := 13; i < 17; i++ {
+		if content[i] != '▒' {
+			t.Errorf("pier row content[%d] = %q, want '▒'", i, content[i])
+			break
+		}
+	}
+	for i := 17; i < 28; i++ {
+		if content[i] != ' ' {
+			t.Errorf("pier row content[%d] = %q, want ' '", i, content[i])
+			break
+		}
+	}
+}
+
+// TestViewAqueductArches_DroughtState_ShowsDroughtLabel verifies that when all
+// aqueducts are idle, viewAqueductArches shows the drought display (not compact idle rows).
+func TestViewAqueductArches_DroughtState_ShowsDroughtLabel(t *testing.T) {
+	m := newDashboardTUIModel("", "")
+	m.width = 80
+	steps := []string{"implement", "review", "merge"}
+	m.data = &DashboardData{
+		Cataractae: []CataractaeInfo{
+			{Name: "virgo", Steps: steps},
+			{Name: "marcia", Steps: steps},
+		},
+	}
+
+	lines := m.viewAqueductArches()
+	if len(lines) == 0 {
+		t.Fatal("viewAqueductArches() returned no lines in drought state")
+	}
+	allText := strings.Join(lines, "\n")
+	cleanText := stripANSITest(allText)
+
+	// Must show "drought" label.
+	if !strings.Contains(cleanText, "drought") {
+		t.Error("drought state should display 'drought' label")
+	}
+	// Must NOT show individual aqueduct names (no name prefix in drought arch).
+	if strings.Contains(cleanText, "virgo") {
+		t.Error("drought display should not contain individual aqueduct name 'virgo'")
+	}
+	// Must NOT show old compact idle row format.
+	if strings.Contains(cleanText, "idle") {
+		t.Error("drought display should not contain 'idle' text from compact row format")
+	}
+}
+
+// TestViewAqueductArches_ActiveAqueductDoesNotShowDrought verifies that when at
+// least one aqueduct is active, the normal arch + compact idle display is used.
+func TestViewAqueductArches_ActiveAqueductDoesNotShowDrought(t *testing.T) {
+	m := newDashboardTUIModel("", "")
+	m.width = 80
+	steps := []string{"implement", "review", "merge"}
+	m.data = &DashboardData{
+		Cataractae: []CataractaeInfo{
+			{Name: "virgo", DropletID: "ci-abc12", Step: "implement", Steps: steps},
+			{Name: "marcia", Steps: steps},
+		},
+	}
+
+	lines := m.viewAqueductArches()
+	allText := strings.Join(lines, "\n")
+	cleanText := stripANSITest(allText)
+
+	if strings.Contains(cleanText, "drought") {
+		t.Error("active state should not show drought display")
+	}
+	if !strings.Contains(cleanText, "marcia") {
+		t.Error("idle aqueduct 'marcia' should appear in compact idle row")
+	}
+}
+
 // TestTuiAqueductRow_ActiveStepHasDifferentCrownColor verifies that the active
 // step pillar uses a different ANSI color for ▒ in the crown row than idle pillars.
 // Forces TrueColor rendering so lipgloss emits ANSI escape codes in the test context.
