@@ -1760,3 +1760,74 @@ func TestRecoverDispatchLoop_DirtyWorktree(t *testing.T) {
 		t.Errorf("expected dirty-worktree recovery note, got: %v", client.attached)
 	}
 }
+
+// TestDispatch_DiffOnlyStepGetsSandboxDir verifies that when a diff_only agent
+// step is dispatched, the Castellarius prepares the per-droplet worktree and
+// passes its path as req.SandboxDir. Without this, generateDiff runs on the
+// worker's own sandbox (on main, no changes) and produces an empty diff.patch.
+//
+// Regression test for ci-s5eg9: adversarial-review blocked 3× with empty diff.
+func TestDispatch_DiffOnlyStepGetsSandboxDir(t *testing.T) {
+	sandboxRoot := t.TempDir()
+
+	const itemID = "diff-1"
+	client := newMockClient()
+	client.readyItems = append(client.readyItems, &cistern.Droplet{
+		ID:                itemID,
+		CurrentCataractae: "adversarial-review",
+		Status:            "open",
+	})
+
+	// Pre-create the per-droplet worktree so prepareDropletWorktree takes the
+	// resume path (no git fetch against a non-existent remote is attempted).
+	sandboxDir := filepath.Join(sandboxRoot, "test-repo", itemID)
+	if err := os.MkdirAll(sandboxDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	makeGitSandbox(t, sandboxDir)
+
+	// Create the feature branch so prepareDropletWorktree's checkout succeeds.
+	cmd := exec.Command("git", "checkout", "-b", "feat/"+itemID)
+	cmd.Dir = sandboxDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git checkout -b feat/%s: %v\n%s", itemID, err, out)
+	}
+
+	// Workflow with a diff_only adversarial-review step.
+	wf := &aqueduct.Workflow{
+		Name: "test",
+		Cataractae: []aqueduct.WorkflowCataractae{
+			{Name: "implement", Type: aqueduct.CataractaeTypeAgent, OnPass: "adversarial-review"},
+			{
+				Name:    "adversarial-review",
+				Type:    aqueduct.CataractaeTypeAgent,
+				Context: aqueduct.ContextDiffOnly,
+				OnPass:  "done",
+			},
+		},
+	}
+
+	runner := newMockRunner(client)
+	config := testConfig()
+	workflows := map[string]*aqueduct.Workflow{"test-repo": wf}
+	clients := map[string]CisternClient{"test-repo": client}
+	sched := NewFromParts(config, workflows, clients, runner,
+		WithSandboxRoot(sandboxRoot))
+
+	sched.Tick(context.Background())
+	if !runner.waitCalls(1, 2*time.Second) {
+		t.Fatal("timed out waiting for runner Spawn call")
+	}
+
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+
+	if len(runner.calls) != 1 {
+		t.Fatalf("expected 1 runner call, got %d", len(runner.calls))
+	}
+	wantSandboxDir := filepath.Join(sandboxRoot, "test-repo", itemID)
+	if runner.calls[0].SandboxDir != wantSandboxDir {
+		t.Errorf("SandboxDir = %q, want %q (diff_only step must get per-droplet worktree path)",
+			runner.calls[0].SandboxDir, wantSandboxDir)
+	}
+}
