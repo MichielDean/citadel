@@ -75,7 +75,22 @@ echo "PR: $PR_URL"
 ## Step 4 — CI and review
 
 ```bash
-gh pr checks "$PR_URL"
+CHECKS=$(gh pr checks "$PR_URL" 2>/dev/null)
+if [ -z "$CHECKS" ]; then
+  echo "No CI checks configured — proceeding to merge"
+else
+  echo "$CHECKS"
+  # Wait for all checks to pass before merging.
+  # Fix failures:
+  # - Compile error → fix code, go build ./..., commit, push
+  # - Test failure → fix test or code, go test ./..., commit, push
+  # - Flaky test → gh run rerun <run_id> and wait for result
+  # - Merge conflict detected by CI → rebase again (Step 2) and push
+  # - Unresolved review comment → address it, commit, push
+  #
+  # After each fix:
+  # git add -A -- ':!CONTEXT.md' && git commit -m "fix: <specific issue>" && git push
+fi
 ```
 
 Fix failures:
@@ -90,14 +105,20 @@ After each fix:
 git add -A -- ':!CONTEXT.md' && git commit -m "fix: <specific issue>" && git push
 ```
 
-Wait for all checks to pass before merging.
+Wait for all checks to pass before merging. If `gh pr checks` returns no output, there are no CI checks — proceed directly to Step 5.
 
 ## Step 5 — Merge
 
 ```bash
 git fetch origin && git rebase origin/$BASE && git push --force-with-lease
 gh pr merge "$PR_URL" --squash --delete-branch
-gh pr view "$PR_URL" --json state --jq '.state'   # must be "MERGED"
+STATE=$(gh pr view "$PR_URL" --json state --jq '.state')
+if [ "$STATE" != "MERGED" ]; then
+  echo "ERROR: merge failed — state is $STATE"
+  ct droplet block $DROPLET_ID --notes "Merge failed: state=$STATE — $PR_URL"
+  exit 1
+fi
+echo "Confirmed: PR state is MERGED"
 ```
 
 ## Step 6 — Signal
