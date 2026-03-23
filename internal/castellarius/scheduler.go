@@ -59,7 +59,7 @@ type CataractaeRequest struct {
 	AqueductName string
 	Notes        []cistern.CataractaeNote // context from previous steps
 	// SandboxDir is the per-droplet worktree path created by the Castellarius.
-	// Set for full_codebase agent steps; empty otherwise.
+	// Set for full_codebase and diff_only agent steps; empty otherwise.
 	SandboxDir string
 }
 
@@ -737,9 +737,21 @@ func (s *Castellarius) dispatchRepo(ctx context.Context, repo aqueduct.RepoConfi
 			// Prepare the per-droplet worktree before spawning the agent.
 			// Castellarius owns worktree lifecycle — agents never call git worktree add.
 			// Skipped when sandboxRoot is unset (test environments without real repos).
+			//
+			// Invariant: every agent context type except spec_only requires a
+			// per-droplet worktree.
+			//   - full_codebase / "": agent reads and writes the repo directly.
+			//   - diff_only: generateDiff reads committed changes from the worktree
+			//     to produce diff.patch; the agent's working dir is a separate tmpdir.
+			//   - spec_only: agent receives only spec.md in an isolated tmpdir —
+			//     no repo access at all; no worktree needed.
+			//
+			// If a new context type is added that does NOT need a worktree, this
+			// condition must be updated (do NOT just add another != clause without
+			// understanding the full_codebase/diff_only requirements above).
 			if s.sandboxRoot != "" &&
 				req.Step.Type == aqueduct.CataractaeTypeAgent &&
-				(req.Step.Context == aqueduct.ContextFullCodebase || req.Step.Context == "") {
+				req.Step.Context != aqueduct.ContextSpecOnly {
 				primaryDir := filepath.Join(s.sandboxRoot, req.RepoConfig.Name, "_primary")
 				sandboxDir, err := prepareDropletWorktree(primaryDir, s.sandboxRoot, req.RepoConfig.Name, req.Item.ID)
 				if err != nil {

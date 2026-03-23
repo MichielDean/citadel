@@ -17,6 +17,12 @@
 - TUI mode (no flags) is unchanged
 - `cistern-arch-designer.service` — systemd user service starts `arch-designer --web --port 5738` on login; logs to `~/.cistern/arch-designer.log`
 
+### Castellarius: fix empty diff.patch on repeated adversarial-review cycles (ci-s5eg9)
+- `diff.patch` was empty (0 bytes) on the third and subsequent adversarial-review spawns for any recirculated droplet, blocking the pipeline and requiring manual intervention each time
+- Root cause: `prepareDropletWorktree` was only called for `full_codebase` context steps — `diff_only` steps (adversarial-review) fell back to the worker's own sandbox, which is on `main` and has no feature-branch changes; `generateDiff` then produced an empty output
+- Fix: `prepareDropletWorktree` now runs for every agent context type except `spec_only` — `diff_only` steps receive the per-droplet worktree path so `generateDiff` always reads the correct feature branch
+- Defense: `SpawnStep` now fails loudly with an explicit error if a `diff_only` step arrives without a per-droplet `SandboxDir`, rather than silently producing an empty diff
+
 ### TUI dashboard: higher-density arch rendering (ci-qijob)
 - Arch constants updated for higher visual fidelity at smaller scale: `colW` 20→14 (30% narrower), `archTopW` 10→9, `taperRows` 3→4 (more curve steps = sharper arch shape)
 - `wfRows` expanded from 8 to 10 sub-rows to match the new `(taperRows+pierRows)×2 = 10` layout

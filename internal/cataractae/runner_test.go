@@ -1326,6 +1326,46 @@ func TestRevisionCycleNotes_AllPrefixNotPassSignal(t *testing.T) {
 	}
 }
 
+// TestSpawnStep_DiffOnly_NoSandboxDirFails verifies that SpawnStep returns a
+// hard error when a diff_only step is called without a sandboxDirOverride.
+// This guards against silent re-regression of the ci-s5eg9 bug where an
+// unset SandboxDir caused generateDiff to produce an empty diff.patch.
+func TestSpawnStep_DiffOnly_NoSandboxDirFails(t *testing.T) {
+	r := &Runner{
+		repo:     testRepoConfig(),
+		workflow: testWorkflow(),
+		queue:    testQueueClient(t),
+	}
+
+	w := &Worker{
+		Name:       "alice",
+		Repo:       "testrepo",
+		SandboxDir: t.TempDir(),
+		SessionID:  "testrepo-alice",
+	}
+
+	item := &cistern.Droplet{
+		ID:       "ci-s5eg9-guard",
+		Title:    "Guard test",
+		Status:   "open",
+		Priority: 1,
+	}
+
+	step := &aqueduct.WorkflowCataractae{
+		Name:    "adversarial-review",
+		Type:    aqueduct.CataractaeTypeAgent,
+		Context: aqueduct.ContextDiffOnly,
+	}
+
+	err := r.SpawnStep(w, item, step, "") // no sandboxDirOverride
+	if err == nil {
+		t.Fatal("SpawnStep: expected error for diff_only step with no SandboxDir, got nil")
+	}
+	if !strings.Contains(err.Error(), "per-droplet SandboxDir not set") {
+		t.Errorf("error %q should contain %q", err.Error(), "per-droplet SandboxDir not set")
+	}
+}
+
 // TestSpawnStep_MissingSkillReturnsError verifies that SpawnStep returns a
 // hard error (not a silent warning) when a required skill is not installed.
 // A missing skill means the agent would run without critical instructions —
