@@ -784,6 +784,100 @@ func TestWsTui_WSReaderReadDeadlineExitsOnPartition(t *testing.T) {
 	runtime.KeepAlive(client)
 }
 
+// TestWsPeek_ReaderGoroutine_ExitsOnConnClose verifies that the peek handler's
+// reader goroutine exits and calls cancel() when the underlying connection is
+// closed without a WebSocket close frame, mirroring the /ws/tui behaviour in
+// TestWsTui_WSReaderExitsOnConnClose.
+func TestWsPeek_ReaderGoroutine_ExitsOnConnClose(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+
+	br := bufio.NewReader(server)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer cancel()
+		buf := make([]byte, wsMaxClientPayload)
+		for {
+			opcode, _, nb, err := wsReadClientFrame(br, buf)
+			buf = nb
+			if err != nil {
+				return
+			}
+			if opcode == wsOpcodeClose {
+				return
+			}
+		}
+	}()
+
+	// Simulate abrupt client disconnect — no WebSocket close frame.
+	client.Close()
+
+	select {
+	case <-done:
+	case <-time.After(1 * time.Second):
+		t.Fatal("peek reader goroutine did not exit after connection close")
+	}
+	select {
+	case <-ctx.Done():
+	default:
+		t.Error("cancel() was not called by peek reader goroutine on connection close")
+	}
+}
+
+// TestWsPeek_ReaderGoroutine_ExitsOnReadDeadline verifies that the peek handler's
+// reader goroutine exits and calls cancel() when the read deadline fires with no
+// client frames, simulating a network partition with stable tmux output (no diffs).
+// This is the leak scenario fixed by the reader goroutine: without it the ticker
+// loop never writes, never fires a write deadline, and loops forever.
+func TestWsPeek_ReaderGoroutine_ExitsOnReadDeadline(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	// client is intentionally not closed — simulates a network partition where
+	// no TCP FIN arrives; server cannot distinguish idle from silently dead.
+
+	br := bufio.NewReader(server)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer cancel()
+		buf := make([]byte, wsMaxClientPayload)
+		for {
+			// Mirrors production read-deadline fix; shorter timeout for test speed.
+			server.SetReadDeadline(time.Now().Add(50 * time.Millisecond)) //nolint:errcheck
+			opcode, _, nb, err := wsReadClientFrame(br, buf)
+			buf = nb
+			if err != nil {
+				return
+			}
+			server.SetReadDeadline(time.Now().Add(50 * time.Millisecond)) //nolint:errcheck
+			if opcode == wsOpcodeClose {
+				return
+			}
+		}
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("peek reader goroutine did not exit after read deadline (network partition case)")
+	}
+	select {
+	case <-ctx.Done():
+	default:
+		t.Error("cancel() was not called by peek reader goroutine on read deadline")
+	}
+	runtime.KeepAlive(client)
+}
+
 // TestWsReadClientFrame_PayloadSizeLimit verifies wsMaxClientPayload enforcement:
 // frames with payload > 4096 must be rejected, payload == 4096 must be accepted.
 func TestWsReadClientFrame_PayloadSizeLimit(t *testing.T) {

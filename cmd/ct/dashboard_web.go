@@ -397,26 +397,56 @@ func newDashboardMux(cfgPath, dbPath string) http.Handler {
 		}
 		defer conn.Close()
 
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		// Reader goroutine: detects client close frames and network partitions.
+		// Sets wsTuiReadTimeout on the connection so a silently-partitioned client
+		// (no TCP FIN, no frames) is reaped after 5 minutes. Without this, when
+		// tmux output is stable (no diffs) the ticker loop never writes and never
+		// sets a write deadline — the goroutine and TCP connection leak indefinitely.
+		go func() {
+			defer cancel()
+			buf := make([]byte, wsMaxClientPayload)
+			conn.SetReadDeadline(time.Now().Add(wsTuiReadTimeout)) //nolint:errcheck
+			for {
+				opcode, _, nb, err := wsReadClientFrame(brw.Reader, buf)
+				buf = nb
+				if err != nil {
+					return
+				}
+				conn.SetReadDeadline(time.Now().Add(wsTuiReadTimeout)) //nolint:errcheck
+				if opcode == wsOpcodeClose {
+					return
+				}
+			}
+		}()
+
 		var prev string
 		capturer := defaultCapturer
 		ticker := time.NewTicker(peekInterval)
 		defer ticker.Stop()
 
-		for range ticker.C {
-			next := "session not active"
-			if sess, ok := lookupAqueductSession(dbPath, name); ok && capturer.HasSession(sess.sessionID) {
-				content, err := capturer.Capture(sess.sessionID, lines)
-				if err != nil {
-					continue
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				next := "session not active"
+				if sess, ok := lookupAqueductSession(dbPath, name); ok && capturer.HasSession(sess.sessionID) {
+					content, err := capturer.Capture(sess.sessionID, lines)
+					if err != nil {
+						continue
+					}
+					next = stripANSI(content)
 				}
-				next = stripANSI(content)
-			}
-			if diff := computeDiff(prev, next); diff != "" {
-				conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout)) //nolint:errcheck
-				if wsSendText(brw.Writer, diff) != nil {
-					return
+				if diff := computeDiff(prev, next); diff != "" {
+					conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout)) //nolint:errcheck
+					if wsSendText(brw.Writer, diff) != nil {
+						return
+					}
+					prev = next
 				}
-				prev = next
 			}
 		}
 	})
