@@ -58,7 +58,7 @@ build_image() {
     local repo_root="$1"
     docker build \
         --tag  "cistern-systemd-test" \
-        "${repo_root}/test/docker/systemd"
+        "${repo_root}/test/docker/systemd" || return 1
     docker build \
         --tag  "${IMAGE_NAME}" \
         --file "${repo_root}/test/docker/installer-test/Dockerfile" \
