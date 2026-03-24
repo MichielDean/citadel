@@ -288,6 +288,31 @@ Requirements:
 
 The Castellarius automatically refreshes the Claude OAuth access token before each agent spawn when it is expired or within 5 minutes of expiry. If the refresh fails (e.g. the refresh token itself has expired), the spawn fails with a clear error directing you to run `claude` interactively to re-authenticate. Run `ct doctor --fix` to refresh the token on demand and reload the systemd service.
 
+## Credentials
+
+Cistern uses `~/.cistern/env` as its canonical credential store — a simple `KEY=VALUE` file, one pair per line, chmod 600. The `ct castellarius start` startup wrapper (`~/.cistern/start-castellarius.sh`) sources this file before launching the service, so updated credentials are picked up on every restart without editing the systemd drop-in.
+
+`ct init` creates the file automatically with the correct permissions. Populate it with your API keys:
+
+```bash
+# Plaintext (simplest)
+echo 'ANTHROPIC_API_KEY=sk-ant-...' >> ~/.cistern/env
+echo 'GH_TOKEN=ghp_...' >> ~/.cistern/env
+chmod 600 ~/.cistern/env
+
+# From pass
+echo "ANTHROPIC_API_KEY=$(pass show anthropic/api-key)" >> ~/.cistern/env
+chmod 600 ~/.cistern/env
+
+# From 1Password CLI
+echo "ANTHROPIC_API_KEY=$(op read 'op://Personal/Anthropic/api-key')" >> ~/.cistern/env
+chmod 600 ~/.cistern/env
+```
+
+The file is added to `~/.cistern/.gitignore` by `ct init` so it is never accidentally committed.
+
+`ct doctor` checks that the file exists, is chmod 600 (warning if world-readable), and that `ANTHROPIC_API_KEY` is set. `ct doctor --fix` creates a missing file and, in an interactive terminal, prompts for the key value.
+
 ## Configuration
 
 ```bash
