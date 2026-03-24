@@ -160,21 +160,22 @@ test_fresh_install() {
     exec_in_container env HOME="${home_dir}" CT_NO_ASCII_LOGO=1 ct init \
         >/dev/null 2>&1 || return 1
 
-    # Replace the default config with a minimal one (repos: []) so that
-    # ct castellarius start skips skills and workflow validation.
-    exec_in_container bash -c "
-        printf 'repos: []\nmax_cataractae: 2\nhandoff_token_threshold: 100000\n' \
-            > '${home_dir}/.cistern/cistern.yaml'
-    " || return 1
-
     # Add a placeholder API key so ct doctor's ANTHROPIC_API_KEY check passes.
     exec_in_container bash -c \
         "printf 'ANTHROPIC_API_KEY=sk-ant-test-placeholder\n' \
             >> '${home_dir}/.cistern/env'" || return 1
 
+    # Create skill stubs so ct castellarius start passes validateWorkflowSkills.
+    exec_in_container bash -c "
+        for skill in cistern-droplet-state cistern-git cistern-github code-simplifier critical-code-reviewer adversarial-reviewer; do
+            mkdir -p ${home_dir}/.cistern/skills/\${skill}
+            printf '# stub\\n' > ${home_dir}/.cistern/skills/\${skill}/SKILL.md
+        done
+    " || return 1
+
     # Use ct doctor --fix to create cistern.db before the service starts.
-    exec_in_container env HOME="${home_dir}" CT_NO_ASCII_LOGO=1 ct doctor --fix \
-        >/dev/null 2>&1 || true
+    exec_in_container env HOME="${home_dir}" ANTHROPIC_API_KEY=sk-ant-test-placeholder \
+        CT_NO_ASCII_LOGO=1 ct doctor --fix >/dev/null 2>&1 || true
 
     # Install and start the system service.
     install_system_service "${home_dir}" || return 1
@@ -188,8 +189,8 @@ test_fresh_install() {
     exec_in_container which claude >/dev/null || return 1
 
     # Then: ct doctor exits 0 (all checks pass with the configured environment).
-    exec_in_container env HOME="${home_dir}" CT_NO_ASCII_LOGO=1 ct doctor \
-        >/dev/null 2>&1
+    exec_in_container env HOME="${home_dir}" ANTHROPIC_API_KEY=sk-ant-test-placeholder \
+        CT_NO_ASCII_LOGO=1 ct doctor >/dev/null 2>&1
 }
 
 # test_upgrade verifies that re-running ct init over a prior-version layout
@@ -208,10 +209,12 @@ test_upgrade() {
     local cistern_dir="${home_dir}/.cistern"
 
     # Given: pre-populated ~/.cistern simulating a prior-version installation.
+    # The cistern.yaml includes a real repo (so ValidateAqueductConfig passes)
+    # plus a stale key from the prior version that ct init must not remove.
     exec_in_container bash -c "
         rm -rf '${home_dir}' &&
         mkdir -p '${cistern_dir}/aqueduct' '${cistern_dir}/cataractae' &&
-        printf 'repos: []\nmax_cataractae: 2\nstale_old_key: removed_in_v2\n' \
+        printf 'repos:\n  - name: TestRepo\n    url: https://github.com/example/TestRepo\n    workflow_path: aqueduct/aqueduct.yaml\n    cataractae: 1\n    names: [test]\n    prefix: tr\nmax_cataractae: 2\nstale_old_key: removed_in_v2\n' \
             > '${cistern_dir}/cistern.yaml' &&
         printf 'ANTHROPIC_API_KEY=sk-ant-old-key\n' \
             > '${cistern_dir}/env' &&
@@ -228,9 +231,17 @@ test_upgrade() {
     # the existing cistern.yaml (writeFileIfAbsent preserves prior-version keys).
     exec_in_container grep -q 'stale_old_key' "${cistern_dir}/cistern.yaml" || return 1
 
+    # Create skill stubs so ct castellarius start passes validateWorkflowSkills.
+    exec_in_container bash -c "
+        for skill in cistern-droplet-state cistern-git cistern-github code-simplifier critical-code-reviewer adversarial-reviewer; do
+            mkdir -p ${cistern_dir}/skills/\${skill}
+            printf '# stub\\n' > ${cistern_dir}/skills/\${skill}/SKILL.md
+        done
+    " || return 1
+
     # Create cistern.db via ct doctor --fix so the service can open it.
-    exec_in_container env HOME="${home_dir}" CT_NO_ASCII_LOGO=1 ct doctor --fix \
-        >/dev/null 2>&1 || true
+    exec_in_container env HOME="${home_dir}" ANTHROPIC_API_KEY=sk-ant-old-key \
+        CT_NO_ASCII_LOGO=1 ct doctor --fix >/dev/null 2>&1 || true
 
     # (Re-)install the service unit pointing at the upgrade home and restart it.
     # This simulates "service restarts cleanly" after the upgrade.
@@ -242,8 +253,8 @@ test_upgrade() {
     fi
 
     # Then: ct doctor still exits 0 after the upgrade.
-    exec_in_container env HOME="${home_dir}" CT_NO_ASCII_LOGO=1 ct doctor \
-        >/dev/null 2>&1
+    exec_in_container env HOME="${home_dir}" ANTHROPIC_API_KEY=sk-ant-old-key \
+        CT_NO_ASCII_LOGO=1 ct doctor >/dev/null 2>&1
 }
 
 # test_missing_credentials verifies the absent-credentials failure path.
