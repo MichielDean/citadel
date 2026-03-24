@@ -242,10 +242,7 @@ func (r *Runner) SpawnStep(w *Worker, item *cistern.Droplet, step *aqueduct.Work
 	}
 
 	// 3. Spawn agent session in tmux. Returns immediately.
-	var modelVal string
-	if step.Model != nil {
-		modelVal = *step.Model
-	}
+	modelVal := resolveModelVal(step.Model, r.preset)
 	sess := &Session{
 		ID:             w.SessionID,
 		WorkDir:        ctxDir,
@@ -275,6 +272,16 @@ func (r *Runner) SpawnStep(w *Worker, item *cistern.Droplet, step *aqueduct.Work
 	}
 
 	return nil
+}
+
+// resolveModelVal returns the model string to pass to the agent. It prefers
+// the step-level override (step.Model) and falls back to preset.DefaultModel
+// when the step does not specify a model.
+func resolveModelVal(stepModel *string, preset provider.ProviderPreset) string {
+	if stepModel != nil {
+		return *stepModel
+	}
+	return preset.DefaultModel
 }
 
 // CataractaeByName looks up a workflow step by name.

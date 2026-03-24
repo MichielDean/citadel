@@ -15,6 +15,7 @@ import (
 
 	"github.com/MichielDean/cistern/internal/aqueduct"
 	"github.com/MichielDean/cistern/internal/cistern"
+	"github.com/MichielDean/cistern/internal/provider"
 )
 
 func testQueueClient(t *testing.T) *cistern.Client {
@@ -788,6 +789,54 @@ func TestCurrentHead_NotARepo(t *testing.T) {
 	_, err := currentHead(t.TempDir())
 	if err == nil {
 		t.Error("expected error for non-repo directory")
+	}
+}
+
+// TestResolveModelVal verifies that resolveModelVal returns the correct model
+// string given step.Model and preset.DefaultModel values.
+func TestResolveModelVal(t *testing.T) {
+	stepModel := func(s string) *string { return &s }
+
+	tests := []struct {
+		name         string
+		stepModel    *string
+		defaultModel string
+		want         string
+	}{
+		{
+			name:         "step model set — uses step model",
+			stepModel:    stepModel("claude-opus-4-6"),
+			defaultModel: "claude-sonnet-4-6",
+			want:         "claude-opus-4-6",
+		},
+		{
+			name:         "step model nil, preset has default — uses preset default",
+			stepModel:    nil,
+			defaultModel: "claude-sonnet-4-6",
+			want:         "claude-sonnet-4-6",
+		},
+		{
+			name:         "step model nil, no preset default — returns empty",
+			stepModel:    nil,
+			defaultModel: "",
+			want:         "",
+		},
+		{
+			name:         "step model set to empty string — uses step model (empty)",
+			stepModel:    stepModel(""),
+			defaultModel: "claude-sonnet-4-6",
+			want:         "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			preset := provider.ProviderPreset{DefaultModel: tt.defaultModel}
+			got := resolveModelVal(tt.stepModel, preset)
+			if got != tt.want {
+				t.Errorf("resolveModelVal = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
