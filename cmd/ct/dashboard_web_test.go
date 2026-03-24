@@ -13,7 +13,7 @@ import (
 	"net/http/httptest"
 	"runtime"
 	"strings"
-	"sync/atomic"
+	"sync"
 	"testing"
 	"time"
 
@@ -1039,6 +1039,85 @@ func TestDashboardHTML_OnDataForwardsKeystrokes(t *testing.T) {
 	if !strings.Contains(dashboardHTML, "ws.send(data)") {
 		t.Error("dashboardHTML term.onData handler must forward keystrokes via ws.send(data)")
 	}
+}
+
+// TestDashboardTUI_ReconnectDoesNotRestartChild asserts that disconnecting and
+// reconnecting a WebSocket client does not cause the child process to restart.
+//
+// Given: a running DashboardTUI with a mock spawner backed by an in-process pipe
+// When:  a WS client attaches then detaches (simulating disconnect)
+// Then:  spawnCount remains 1 — the child continues running
+// When:  a second WS client attaches (simulating reconnect)
+// Then:  spawnCount is still 1
+func TestDashboardTUI_ReconnectDoesNotRestartChild(t *testing.T) {
+	// ptyA is the "PTY master" seen by DashboardTUI; ptyB is the other end.
+	// Keeping ptyB open means runOnce stays blocked in Read (simulates running process).
+	ptyA, ptyB := net.Pipe()
+	t.Cleanup(func() { ptyA.Close(); ptyB.Close() })
+
+	var spawnMu sync.Mutex
+	spawnCalls := 0
+
+	tui := newDashboardTUI("", "", "")
+	tui.spawnFn = func() (io.ReadWriteCloser, func(uint16, uint16), func(), error) {
+		spawnMu.Lock()
+		spawnCalls++
+		spawnMu.Unlock()
+		return ptyA, nil, nil, nil
+	}
+	tui.Start()
+
+	// Wait for the initial spawn.
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		spawnMu.Lock()
+		n := spawnCalls
+		spawnMu.Unlock()
+		if n >= 1 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	spawnMu.Lock()
+	got := spawnCalls
+	spawnMu.Unlock()
+	if got != 1 {
+		tui.Stop()
+		t.Fatalf("expected 1 initial spawn, got %d", got)
+	}
+
+	// Simulate WebSocket connect: attach a client.
+	clientA, _ := tui.attach()
+	// Simulate WebSocket disconnect: detach without touching the child process.
+	tui.detach(clientA)
+
+	// Allow time for a buggy implementation to trigger a restart.
+	time.Sleep(50 * time.Millisecond)
+
+	spawnMu.Lock()
+	got = spawnCalls
+	spawnMu.Unlock()
+	if got != 1 {
+		tui.Stop()
+		t.Errorf("spawnCount after WS disconnect = %d, want 1 — child must survive WS disconnect", got)
+		return
+	}
+
+	// Simulate WebSocket reconnect: attach a second client.
+	clientB, _ := tui.attach()
+	defer tui.detach(clientB)
+
+	spawnMu.Lock()
+	got = spawnCalls
+	spawnMu.Unlock()
+	if got != 1 {
+		tui.Stop()
+		t.Errorf("spawnCount after WS reconnect = %d, want 1 — child must survive WS reconnect", got)
+		return
+	}
+
+	tui.Stop()
 }
 
 // readWSTextFrame reads one unmasked WebSocket text frame from br and returns the payload.

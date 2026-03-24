@@ -19,6 +19,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -290,20 +291,270 @@ func wsUpgrade(w http.ResponseWriter, r *http.Request) (net.Conn, *bufio.ReadWri
 	return conn, brw, nil
 }
 
-// newDashboardMux returns an http.Handler for the web dashboard.
-// Exposed for testing.
-func newDashboardMux(cfgPath, dbPath string) http.Handler {
-	return newDashboardMuxWith(cfgPath, dbPath, fetchDashboardData, refreshInterval, idleRefreshInterval)
+// tuiOutputBufChunks is the ring-buffer size (in PTY read chunks) replayed to
+// each newly-connecting WebSocket client for an immediate terminal snapshot.
+const tuiOutputBufChunks = 512
+
+// tuiClientChanSize is the per-client send-channel depth. Excess frames are
+// dropped for slow clients so one lagging consumer cannot stall the broadcast loop.
+const tuiClientChanSize = 64
+
+// tuiRestartDelay is the pause between child process exit and automatic restart.
+const tuiRestartDelay = 500 * time.Millisecond
+
+// tuiClient is one active WebSocket consumer of DashboardTUI's broadcast.
+type tuiClient struct {
+	ch chan []byte
 }
 
-// newDashboardMuxWith returns an http.Handler for the web dashboard with
-// injectable fetcher and refresh intervals. Exposed for testing.
-func newDashboardMuxWith(cfgPath, dbPath string, fetch func(string, string) *DashboardData, fastInterval, slowInterval time.Duration) http.Handler {
-	mux := http.NewServeMux()
+// DashboardTUI manages a singleton ct-dashboard child process, buffers its PTY
+// output in a ring buffer, and fans out to all connected WebSocket clients.
+// The child process survives WebSocket disconnects; only explicit Stop shuts it down.
+type DashboardTUI struct {
+	exe     string
+	cfgPath string
+	dbPath  string
 
-	// Cache the executable path once at mux creation time rather than
-	// resolving it per-connection in /ws/tui.
-	exe, _ := os.Executable()
+	// spawnFn creates a new PTY session. If nil, defaultSpawn is used.
+	// Override in tests to inject a controllable in-process connection.
+	spawnFn func() (rwc io.ReadWriteCloser, resizeFn func(cols, rows uint16), waitFn func(), err error)
+
+	mu         sync.Mutex
+	rwc        io.ReadWriteCloser      // current PTY/pipe master (protected by mu)
+	resizeFn   func(cols, rows uint16) // current resize callback (protected by mu)
+	spawnCount int                     // total spawns; accessible for testing (protected by mu)
+	clients    map[*tuiClient]struct{} // active WS consumers (protected by mu)
+	ring       [][]byte               // ring buffer of recent PTY chunks (protected by mu)
+	ringHead   int                    // index of oldest valid entry (protected by mu)
+	ringLen    int                    // number of valid entries (protected by mu)
+
+	stopCh chan struct{} // closed by Stop to terminate run loop
+	doneCh chan struct{} // closed when run loop has fully exited
+}
+
+// newDashboardTUI creates a DashboardTUI. Call Start to begin the child process lifecycle.
+func newDashboardTUI(exe, cfgPath, dbPath string) *DashboardTUI {
+	return &DashboardTUI{
+		exe:     exe,
+		cfgPath: cfgPath,
+		dbPath:  dbPath,
+		clients: make(map[*tuiClient]struct{}),
+		ring:    make([][]byte, tuiOutputBufChunks),
+		stopCh:  make(chan struct{}),
+		doneCh:  make(chan struct{}),
+	}
+}
+
+// Start begins the child process lifecycle goroutine.
+func (d *DashboardTUI) Start() {
+	go d.run()
+}
+
+// Stop terminates the run loop and the current child process, blocking until done.
+func (d *DashboardTUI) Stop() {
+	close(d.stopCh)
+	<-d.doneCh
+}
+
+// SpawnCount returns the total number of times the child process has been spawned.
+// Intended for use in tests.
+func (d *DashboardTUI) SpawnCount() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.spawnCount
+}
+
+// run is the main lifecycle loop: spawn → read → restart.
+func (d *DashboardTUI) run() {
+	defer close(d.doneCh)
+	for {
+		select {
+		case <-d.stopCh:
+			return
+		default:
+		}
+		d.runOnce()
+		// Pause before restart, or exit immediately if stopped.
+		select {
+		case <-d.stopCh:
+			return
+		case <-time.After(tuiRestartDelay):
+		}
+	}
+}
+
+// runOnce spawns the child process once and reads its PTY output until it exits.
+func (d *DashboardTUI) runOnce() {
+	spawn := d.spawnFn
+	if spawn == nil {
+		spawn = d.defaultSpawn
+	}
+	rwc, resizeFn, waitFn, err := spawn()
+	if err != nil {
+		return
+	}
+
+	d.mu.Lock()
+	d.rwc = rwc
+	d.resizeFn = resizeFn
+	d.spawnCount++
+	d.mu.Unlock()
+
+	// onceDone is closed when runOnce returns; the watchdog goroutine uses it to
+	// distinguish natural process exit from an explicit Stop call.
+	onceDone := make(chan struct{})
+	defer close(onceDone)
+
+	defer func() {
+		rwc.Close() //nolint:errcheck
+		if waitFn != nil {
+			waitFn()
+		}
+		d.mu.Lock()
+		if d.rwc == rwc {
+			d.rwc = nil
+			d.resizeFn = nil
+		}
+		d.mu.Unlock()
+	}()
+
+	// Watchdog: when Stop is called, close rwc to unblock the Read below.
+	go func() {
+		select {
+		case <-d.stopCh:
+			rwc.Close() //nolint:errcheck
+		case <-onceDone:
+		}
+	}()
+
+	buf := make([]byte, ptyReadBufSize)
+	for {
+		n, err := rwc.Read(buf)
+		if n > 0 {
+			chunk := make([]byte, n)
+			copy(chunk, buf[:n])
+			d.broadcast(chunk)
+		}
+		if err != nil {
+			return
+		}
+	}
+}
+
+// defaultSpawn starts a ct-dashboard child process in a PTY and returns the PTY
+// master, a resize callback, a cleanup function, and any error.
+func (d *DashboardTUI) defaultSpawn() (io.ReadWriteCloser, func(cols, rows uint16), func(), error) {
+	if d.exe == "" {
+		return nil, nil, nil, fmt.Errorf("no executable")
+	}
+	cmd := exec.Command(d.exe, "dashboard", "--db", d.dbPath)
+	// Force true-color environment so Bubble Tea renders with full ANSI colors.
+	// The web server inherits TERM=dumb from systemd; without these overrides
+	// lipgloss strips all colors and the TUI renders black and white.
+	cmd.Env = append(os.Environ(),
+		"CT_CISTERN_CONFIG="+d.cfgPath,
+		"TERM=xterm-256color",
+		"COLORTERM=truecolor",
+	)
+	ptmx, err := pty.Start(cmd)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	_ = pty.Setsize(ptmx, &pty.Winsize{Rows: 24, Cols: 80})
+	resizeFn := func(cols, rows uint16) {
+		_ = pty.Setsize(ptmx, &pty.Winsize{Rows: rows, Cols: cols})
+	}
+	waitFn := func() {
+		cmd.Process.Kill() //nolint:errcheck
+		cmd.Wait()         //nolint:errcheck
+	}
+	return ptmx, resizeFn, waitFn, nil
+}
+
+// broadcast appends chunk to the ring buffer and sends it to all registered clients.
+// Slow clients have frames dropped rather than blocking the broadcast loop.
+func (d *DashboardTUI) broadcast(chunk []byte) {
+	d.mu.Lock()
+	// Append to ring buffer.
+	idx := (d.ringHead + d.ringLen) % tuiOutputBufChunks
+	d.ring[idx] = chunk
+	if d.ringLen < tuiOutputBufChunks {
+		d.ringLen++
+	} else {
+		// Ring full: advance head, overwriting the oldest entry.
+		d.ringHead = (d.ringHead + 1) % tuiOutputBufChunks
+	}
+	// Snapshot client list under lock to avoid holding the lock during sends.
+	clients := make([]*tuiClient, 0, len(d.clients))
+	for c := range d.clients {
+		clients = append(clients, c)
+	}
+	d.mu.Unlock()
+
+	for _, c := range clients {
+		select {
+		case c.ch <- chunk:
+		default:
+			// Slow client: drop frame.
+		}
+	}
+}
+
+// attach registers a new WebSocket client. It returns the client handle and a
+// snapshot of the ring buffer to send as an initial burst on reconnect.
+// The caller must call detach when the WebSocket closes.
+func (d *DashboardTUI) attach() (*tuiClient, [][]byte) {
+	c := &tuiClient{ch: make(chan []byte, tuiClientChanSize)}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.clients[c] = struct{}{}
+	// Copy ring buffer snapshot in chronological order.
+	snapshot := make([][]byte, d.ringLen)
+	for i := 0; i < d.ringLen; i++ {
+		snapshot[i] = d.ring[(d.ringHead+i)%tuiOutputBufChunks]
+	}
+	return c, snapshot
+}
+
+// detach unregisters the client. The child process continues running.
+func (d *DashboardTUI) detach(c *tuiClient) {
+	d.mu.Lock()
+	delete(d.clients, c)
+	d.mu.Unlock()
+}
+
+// resize updates the PTY dimensions if the child process is running.
+func (d *DashboardTUI) resize(cols, rows uint16) {
+	d.mu.Lock()
+	fn := d.resizeFn
+	d.mu.Unlock()
+	if fn != nil {
+		fn(cols, rows)
+	}
+}
+
+// Write forwards keystroke bytes to the PTY. Implements io.Writer for
+// handleTuiTextFrame. Drops silently if no child process is running.
+func (d *DashboardTUI) Write(p []byte) (int, error) {
+	d.mu.Lock()
+	rwc := d.rwc
+	d.mu.Unlock()
+	if rwc == nil {
+		return len(p), nil
+	}
+	return rwc.Write(p)
+}
+
+// newDashboardMux returns an http.Handler for the web dashboard.
+// Exposed for testing. The /ws/tui endpoint is disabled (tui=nil).
+func newDashboardMux(cfgPath, dbPath string) http.Handler {
+	return newDashboardMuxInternal(cfgPath, dbPath, nil)
+}
+
+// newDashboardMuxInternal returns an http.Handler for the web dashboard.
+// tui may be nil; if so the /ws/tui endpoint closes connections immediately.
+func newDashboardMuxInternal(cfgPath, dbPath string, tui *DashboardTUI) http.Handler {
+	mux := http.NewServeMux()
 
 	// Serve bundled xterm.js assets so the dashboard works in airgapped environments.
 	staticSub, err := fs.Sub(staticAssets, "assets/static")
@@ -326,7 +577,7 @@ func newDashboardMuxWith(cfgPath, dbPath string, fetch func(string, string) *Das
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		data := fetch(cfgPath, dbPath)
+		data := fetchDashboardData(cfgPath, dbPath)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(data) //nolint:errcheck
 	})
@@ -351,11 +602,11 @@ func newDashboardMuxWith(cfgPath, dbPath string, fetch func(string, string) *Das
 		}
 
 		// Initial send — establishes the hash baseline for adaptive rate.
-		data := fetch(cfgPath, dbPath)
+		data := fetchDashboardData(cfgPath, dbPath)
 		sendEvent(data)
 		lastHash := dashboardStateHash(data)
 
-		ticker := time.NewTicker(fastInterval)
+		ticker := time.NewTicker(refreshInterval)
 		defer ticker.Stop()
 
 		for {
@@ -363,15 +614,15 @@ func newDashboardMuxWith(cfgPath, dbPath string, fetch func(string, string) *Das
 			case <-r.Context().Done():
 				return
 			case <-ticker.C:
-				data = fetch(cfgPath, dbPath)
+				data = fetchDashboardData(cfgPath, dbPath)
 				newHash := dashboardStateHash(data)
 				sendEvent(data)
 				// Adaptive backoff: slow down when Castellarius is idle.
 				idle := newHash == lastHash && data.FlowingCount == 0
 				lastHash = newHash
-				next := fastInterval
+				next := refreshInterval
 				if idle {
-					next = slowInterval
+					next = idleRefreshInterval
 				}
 				ticker.Reset(next)
 			}
@@ -467,7 +718,9 @@ func newDashboardMuxWith(cfgPath, dbPath string, fetch func(string, string) *Das
 		}
 	})
 
-	// WS /ws/tui — runs ct dashboard in a PTY and streams raw ANSI to xterm.js.
+	// WS /ws/tui — attaches to the singleton DashboardTUI and streams raw ANSI
+	// to xterm.js. The child process is NOT per-connection; it is owned by tui
+	// and survives WebSocket disconnects.
 	//
 	// Protocol (client → server): JSON text frames for control messages.
 	//   {"resize":{"cols":N,"rows":N}}  — resize PTY to match xterm.js viewport
@@ -482,70 +735,31 @@ func newDashboardMuxWith(cfgPath, dbPath string, fetch func(string, string) *Das
 		}
 		defer conn.Close()
 
-		if exe == "" {
-			return
-		}
-		cmd := exec.Command(exe, "dashboard", "--db", dbPath)
-		// Force true-color environment so Bubble Tea renders with full ANSI colors.
-		// The web server inherits TERM=dumb from systemd; without these overrides
-		// lipgloss strips all colors and the TUI renders black and white.
-		cmd.Env = append(os.Environ(),
-			"CT_CISTERN_CONFIG="+cfgPath,
-			"TERM=xterm-256color",
-			"COLORTERM=truecolor",
-		)
-
-		ptmx, err := pty.Start(cmd)
-		if err != nil {
+		if tui == nil {
 			return
 		}
 
-		// Shutdown sequence — three goroutines:
-		//
-		// (A) PTY reader (this goroutine): reads ptmx, writes binary WS frames.
-		//     Exits when: wsSendBinary fails (wsWriteTimeout / dead conn), or
-		//     ptmx.Read returns an error (PTY EOF / closed by watchdog C).
-		//     Calls cancel() via defer on any exit.
-		//
-		// (B) WS frame reader (goroutine below): reads resize/close frames from client.
-		//     Exits when: read deadline fires (wsWriteTimeout), wsReadClientFrame
-		//     returns error (conn closed / EOF), or a close frame (opcode 0x8).
-		//     The read deadline mirrors the write-side timeout: without it, a
-		//     network partition + idle PTY leaks goroutines A (ptmx.Read) and B
-		//     (io.ReadFull) — neither gets an error, and cancel() is never called.
-		//     Calls cancel() via defer on any exit.
-		//
-		// (C) Shutdown watchdog (goroutine below): waits for ctx cancellation.
-		//     Triggered when A or B exits; closes ptmx so goroutine A unblocks
-		//     from ptmx.Read. conn is unblocked by defer conn.Close() above,
-		//     which fires once goroutine A returns to the handler.
+		// Attach to the singleton; receive ring-buffer snapshot for immediate replay.
+		client, snapshot := tui.attach()
+		defer tui.detach(client) // child process continues running on detach
+
+		// Send the ring-buffer snapshot so a reconnecting client sees the current
+		// TUI state before any new live frames arrive.
+		for _, chunk := range snapshot {
+			conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout)) //nolint:errcheck
+			if wsSendBinary(brw.Writer, chunk) != nil {
+				return
+			}
+		}
+
 		ctx, cancel := context.WithCancel(context.Background())
-		defer func() {
-			cancel()
-			cmd.Process.Kill() //nolint:errcheck
-			cmd.Wait()         //nolint:errcheck // reap child to prevent zombie accumulation
-		}()
-
-		// Goroutine C: shutdown watchdog — unblocks the peer goroutine on ctx cancel.
-		// Closes ptmx so goroutine A (ptmx.Read) unblocks. conn is owned exclusively
-		// by defer conn.Close() above; closing it here would race with that defer.
-		go func() {
-			<-ctx.Done()
-			ptmx.Close()
-		}()
-
-		// Default size — will be overridden by the client's first resize message.
-		_ = pty.Setsize(ptmx, &pty.Winsize{Rows: 24, Cols: 80})
+		defer cancel()
 
 		// Goroutine B: read incoming WebSocket frames from the client.
+		// Exits on read error, read deadline, or close frame; calls cancel().
 		go func() {
-			defer cancel() // arm watchdog (C) on any exit
+			defer cancel()
 			buf := make([]byte, wsMaxClientPayload)
-			// Set a read deadline to reap silently-partitioned connections.
-			// Without it, a network partition + idle PTY leaks goroutines A
-			// (ptmx.Read) and B (io.ReadFull) — neither gets an error, and
-			// cancel() is never called. The deadline is reset after each
-			// received frame so genuinely-active sessions are never reaped.
 			conn.SetReadDeadline(time.Now().Add(wsTuiReadTimeout)) //nolint:errcheck
 			for {
 				opcode, payload, nb, err := wsReadClientFrame(brw.Reader, buf)
@@ -556,8 +770,8 @@ func newDashboardMuxWith(cfgPath, dbPath string, fetch func(string, string) *Das
 				conn.SetReadDeadline(time.Now().Add(wsTuiReadTimeout)) //nolint:errcheck
 				switch opcode {
 				case wsOpcodeText:
-					handleTuiTextFrame(payload, ptmx, func(cols, rows uint16) {
-						_ = pty.Setsize(ptmx, &pty.Winsize{Rows: rows, Cols: cols})
+					handleTuiTextFrame(payload, tui, func(cols, rows uint16) {
+						tui.resize(cols, rows)
 					})
 				case wsOpcodeClose:
 					return
@@ -565,18 +779,19 @@ func newDashboardMuxWith(cfgPath, dbPath string, fetch func(string, string) *Das
 			}
 		}()
 
-		// Goroutine A: forward PTY output → WebSocket as binary frames.
-		out := make([]byte, ptyReadBufSize)
+		// Goroutine A (this goroutine): forward broadcast chunks to WebSocket.
 		for {
-			n, err := ptmx.Read(out)
-			if n > 0 {
-				conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout)) //nolint:errcheck
-				if wsSendBinary(brw.Writer, out[:n]) != nil {
+			select {
+			case <-ctx.Done():
+				return
+			case chunk, ok := <-client.ch:
+				if !ok {
 					return
 				}
-			}
-			if err != nil {
-				return
+				conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout)) //nolint:errcheck
+				if wsSendBinary(brw.Writer, chunk) != nil {
+					return
+				}
 			}
 		}
 	})
@@ -587,9 +802,13 @@ func newDashboardMuxWith(cfgPath, dbPath string, fetch func(string, string) *Das
 // RunDashboardWeb starts the HTTP web dashboard on addr and blocks until
 // SIGINT/SIGTERM is received or the server fails.
 func RunDashboardWeb(cfgPath, dbPath, addr string) error {
+	exe, _ := os.Executable()
+	tui := newDashboardTUI(exe, cfgPath, dbPath)
+	tui.Start()
+
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           newDashboardMux(cfgPath, dbPath),
+		Handler:           newDashboardMuxInternal(cfgPath, dbPath, tui),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      0, // SSE streams are long-lived
@@ -612,8 +831,11 @@ func RunDashboardWeb(cfgPath, dbPath, addr string) error {
 	case <-ctx.Done():
 		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		return srv.Shutdown(shutCtx)
+		err := srv.Shutdown(shutCtx)
+		tui.Stop()
+		return err
 	case err := <-errCh:
+		tui.Stop()
 		return err
 	}
 }
