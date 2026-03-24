@@ -631,6 +631,44 @@ func TestTick_RecirculateNoPassRoute_StillEscalates(t *testing.T) {
 	}
 }
 
+func TestTick_RecirculateNoRoute_BlocksWithDiagnosticNote(t *testing.T) {
+	// Given: a droplet at "implement" which has no on_recirculate route.
+	client := newMockClient()
+	client.readyItems = []*cistern.Droplet{
+		{ID: "b1", CurrentCataractae: "implement"},
+	}
+	runner := newMockRunner(client)
+	runner.outcomes["implement"] = "recirculate"
+
+	// When: the cataractae signals recirculate.
+	sched := testScheduler(client, runner)
+	sched.Tick(context.Background())
+	if !runner.waitCalls(1, time.Second) {
+		t.Fatal("timed out waiting for spawn")
+	}
+	sched.Tick(context.Background())
+	time.Sleep(10 * time.Millisecond)
+
+	// Then: droplet is blocked/escalated.
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if _, ok := client.escalated["b1"]; !ok {
+		t.Fatal("expected droplet to be blocked/escalated when no on_recirculate route exists")
+	}
+
+	// And: a diagnostic note naming the step and missing route is attached.
+	found := false
+	for _, n := range client.attached {
+		if n.id == "b1" && strings.Contains(n.notes, "implement") && strings.Contains(n.notes, "on_recirculate") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected diagnostic note about missing on_recirculate route, got notes: %v", client.attached)
+	}
+}
+
 func TestTick_NoWorkAvailable(t *testing.T) {
 	client := newMockClient()
 	runner := newMockRunner(client)

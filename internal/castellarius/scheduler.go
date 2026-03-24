@@ -693,6 +693,13 @@ func (s *Castellarius) observeRepo(_ context.Context, repo aqueduct.RepoConfig) 
 		}
 
 		if next == "" {
+			if result == ResultRecirculate {
+				note := fmt.Sprintf(
+					"cataractae %q signaled recirculate but has no on_recirculate route configured — this is likely an agent error (recirculate used instead of pass or block). Manual intervention required.",
+					step.Name,
+				)
+				s.addNote(client, item.ID, "scheduler", note)
+			}
 			reason := fmt.Sprintf("no route from step %q for outcome %q", step.Name, item.Outcome)
 			s.logger.Warn("observe: no route", "droplet", item.ID)
 			cleanupBranch()
