@@ -1941,7 +1941,7 @@ func TestRunDashboard_AdaptiveRate_PollCountDropsWhenIdle(t *testing.T) {
 	// Without backoff: ~600/50 = 12 polls (plus initial = 13).
 	// With backoff: initial + 1 fast + ~2 slow = ~4 polls.
 	// Assert strictly fewer than half the "no-backoff" count.
-	maxFastPolls := int(window/50*time.Millisecond) + 1 // 13
+	maxFastPolls := int(window/(50*time.Millisecond)) + 1 // 13
 	halfMax := maxFastPolls / 2                          // 6
 	if n >= halfMax {
 		t.Errorf("poll count = %d, want < %d (adaptive backoff not working)", n, halfMax)
