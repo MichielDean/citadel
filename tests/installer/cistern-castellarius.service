@@ -1,0 +1,31 @@
+# tests/installer/cistern-castellarius.service
+#
+# System service unit for Cistern installer integration tests.
+# Installed at /etc/systemd/system/cistern-castellarius.service in the
+# test container (jrei/systemd-ubuntu:24.04 with systemd as PID 1).
+#
+# Each scenario starts/stops this unit explicitly via systemctl;
+# it is not auto-started on container boot.
+#
+# EnvironmentFile loads credentials from ~/.cistern/env when present.
+# The leading '-' makes the file optional — start-castellarius.sh validates
+# that ANTHROPIC_API_KEY is actually set and emits actionable errors when absent.
+
+[Unit]
+Description=Cistern Castellarius — installer integration test
+After=network.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/root/.cistern/env
+ExecStart=/usr/local/bin/start-castellarius.sh
+# Restart on failure so we observe the failed state after hitting the burst limit.
+Restart=on-failure
+RestartSec=1
+StartLimitIntervalSec=15
+StartLimitBurst=3
+Environment=HOME=/root
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=multi-user.target

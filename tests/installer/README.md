@@ -77,6 +77,8 @@ as a GitHub Actions step:
 
 ## Tests
 
+### Smoke tests
+
 | Name | What it checks |
 |------|---------------|
 | `systemd_multi_user_target` | `systemd` reached `multi-user.target` inside the container |
@@ -87,6 +89,53 @@ as a GitHub Actions step:
 | `ct_init_creates_config` | `ct init` creates `~/.cistern/cistern.yaml` |
 | `ct_doctor_claude_found` | `ct doctor` reports the `claude` CLI as found |
 | `start_castellarius_script_executable` | `/usr/local/bin/start-castellarius.sh` is present and executable |
+
+### Integration scenarios
+
+Each scenario resets container state via `_reset_scenario_state` before running to prevent cross-contamination. Scenarios exercise end-to-end service lifecycle with `cistern-castellarius.service` under systemd.
+
+**Scenario 1 — Fresh install**
+
+Preconditions: no `~/.cistern` present, valid `ANTHROPIC_API_KEY` in `~/.cistern/env`.
+
+| Assertion | What it checks |
+|-----------|---------------|
+| `fresh_install_ct_init` | `ct init` exits 0 and bootstraps `~/.cistern` |
+| `fresh_install_service_active` | `cistern-castellarius.service` reaches `active (running)` state |
+| `fresh_install_ct_doctor_passes` | `ct doctor` exits 0 with no errors |
+
+**Scenario 2 — Missing credentials**
+
+Preconditions: `ct init` has run; `~/.cistern/env` is absent (no API key).
+
+| Assertion | What it checks |
+|-----------|---------------|
+| `missing_creds_ct_init` | `ct init` exits 0 |
+| `missing_creds_service_logged_error` | service enters `failed` state and the journal contains a message referencing missing credentials (not a silent crash) |
+| `missing_creds_ct_doctor_message` | `ct doctor` output contains a message referencing missing credentials |
+| `missing_creds_ct_doctor_exits_nonzero` | `ct doctor` exits non-zero |
+
+**Scenario 3 — Wrong / expired token**
+
+Preconditions: `~/.cistern/env` contains a syntactically valid but rejected API key; `~/.claude/.credentials.json` contains an expired OAuth token (`expiresAt` in the past).
+
+| Assertion | What it checks |
+|-----------|---------------|
+| `wrong_token_ct_init` | `ct init` exits 0 |
+| `wrong_token_service_startup_error` | service enters `failed` state and the journal contains an actionable message mentioning `invalid` or `expired` token |
+| `wrong_token_ct_doctor_surfaces_error` | `ct doctor` output surfaces the same expired-token error |
+| `wrong_token_ct_doctor_exits_nonzero` | `ct doctor` exits non-zero |
+
+**Scenario 4 — Upgrade**
+
+Preconditions: `~/.cistern` is pre-seeded with a fixture representing a prior-version install (stale config keys, old binary path) and existing credentials.
+
+| Assertion | What it checks |
+|-----------|---------------|
+| `upgrade_ct_init` | `ct init` exits 0 when run over an existing install |
+| `upgrade_credentials_preserved` | existing `ANTHROPIC_API_KEY` in `~/.cistern/env` is not overwritten |
+| `upgrade_service_active` | `cistern-castellarius.service` reaches `active (running)` state after upgrade |
+| `upgrade_ct_doctor_passes` | `ct doctor` exits 0 with no errors after upgrade |
 
 ## Image contents
 

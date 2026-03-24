@@ -47,6 +47,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         git \
         curl \
         ca-certificates \
+        python3 \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Cistern binaries ─────────────────────────────────────────────────────────
@@ -64,6 +65,19 @@ COPY --chmod=0755 --from=builder /out/fakeagent /usr/local/bin/claude
 COPY --chmod=0755 start-castellarius.sh /usr/local/bin/start-castellarius.sh
 
 COPY --chmod=0755 tests/installer/run-tests.sh /usr/local/bin/run-tests.sh
+
+# ── Integration test infrastructure ──────────────────────────────────────────
+
+# fake-gh: GitHub CLI stub for installer integration tests.
+# ct doctor checks "gh CLI installed" and "gh authenticated"; this stub
+# satisfies both by accepting any arguments and exiting 0.
+COPY --chmod=0755 tests/installer/fake-gh.sh /usr/local/bin/gh
+
+# System service unit used by the integration test scenarios.
+# Tests start/stop it explicitly per-scenario; it is not auto-started.
+# The service loads credentials from /root/.cistern/env via EnvironmentFile.
+COPY --chmod=0644 tests/installer/cistern-castellarius.service \
+    /etc/systemd/system/cistern-castellarius.service
 
 # ── systemd init ──────────────────────────────────────────────────────────────
 # systemd is PID 1. Tests are run by exec-ing into the container once systemd

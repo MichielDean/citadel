@@ -48,6 +48,15 @@
 - No host bind-mounts; `--privileged` grants an isolated cgroup namespace, not a shared one — no host-state leakage between runs
 - `test/docker/systemd/README.md` documents the `--privileged` requirement, capability table (`CAP_SYS_ADMIN`, `CAP_SYS_PTRACE`, writable cgroup namespace), masked-unit rationale, and the narrower capability set available for hardened environments
 
+### Four installer integration test scenarios (ci-rc4o9)
+- Adds four end-to-end integration scenarios to `tests/installer/run-tests.sh`, each self-contained with `_reset_scenario_state` teardown to prevent cross-contamination
+- **Scenario 1 — Fresh install**: runs `ct init` on a clean container, asserts `cistern-castellarius.service` reaches `active (running)` state via systemd, and asserts `ct doctor` exits 0
+- **Scenario 2 — Missing credentials**: installs with no `~/.cistern/env`, asserts the service enters `failed` state with a journal message referencing missing credentials (not a silent crash), and asserts `ct doctor` exits non-zero with a diagnostic message; `ct doctor` call uses `env -u ANTHROPIC_API_KEY` to prevent false positives from an inherited env var
+- **Scenario 3 — Wrong/expired token**: seeds `~/.cistern/env` with a syntactically valid but rejected API key and `~/.claude/.credentials.json` with an expired OAuth token, asserts the service startup error is actionable (mentions `invalid` or `expired` token), and asserts `ct doctor` surfaces the same error; `python3` added to `Dockerfile.systemd` so the OAuth expiry check in `start-castellarius.sh` is not silently skipped
+- **Scenario 4 — Upgrade**: pre-seeds `~/.cistern` with a prior-version fixture (stale config keys, old binary path) and existing credentials, runs `ct init` again, asserts the service comes up cleanly, `ct doctor` passes, and credentials are preserved without silent overwrite
+- `_reset_scenario_state` performs complete cleanup: stops and disables the service, removes `~/.cistern`, and removes `~/.claude` (not just `.credentials.json`) — prevents directory artifacts from leaking across scenarios
+- `tests/installer/README.md` updated with an Integration scenarios section documenting all four scenarios and their assertions
+
 ### Docker systemd test infrastructure for installer tests (ci-chp73)
 - Adds `tests/installer/Dockerfile.systemd` — multi-stage build: `golang:1.26` builder compiles `ct` and `fakeagent`; `jrei/systemd-ubuntu:24.04` runtime runs systemd as PID 1 with no `pass` or GPG installed
 - Adds `tests/installer/build.sh` — builds the `cistern/installer-test:latest` image from the repository root; image tag overridable via `CISTERN_TEST_IMAGE`
