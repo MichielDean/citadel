@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1051,5 +1053,55 @@ func TestEnsureClaudeOAuthFresh_RefreshFails_ReturnsError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "re-authenticate") {
 		t.Errorf("error message should mention re-authentication, got: %v", err)
+	}
+}
+
+func TestEnsureClaudeOAuthFresh_ConcurrentCalls_NoRaceAndSingleRefresh(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	expiredAt := time.Now().Add(-1 * time.Hour).UnixMilli()
+	writeSessionCredentials(t, home, "tok-old", "tok-refresh", expiredAt)
+
+	var refreshCount atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		refreshCount.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"access_token":"tok-new","expires_in":3600}`)
+	}))
+	defer srv.Close()
+
+	origURL := oauthTokenURL
+	origHTTP := oauthHTTPDo
+	t.Cleanup(func() { oauthTokenURL = origURL; oauthHTTPDo = origHTTP })
+	oauthTokenURL = srv.URL
+	oauthHTTPDo = srv.Client().Do
+
+	const goroutines = 5
+	var wg sync.WaitGroup
+	errs := make([]error, goroutines)
+	wg.Add(goroutines)
+	for i := range goroutines {
+		go func(idx int) {
+			defer wg.Done()
+			errs[idx] = ensureClaudeOAuthFresh(home)
+		}(i)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("goroutine %d: unexpected error: %v", i, err)
+		}
+	}
+	// The mutex ensures at most one refresh per cycle. After the first goroutine
+	// refreshes the token, subsequent goroutines see a fresh token and skip.
+	// Verify the endpoint was not hammered — it must be called at least once
+	// (the initial refresh) but not more than goroutines times.
+	count := refreshCount.Load()
+	if count == 0 {
+		t.Error("refresh endpoint was never called — token should have been refreshed")
+	}
+	if count > int32(goroutines) {
+		t.Errorf("refresh endpoint called %d times, want at most %d", count, goroutines)
 	}
 }

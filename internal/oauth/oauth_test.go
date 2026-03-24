@@ -12,6 +12,12 @@ import (
 	"time"
 )
 
+// resetRefreshTimeout restores refreshTimeout after a test changes it.
+func resetRefreshTimeout(t *testing.T, orig time.Duration) {
+	t.Helper()
+	t.Cleanup(func() { refreshTimeout = orig })
+}
+
 // writeCredentials is a test helper that writes a credentials file.
 func writeCredentials(t *testing.T, home string, accessToken, refreshToken string, expiresAtMs int64) {
 	t.Helper()
@@ -407,5 +413,63 @@ func TestUpdateEnvConf_AppendsKeyWhenNotPresent(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "Environment=ANTHROPIC_API_KEY=sk-ant-new") {
 		t.Errorf("env.conf missing appended key: %s", data)
+	}
+}
+
+func TestUpdateEnvConf_CreatedFile_Has0600Permissions(t *testing.T) {
+	dir := t.TempDir()
+	confPath := filepath.Join(dir, "env.conf")
+
+	if err := UpdateEnvConf(confPath, "sk-ant-new"); err != nil {
+		t.Fatalf("UpdateEnvConf: %v", err)
+	}
+
+	info, err := os.Stat(confPath)
+	if err != nil {
+		t.Fatalf("stat env.conf: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Errorf("created file permissions = %04o, want 0600", perm)
+	}
+}
+
+func TestUpdateEnvConf_UpdatedFile_Has0600Permissions(t *testing.T) {
+	dir := t.TempDir()
+	confPath := filepath.Join(dir, "env.conf")
+	existing := "[Service]\nEnvironment=ANTHROPIC_API_KEY=sk-ant-old\n"
+	if err := os.WriteFile(confPath, []byte(existing), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	if err := UpdateEnvConf(confPath, "sk-ant-new"); err != nil {
+		t.Fatalf("UpdateEnvConf: %v", err)
+	}
+
+	info, err := os.Stat(confPath)
+	if err != nil {
+		t.Fatalf("stat env.conf: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Errorf("updated file permissions = %04o, want 0600", perm)
+	}
+}
+
+// --- Refresh timeout test ---
+
+func TestRefresh_Timeout_ReturnsError(t *testing.T) {
+	orig := refreshTimeout
+	refreshTimeout = 20 * time.Millisecond
+	resetRefreshTimeout(t, orig)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Block longer than the timeout to trigger cancellation.
+		time.Sleep(500 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	_, err := Refresh("tok-refresh", srv.URL, srv.Client().Do)
+	if err == nil {
+		t.Fatal("expected error when request exceeds timeout")
 	}
 }

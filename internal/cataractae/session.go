@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/MichielDean/cistern/internal/oauth"
@@ -432,6 +433,11 @@ var oauthTokenURL = oauth.DefaultTokenURL
 // Replaced in tests with a test server client.
 var oauthHTTPDo func(*http.Request) (*http.Response, error) = http.DefaultClient.Do
 
+// ensureClaudeOAuthFreshMu guards ensureClaudeOAuthFresh against concurrent calls
+// from parallel spawn goroutines. This prevents concurrent read-modify-write races
+// on ~/.claude/.credentials.json, env.conf, and os.Setenv.
+var ensureClaudeOAuthFreshMu sync.Mutex
+
 // ensureClaudeOAuthFresh checks whether the Claude OAuth access token is expired
 // or within the 5-minute refresh window and, if so, attempts a silent refresh.
 // On success the new token is written to credentials and injected into the
@@ -440,6 +446,9 @@ var oauthHTTPDo func(*http.Request) (*http.Response, error) = http.DefaultClient
 // (those cases are skipped silently — other auth methods may be in use).
 // Returns an error if the token needs refreshing but the refresh fails.
 func ensureClaudeOAuthFresh(home string) error {
+	ensureClaudeOAuthFreshMu.Lock()
+	defer ensureClaudeOAuthFreshMu.Unlock()
+
 	creds := oauth.Read(home)
 	if creds == nil || creds.RefreshToken == "" {
 		return nil // no credentials or no refresh token — skip silently

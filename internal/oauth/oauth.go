@@ -1,6 +1,7 @@
 package oauth
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -61,14 +62,22 @@ type RefreshResult struct {
 	ExpiresAt   int64 // Unix milliseconds
 }
 
+// refreshTimeout is the maximum duration for an OAuth token refresh HTTP request.
+// Overridden in tests to reduce test duration.
+var refreshTimeout = 30 * time.Second
+
 // Refresh exchanges refreshToken for a new access token via tokenURL.
 // httpDo is an injectable transport function; pass http.DefaultClient.Do in production.
+// The request is bounded by a 30-second timeout to prevent indefinite hangs.
 func Refresh(refreshToken, tokenURL string, httpDo func(*http.Request) (*http.Response, error)) (*RefreshResult, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), refreshTimeout)
+	defer cancel()
+
 	body := url.Values{
 		"grant_type":    {"refresh_token"},
 		"refresh_token": {refreshToken},
 	}
-	req, err := http.NewRequest(http.MethodPost, tokenURL, strings.NewReader(body.Encode()))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(body.Encode()))
 	if err != nil {
 		return nil, fmt.Errorf("create refresh request: %w", err)
 	}
@@ -164,7 +173,7 @@ func UpdateEnvConf(envConfPath, newToken string) error {
 		if mkErr := os.MkdirAll(filepath.Dir(envConfPath), 0o755); mkErr != nil {
 			return fmt.Errorf("create env.conf dir: %w", mkErr)
 		}
-		return os.WriteFile(envConfPath, []byte("[Service]\n"+newLine+"\n"), 0o644)
+		return os.WriteFile(envConfPath, []byte("[Service]\n"+newLine+"\n"), 0o600)
 	}
 	if err != nil {
 		return fmt.Errorf("read env.conf: %w", err)
@@ -183,5 +192,9 @@ func UpdateEnvConf(envConfPath, newToken string) error {
 		lines = append(lines, newLine)
 	}
 
-	return os.WriteFile(envConfPath, []byte(strings.Join(lines, "\n")), 0o644)
+	if err := os.WriteFile(envConfPath, []byte(strings.Join(lines, "\n")), 0o600); err != nil {
+		return err
+	}
+	// WriteFile does not change permissions of an existing file; enforce 0600 explicitly.
+	return os.Chmod(envConfPath, 0o600)
 }
