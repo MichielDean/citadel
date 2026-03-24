@@ -400,18 +400,22 @@ func (s *Session) buildPrompt() string {
 	// Layer 3: Skills — injected as text for providers without AddDirFlag support.
 	// Providers with SupportsAddDir receive skill files automatically via --add-dir.
 	if !s.Preset.SupportsAddDir && len(s.Skills) > 0 {
-		home, _ := os.UserHomeDir()
-		skillsDir := filepath.Join(home, ".cistern", "skills")
-		var sb strings.Builder
-		for _, name := range s.Skills {
-			skillPath := filepath.Join(skillsDir, name, "SKILL.md")
-			if data, err := os.ReadFile(skillPath); err == nil {
-				sb.WriteString("\n## Skill: " + name + "\n\n")
-				sb.WriteString(string(data))
+		home, err := os.UserHomeDir()
+		if err != nil {
+			slog.Default().Warn("buildPrompt: cannot determine home directory — skills not injected", "error", err)
+		} else {
+			skillsDir := filepath.Join(home, ".cistern", "skills")
+			var sb strings.Builder
+			for _, name := range s.Skills {
+				skillPath := filepath.Join(skillsDir, name, "SKILL.md")
+				if data, err := os.ReadFile(skillPath); err == nil {
+					sb.WriteString("\n## Skill: " + name + "\n\n")
+					sb.WriteString(string(data))
+				}
 			}
-		}
-		if sb.Len() > 0 {
-			prompt += "\n## Skills\n" + sb.String()
+			if sb.Len() > 0 {
+				prompt += "\n## Skills\n" + sb.String()
+			}
 		}
 	}
 
