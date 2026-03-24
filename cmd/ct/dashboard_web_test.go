@@ -493,6 +493,82 @@ func TestPeekHTTP_LinesQueryParam(t *testing.T) {
 	}
 }
 
+// TestWsUpgrade_CrossOriginRejected verifies that wsUpgrade returns 403 Forbidden
+// for WebSocket requests with a non-localhost Origin header.
+func TestWsUpgrade_CrossOriginRejected(t *testing.T) {
+	cases := []struct {
+		name   string
+		origin string
+	}{
+		{"evil_http", "http://evil.com"},
+		{"evil_https", "https://evil.com"},
+		{"remote_ip", "http://192.168.1.1:8080"},
+		{"localhost_subdomain", "http://localhost.evil.com"},
+		{"127_lookalike", "http://127.0.0.1.evil.com"},
+	}
+	mux := newDashboardMux(tempCfg(t), tempDB(t))
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/ws/aqueducts/virgo/peek", nil)
+			req.Header.Set("Upgrade", "websocket")
+			req.Header.Set("Sec-Websocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+			req.Header.Set("Origin", tc.origin)
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, req)
+			if w.Code != http.StatusForbidden {
+				t.Errorf("Origin %q: status = %d, want 403 Forbidden", tc.origin, w.Code)
+			}
+		})
+	}
+}
+
+// TestWsUpgrade_LocalhostOriginAllowed verifies that wsUpgrade permits WebSocket
+// requests from localhost, 127.0.0.1, and ::1 origins (the request proceeds past
+// Origin validation; httptest.ResponseRecorder does not support hijacking so it
+// terminates with 500, but the key assertion is that 403 is NOT returned).
+func TestWsUpgrade_LocalhostOriginAllowed(t *testing.T) {
+	cases := []struct {
+		name   string
+		origin string
+	}{
+		{"localhost", "http://localhost"},
+		{"localhost_with_port", "http://localhost:5737"},
+		{"loopback_ipv4", "http://127.0.0.1"},
+		{"loopback_ipv4_with_port", "http://127.0.0.1:5737"},
+		{"loopback_ipv6", "http://[::1]"},
+		{"loopback_ipv6_with_port", "http://[::1]:5737"},
+	}
+	mux := newDashboardMux(tempCfg(t), tempDB(t))
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/ws/aqueducts/virgo/peek", nil)
+			req.Header.Set("Upgrade", "websocket")
+			req.Header.Set("Sec-Websocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+			req.Header.Set("Origin", tc.origin)
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, req)
+			if w.Code == http.StatusForbidden {
+				t.Errorf("Origin %q: got 403, want non-403 (localhost origin must be allowed)", tc.origin)
+			}
+		})
+	}
+}
+
+// TestWsUpgrade_MissingOriginAllowed verifies that wsUpgrade allows requests
+// with no Origin header (non-browser clients such as native tools and tests).
+func TestWsUpgrade_MissingOriginAllowed(t *testing.T) {
+	mux := newDashboardMux(tempCfg(t), tempDB(t))
+	req := httptest.NewRequest(http.MethodGet, "/ws/aqueducts/virgo/peek", nil)
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Sec-Websocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+	// No Origin header set.
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code == http.StatusForbidden {
+		t.Errorf("missing Origin: got 403, want non-403 (no Origin header should be allowed)")
+	}
+}
+
 // TestWsPeek_NonWebSocketRejected verifies that a plain GET to the WS endpoint
 // returns 426 Upgrade Required.
 func TestWsPeek_NonWebSocketRejected(t *testing.T) {

@@ -13,6 +13,7 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -240,6 +241,21 @@ func wsReadClientFrame(br *bufio.Reader, buf []byte) (opcode byte, payload []byt
 // connection and its buffered read-writer. On failure it writes an HTTP error
 // and returns a non-nil error.
 func wsUpgrade(w http.ResponseWriter, r *http.Request) (net.Conn, *bufio.ReadWriter, error) {
+	// Validate Origin header to prevent cross-origin WebSocket hijacking.
+	// Browsers allow JS on any origin to connect to localhost WS endpoints, so
+	// the localhost binding alone is not sufficient protection.
+	if origin := r.Header.Get("Origin"); origin != "" {
+		u, err := url.Parse(origin)
+		if err != nil {
+			http.Error(w, "invalid Origin header", http.StatusForbidden)
+			return nil, nil, fmt.Errorf("invalid Origin header: %w", err)
+		}
+		h := u.Hostname()
+		if h != "localhost" && h != "127.0.0.1" && h != "::1" {
+			http.Error(w, "cross-origin WebSocket request rejected", http.StatusForbidden)
+			return nil, nil, fmt.Errorf("cross-origin WebSocket rejected: %s", origin)
+		}
+	}
 	if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
 		http.Error(w, "websocket upgrade required", http.StatusUpgradeRequired)
 		return nil, nil, fmt.Errorf("not a websocket request")
