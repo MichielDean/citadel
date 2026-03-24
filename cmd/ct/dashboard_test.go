@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1826,5 +1827,162 @@ func TestDashboard_PeekSelectMode_CtrlC_CancelsPickerNotQuit(t *testing.T) {
 		if _, ok := msg.(tea.QuitMsg); ok {
 			t.Error("ctrl+c while picker is open must not return tea.Quit — TUI should stay alive")
 		}
+	}
+}
+
+// --- TestDashboardStateHash ---
+
+// TestDashboardStateHash_StableForSameState verifies that identical data produces
+// the same hash on repeated calls.
+//
+// Given: a DashboardData with known counts and cataractae
+// When:  dashboardStateHash is called twice
+// Then:  both calls return the same string
+func TestDashboardStateHash_StableForSameState(t *testing.T) {
+	data := &DashboardData{
+		FlowingCount: 1,
+		QueuedCount:  2,
+		DoneCount:    3,
+		Cataractae: []CataractaeInfo{
+			{Name: "virgo", DropletID: "ci-abc", Step: "implement"},
+		},
+	}
+	h1 := dashboardStateHash(data)
+	h2 := dashboardStateHash(data)
+	if h1 != h2 {
+		t.Errorf("same data should produce same hash; got %q then %q", h1, h2)
+	}
+	if h1 == "" {
+		t.Error("hash of non-nil data should not be empty")
+	}
+}
+
+// TestDashboardStateHash_ChangesWhenFlowingCountChanges verifies that a
+// change in FlowingCount produces a different hash.
+//
+// Given: two DashboardData structs with different FlowingCount
+// When:  dashboardStateHash is called on each
+// Then:  the hashes are different
+func TestDashboardStateHash_ChangesWhenFlowingCountChanges(t *testing.T) {
+	d1 := &DashboardData{FlowingCount: 0}
+	d2 := &DashboardData{FlowingCount: 1}
+	if dashboardStateHash(d1) == dashboardStateHash(d2) {
+		t.Error("different FlowingCount should produce different hashes")
+	}
+}
+
+// TestDashboardStateHash_ChangesWhenDropletAssigned verifies that assigning a
+// droplet to an aqueduct produces a different hash.
+//
+// Given: two DashboardData structs where one has a droplet assigned
+// When:  dashboardStateHash is called on each
+// Then:  the hashes are different
+func TestDashboardStateHash_ChangesWhenDropletAssigned(t *testing.T) {
+	d1 := &DashboardData{Cataractae: []CataractaeInfo{{Name: "virgo", DropletID: ""}}}
+	d2 := &DashboardData{Cataractae: []CataractaeInfo{{Name: "virgo", DropletID: "ci-abc"}}}
+	if dashboardStateHash(d1) == dashboardStateHash(d2) {
+		t.Error("droplet assignment change should produce different hashes")
+	}
+}
+
+// TestDashboardStateHash_NilSafe verifies that nil input returns a consistent
+// empty string without panicking.
+//
+// Given: nil DashboardData
+// When:  dashboardStateHash is called
+// Then:  returns "" without panic, and two nil calls return equal values
+func TestDashboardStateHash_NilSafe(t *testing.T) {
+	h := dashboardStateHash(nil)
+	if h != "" {
+		t.Errorf("nil data should return empty string, got %q", h)
+	}
+	if dashboardStateHash(nil) != dashboardStateHash(nil) {
+		t.Error("two nil calls must return equal values")
+	}
+}
+
+// --- TestRunDashboard_AdaptiveRate ---
+
+// TestRunDashboard_AdaptiveRate_PollCountDropsWhenIdle asserts that the polling
+// loop backs off to the slow interval after observing a consistently idle state.
+// Without adaptive backoff, poll count over the test window would equal
+// window/fastInterval. With backoff it should be significantly lower.
+//
+// Given: a fetcher that always returns empty/idle state
+// When:  runDashboardWith runs for ~600ms with fast=50ms, slow=250ms
+// Then:  total poll count is well below window/fastInterval
+func TestRunDashboard_AdaptiveRate_PollCountDropsWhenIdle(t *testing.T) {
+	cfgPath := tempCfg(t)
+	dbPath := tempDB(t)
+
+	var callCount int32
+	idleFetcher := func(cfg, db string) *DashboardData {
+		atomic.AddInt32(&callCount, 1)
+		return &DashboardData{FlowingCount: 0, FetchedAt: time.Now()}
+	}
+
+	inputCh := make(chan byte, 1)
+	var out bytes.Buffer
+
+	done := make(chan error, 1)
+	go func() {
+		done <- runDashboardWith(cfgPath, dbPath, inputCh, &out, idleFetcher,
+			50*time.Millisecond, 250*time.Millisecond)
+	}()
+
+	const window = 600 * time.Millisecond
+	time.Sleep(window)
+	inputCh <- 'q'
+	if err := <-done; err != nil {
+		t.Fatalf("runDashboardWith returned error: %v", err)
+	}
+
+	n := int(atomic.LoadInt32(&callCount))
+	// Without backoff: ~600/50 = 12 polls (plus initial = 13).
+	// With backoff: initial + 1 fast + ~2 slow = ~4 polls.
+	// Assert strictly fewer than half the "no-backoff" count.
+	maxFastPolls := int(window/50*time.Millisecond) + 1 // 13
+	halfMax := maxFastPolls / 2                          // 6
+	if n >= halfMax {
+		t.Errorf("poll count = %d, want < %d (adaptive backoff not working)", n, halfMax)
+	}
+}
+
+// TestRunDashboard_AdaptiveRate_StaysFastWhenActive verifies that the loop does
+// not back off when droplets are actively flowing.
+//
+// Given: a fetcher that always returns FlowingCount=1
+// When:  runDashboardWith runs for ~300ms with fast=50ms, slow=250ms
+// Then:  poll count is at least window/fastInterval/2 (stayed in fast mode)
+func TestRunDashboard_AdaptiveRate_StaysFastWhenActive(t *testing.T) {
+	cfgPath := tempCfg(t)
+	dbPath := tempDB(t)
+
+	var callCount int32
+	activeFetcher := func(cfg, db string) *DashboardData {
+		atomic.AddInt32(&callCount, 1)
+		return &DashboardData{FlowingCount: 1, FetchedAt: time.Now()}
+	}
+
+	inputCh := make(chan byte, 1)
+	var out bytes.Buffer
+
+	done := make(chan error, 1)
+	go func() {
+		done <- runDashboardWith(cfgPath, dbPath, inputCh, &out, activeFetcher,
+			50*time.Millisecond, 250*time.Millisecond)
+	}()
+
+	const window = 300 * time.Millisecond
+	time.Sleep(window)
+	inputCh <- 'q'
+	if err := <-done; err != nil {
+		t.Fatalf("runDashboardWith returned error: %v", err)
+	}
+
+	n := int(atomic.LoadInt32(&callCount))
+	// With fast=50ms and 300ms window: expect at least 4 polls (conservative lower bound).
+	if n < 4 {
+		t.Errorf("poll count = %d, want >= 4 (should stay in fast mode when active)", n)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -238,5 +239,112 @@ func TestTuiAqueductRow_WaterfallIndex_WidePoolRowsAtBottom(t *testing.T) {
 		if !strings.Contains(rows[i], "≈") {
 			t.Errorf("rows[%d] missing '≈' (wide-pool row should appear at bottom of waterfall); got: %q", i, rows[i])
 		}
+	}
+}
+
+// --- Adaptive idle mode tests ---
+
+// TestDashboardTUIModel_NotIdleAfterFirstDataMsg verifies that the model does
+// not enter idle mode after the very first data message — there is no prior
+// hash to compare against, so the state is considered unsettled.
+//
+// Given: a freshly created model with no prior state hash
+// When:  an idle data message arrives (FlowingCount=0)
+// Then:  idleMode is false (first poll is never idle)
+func TestDashboardTUIModel_NotIdleAfterFirstDataMsg(t *testing.T) {
+	m := newDashboardTUIModel("", "")
+
+	data := &DashboardData{FlowingCount: 0, FetchedAt: time.Now()}
+	updated, _ := m.Update(tuiDataMsg(data))
+	um := updated.(dashboardTUIModel)
+
+	if um.idleMode {
+		t.Error("idleMode should be false after first data message — no prior state to compare")
+	}
+	if um.stateHash == "" {
+		t.Error("stateHash should be set after first data message")
+	}
+}
+
+// TestDashboardTUIModel_EntersIdleModeAfterUnchangedPoll verifies that the
+// model enters idle mode after a second consecutive idle data message.
+//
+// Given: model that has received one idle data message (stateHash set)
+// When:  a second identical idle data message arrives
+// Then:  idleMode is true
+func TestDashboardTUIModel_EntersIdleModeAfterUnchangedPoll(t *testing.T) {
+	m := newDashboardTUIModel("", "")
+	idleData := &DashboardData{FlowingCount: 0, FetchedAt: time.Now()}
+
+	// First message: sets the hash baseline.
+	m1, _ := m.Update(tuiDataMsg(idleData))
+	um1 := m1.(dashboardTUIModel)
+	if um1.idleMode {
+		t.Fatal("should not be idle after first message")
+	}
+
+	// Second message: same state → should enter idle mode.
+	m2, _ := um1.Update(tuiDataMsg(idleData))
+	um2 := m2.(dashboardTUIModel)
+
+	if !um2.idleMode {
+		t.Error("idleMode should be true after second consecutive idle data message")
+	}
+}
+
+// TestDashboardTUIModel_ExitsIdleModeWhenDropletFlows verifies that idle mode
+// exits when FlowingCount > 0.
+//
+// Given: model already in idle mode
+// When:  a data message arrives with FlowingCount=1
+// Then:  idleMode is false
+func TestDashboardTUIModel_ExitsIdleModeWhenDropletFlows(t *testing.T) {
+	m := newDashboardTUIModel("", "")
+	idleData := &DashboardData{FlowingCount: 0, FetchedAt: time.Now()}
+
+	// Enter idle mode.
+	m1, _ := m.Update(tuiDataMsg(idleData))
+	m2, _ := m1.(dashboardTUIModel).Update(tuiDataMsg(idleData))
+	um2 := m2.(dashboardTUIModel)
+	if !um2.idleMode {
+		t.Fatal("precondition: model should be in idle mode")
+	}
+
+	// Active data message → exit idle.
+	activeData := &DashboardData{FlowingCount: 1, FetchedAt: time.Now()}
+	m3, _ := um2.Update(tuiDataMsg(activeData))
+	um3 := m3.(dashboardTUIModel)
+
+	if um3.idleMode {
+		t.Error("idleMode should be false when FlowingCount > 0")
+	}
+}
+
+// TestDashboardTUIModel_ExitsIdleModeWhenStateChanges verifies that idle mode
+// exits when the dashboard state changes (e.g. a new droplet is queued), even
+// if FlowingCount remains 0.
+//
+// Given: model in idle mode with QueuedCount=0
+// When:  a data message arrives with QueuedCount=1 (new item queued)
+// Then:  idleMode is false
+func TestDashboardTUIModel_ExitsIdleModeWhenStateChanges(t *testing.T) {
+	m := newDashboardTUIModel("", "")
+	idleData := &DashboardData{FlowingCount: 0, QueuedCount: 0, FetchedAt: time.Now()}
+
+	// Enter idle mode.
+	m1, _ := m.Update(tuiDataMsg(idleData))
+	m2, _ := m1.(dashboardTUIModel).Update(tuiDataMsg(idleData))
+	um2 := m2.(dashboardTUIModel)
+	if !um2.idleMode {
+		t.Fatal("precondition: model should be in idle mode")
+	}
+
+	// State change: new droplet queued.
+	changedData := &DashboardData{FlowingCount: 0, QueuedCount: 1, FetchedAt: time.Now()}
+	m3, _ := um2.Update(tuiDataMsg(changedData))
+	um3 := m3.(dashboardTUIModel)
+
+	if um3.idleMode {
+		t.Error("idleMode should be false after a state change (new droplet queued)")
 	}
 }

@@ -337,17 +337,13 @@ func newDashboardMux(cfgPath, dbPath string) http.Handler {
 			return
 		}
 
-		send := func() {
-			data := fetchDashboardData(cfgPath, dbPath)
-			b, err := json.Marshal(data)
-			if err != nil {
-				return
-			}
+		// Initial send — establishes the hash baseline for adaptive rate.
+		data := fetchDashboardData(cfgPath, dbPath)
+		if b, err := json.Marshal(data); err == nil {
 			fmt.Fprintf(w, "data: %s\n\n", b)
 			flusher.Flush()
 		}
-
-		send()
+		lastHash := dashboardStateHash(data)
 
 		ticker := time.NewTicker(refreshInterval)
 		defer ticker.Stop()
@@ -357,7 +353,20 @@ func newDashboardMux(cfgPath, dbPath string) http.Handler {
 			case <-r.Context().Done():
 				return
 			case <-ticker.C:
-				send()
+				data = fetchDashboardData(cfgPath, dbPath)
+				newHash := dashboardStateHash(data)
+				if b, err := json.Marshal(data); err == nil {
+					fmt.Fprintf(w, "data: %s\n\n", b)
+					flusher.Flush()
+				}
+				// Adaptive backoff: slow down when Castellarius is idle.
+				idle := newHash == lastHash && data.FlowingCount == 0
+				lastHash = newHash
+				if idle {
+					ticker.Reset(idleRefreshInterval)
+				} else {
+					ticker.Reset(refreshInterval)
+				}
 			}
 		}
 	})

@@ -18,6 +18,7 @@ import (
 
 const (
 	refreshInterval          = 2 * time.Second
+	idleRefreshInterval      = 5 * time.Second // slow rate when Castellarius is idle
 	recentEventLimit         = 5
 
 
@@ -225,6 +226,23 @@ func fetchDashboardData(cfgPath, dbPath string) *DashboardData {
 
 	data.FarmRunning = true
 	return data
+}
+
+// dashboardStateHash returns a string fingerprint of the key fields in d that
+// indicate Castellarius activity. The hash changes whenever flowing/queued/done
+// counts change, or when aqueduct assignments or steps change. It is used by
+// the polling loop to detect idle state for adaptive refresh rate backoff.
+// Returns "" for nil input so the first comparison never triggers idle mode.
+func dashboardStateHash(d *DashboardData) string {
+	if d == nil {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d/%d/%d", d.FlowingCount, d.QueuedCount, d.DoneCount)
+	for _, ch := range d.Cataractae {
+		fmt.Fprintf(&b, "|%s:%s:%s", ch.Name, ch.DropletID, ch.Step)
+	}
+	return b.String()
 }
 
 // cataractaeIndexInWorkflow returns the 1-based index of stepName in the cataractae list, or 0 if not found.
@@ -598,22 +616,38 @@ func renderRecentLine(item *cistern.Droplet) string {
 		t, id, step, icon, status)
 }
 
-// RunDashboard runs the refresh loop, writing to out. It reads single-byte
-// events from inputCh: 'q' or 3 (Ctrl-C) to quit, 'r' to force refresh.
-// The done channel is closed when the loop exits.
-func RunDashboard(cfgPath, dbPath string, inputCh <-chan byte, out io.Writer) error {
-	ticker := time.NewTicker(refreshInterval)
+// runDashboardWith is the testable core of RunDashboard. fetch is called to
+// load dashboard data; fastInterval is used when droplets are active or the
+// state has just changed, slowInterval is used when the Castellarius is idle
+// (FlowingCount == 0 and state hash unchanged since the last poll).
+func runDashboardWith(cfgPath, dbPath string, inputCh <-chan byte, out io.Writer,
+	fetch func(string, string) *DashboardData,
+	fastInterval, slowInterval time.Duration) error {
+
+	ticker := time.NewTicker(fastInterval)
 	defer ticker.Stop()
 
 	// Initial render immediately.
-	data := fetchDashboardData(cfgPath, dbPath)
+	data := fetch(cfgPath, dbPath)
+	prevHash := dashboardStateHash(data)
 	fmt.Fprint(out, clearScreen+renderDashboard(data))
 
 	for {
 		select {
 		case <-ticker.C:
-			data = fetchDashboardData(cfgPath, dbPath)
+			data = fetch(cfgPath, dbPath)
+			newHash := dashboardStateHash(data)
+
+			// Adaptive backoff: slow down when Castellarius is idle.
+			idle := newHash == prevHash && data.FlowingCount == 0
+			prevHash = newHash
 			fmt.Fprint(out, clearScreen+renderDashboard(data))
+
+			next := fastInterval
+			if idle {
+				next = slowInterval
+			}
+			ticker.Reset(next)
 
 		case b, ok := <-inputCh:
 			if !ok {
@@ -624,12 +658,22 @@ func RunDashboard(cfgPath, dbPath string, inputCh <-chan byte, out io.Writer) er
 				fmt.Fprint(out, clearScreen)
 				return nil
 			case 'r', 'R':
-				data = fetchDashboardData(cfgPath, dbPath)
+				data = fetch(cfgPath, dbPath)
+				prevHash = dashboardStateHash(data)
 				fmt.Fprint(out, clearScreen+renderDashboard(data))
-				ticker.Reset(refreshInterval)
+				ticker.Reset(fastInterval) // manual refresh always resets to fast
 			}
 		}
 	}
+}
+
+// RunDashboard runs the refresh loop, writing to out. It reads single-byte
+// events from inputCh: 'q' or 3 (Ctrl-C) to quit, 'r' to force refresh.
+// The polling rate adapts: fast (refreshInterval) when droplets are flowing or
+// state changes, slow (idleRefreshInterval) when the Castellarius is idle.
+func RunDashboard(cfgPath, dbPath string, inputCh <-chan byte, out io.Writer) error {
+	return runDashboardWith(cfgPath, dbPath, inputCh, out, fetchDashboardData,
+		refreshInterval, idleRefreshInterval)
 }
 
 // startKeyboardReader starts a goroutine that puts stdin into raw mode and
