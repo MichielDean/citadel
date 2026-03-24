@@ -1614,6 +1614,32 @@ func TestFixCisternEnvFile_NewFile_ContainsCommentStub(t *testing.T) {
 	}
 }
 
+// TestFixCisternEnvFile_StatError_ReturnsError verifies that when os.Stat
+// returns a non-IsNotExist error (e.g. EACCES), fixCisternEnvFile propagates
+// it instead of silently swallowing it.
+func TestFixCisternEnvFile_StatError_ReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "env")
+
+	origStatFn := osStatFn
+	t.Cleanup(func() { osStatFn = origStatFn })
+	syntheticErr := fmt.Errorf("permission denied")
+	osStatFn = func(name string) (os.FileInfo, error) {
+		if name == path {
+			return nil, syntheticErr
+		}
+		return os.Stat(name)
+	}
+
+	err := fixCisternEnvFile(path)
+	if err == nil {
+		t.Fatal("expected error when stat returns a non-IsNotExist error, got nil")
+	}
+	if !strings.Contains(err.Error(), "stat env file") {
+		t.Errorf("expected error to contain 'stat env file', got: %v", err)
+	}
+}
+
 // --- installSystemdService tests ---
 
 // setupInstallSystemdServiceTest redirects HOME to a temp dir and stubs out

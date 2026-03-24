@@ -936,10 +936,12 @@ func fixCisternEnvFile(envPath string) error {
 	if err := os.MkdirAll(filepath.Dir(envPath), 0o755); err != nil {
 		return fmt.Errorf("create directory: %w", err)
 	}
-	if _, err := os.Stat(envPath); os.IsNotExist(err) {
+	if _, err := osStatFn(envPath); os.IsNotExist(err) {
 		if err := os.WriteFile(envPath, []byte(cisternEnvStub), 0o600); err != nil {
 			return fmt.Errorf("create env file: %w", err)
 		}
+	} else if err != nil {
+		return fmt.Errorf("stat env file: %w", err)
 	}
 	return nil
 }
