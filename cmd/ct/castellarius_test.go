@@ -308,7 +308,8 @@ func TestCheckStartupCredentials_KeyMissing_ReturnsError(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("ANTHROPIC_API_KEY", "")
 
-	err := checkStartupCredentials(home)
+	// No config file — falls back to checking ANTHROPIC_API_KEY.
+	err := checkStartupCredentials(home, filepath.Join(home, "nonexistent.yaml"))
 	if err == nil {
 		t.Fatal("expected error when ANTHROPIC_API_KEY is not set, got nil")
 	}
@@ -324,7 +325,7 @@ func TestCheckStartupCredentials_KeyPresent_NoCredentialsFile_ReturnsNil(t *test
 	home := t.TempDir()
 	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test-key")
 
-	if err := checkStartupCredentials(home); err != nil {
+	if err := checkStartupCredentials(home, filepath.Join(home, "nonexistent.yaml")); err != nil {
 		t.Errorf("expected nil when key set and no credentials file, got: %v", err)
 	}
 }
@@ -335,7 +336,7 @@ func TestCheckStartupCredentials_KeyPresent_FreshOAuth_ReturnsNil(t *testing.T) 
 	futureExpiry := time.Now().Add(24 * time.Hour).UnixMilli()
 	writeOAuthCredentials(t, home, futureExpiry)
 
-	if err := checkStartupCredentials(home); err != nil {
+	if err := checkStartupCredentials(home, filepath.Join(home, "nonexistent.yaml")); err != nil {
 		t.Errorf("expected nil for fresh OAuth token, got: %v", err)
 	}
 }
@@ -345,7 +346,7 @@ func TestCheckStartupCredentials_KeyPresent_ExpiredOAuth_ReturnsError(t *testing
 	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test-key")
 	writeOAuthCredentials(t, home, 1000) // expires 1970-01-01 — definitely expired
 
-	err := checkStartupCredentials(home)
+	err := checkStartupCredentials(home, filepath.Join(home, "nonexistent.yaml"))
 	if err == nil {
 		t.Fatal("expected error for expired OAuth token, got nil")
 	}
@@ -362,7 +363,137 @@ func TestCheckStartupCredentials_KeyPresent_ZeroExpiry_ReturnsNil(t *testing.T) 
 	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test-key")
 	writeOAuthCredentials(t, home, 0) // zero ExpiresAt = no expiry info → skip silently
 
-	if err := checkStartupCredentials(home); err != nil {
+	if err := checkStartupCredentials(home, filepath.Join(home, "nonexistent.yaml")); err != nil {
 		t.Errorf("expected nil when ExpiresAt is zero (no expiry info), got: %v", err)
+	}
+}
+
+// writeMinimalConfig writes a minimal cistern.yaml with the given provider name
+// to a temp dir and returns the path to the config file.
+func writeMinimalConfig(t *testing.T, dir, providerName string) string {
+	t.Helper()
+	cisternDir := filepath.Join(dir, ".cistern")
+	if err := os.MkdirAll(cisternDir, 0o755); err != nil {
+		t.Fatalf("mkdir .cistern: %v", err)
+	}
+	yaml := `repos:
+  - name: testrepo
+    url: https://github.com/example/testrepo
+    workflow_path: aqueduct/workflow.yaml
+    cataractae: 1
+    prefix: ct
+provider:
+  name: ` + providerName + `
+max_cataractae: 1
+`
+	cfgPath := filepath.Join(cisternDir, "cistern.yaml")
+	if err := os.WriteFile(cfgPath, []byte(yaml), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	return cfgPath
+}
+
+// TestCheckStartupCredentials_CodexProvider_OpenAIKeySet_ReturnsNil verifies
+// that checkStartupCredentials passes when the configured provider is codex and
+// OPENAI_API_KEY is set, even when ANTHROPIC_API_KEY is unset.
+func TestCheckStartupCredentials_CodexProvider_OpenAIKeySet_ReturnsNil(t *testing.T) {
+	home := t.TempDir()
+	cfgPath := writeMinimalConfig(t, home, "codex")
+
+	t.Setenv("OPENAI_API_KEY", "sk-openai-test-key")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+
+	if err := checkStartupCredentials(home, cfgPath); err != nil {
+		t.Errorf("expected nil for codex provider with OPENAI_API_KEY set, got: %v", err)
+	}
+}
+
+// TestCheckStartupCredentials_CodexProvider_OpenAIKeyMissing_ReturnsError
+// verifies that checkStartupCredentials fails for a codex setup when OPENAI_API_KEY is unset.
+func TestCheckStartupCredentials_CodexProvider_OpenAIKeyMissing_ReturnsError(t *testing.T) {
+	home := t.TempDir()
+	cfgPath := writeMinimalConfig(t, home, "codex")
+
+	t.Setenv("OPENAI_API_KEY", "")
+
+	err := checkStartupCredentials(home, cfgPath)
+	if err == nil {
+		t.Fatal("expected error when OPENAI_API_KEY is not set for codex provider, got nil")
+	}
+	if !strings.Contains(err.Error(), "OPENAI_API_KEY not set") {
+		t.Errorf("error should mention OPENAI_API_KEY not set; got: %v", err)
+	}
+}
+
+// TestCheckStartupCredentials_CodexProvider_ExpiredOAuth_ReturnsNil verifies
+// that an expired Claude OAuth token does NOT block startup when the codex
+// provider is configured (the OAuth check should be skipped entirely).
+func TestCheckStartupCredentials_CodexProvider_ExpiredOAuth_ReturnsNil(t *testing.T) {
+	home := t.TempDir()
+	cfgPath := writeMinimalConfig(t, home, "codex")
+
+	t.Setenv("OPENAI_API_KEY", "sk-openai-test-key")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+
+	// Write an expired Claude OAuth credential — should be ignored for codex.
+	writeOAuthCredentials(t, home, 1000)
+
+	if err := checkStartupCredentials(home, cfgPath); err != nil {
+		t.Errorf("expected nil: codex provider should skip OAuth check even when token is expired; got: %v", err)
+	}
+}
+
+// --- startupRequiredEnvVars tests ---
+
+func TestStartupRequiredEnvVars_NoConfig_DefaultsToAnthropicKey(t *testing.T) {
+	vars, usesClaude := startupRequiredEnvVars("")
+	if len(vars) != 1 || vars[0] != "ANTHROPIC_API_KEY" {
+		t.Errorf("expected [ANTHROPIC_API_KEY], got %v", vars)
+	}
+	if !usesClaude {
+		t.Error("expected usesClaude=true for default fallback")
+	}
+}
+
+func TestStartupRequiredEnvVars_NonexistentConfig_DefaultsToAnthropicKey(t *testing.T) {
+	vars, usesClaude := startupRequiredEnvVars(filepath.Join(t.TempDir(), "missing.yaml"))
+	if len(vars) != 1 || vars[0] != "ANTHROPIC_API_KEY" {
+		t.Errorf("expected [ANTHROPIC_API_KEY], got %v", vars)
+	}
+	if !usesClaude {
+		t.Error("expected usesClaude=true for default fallback")
+	}
+}
+
+func TestStartupRequiredEnvVars_CodexConfig_ReturnsOpenAIKey(t *testing.T) {
+	cfgPath := writeMinimalConfig(t, t.TempDir(), "codex")
+	vars, usesClaude := startupRequiredEnvVars(cfgPath)
+	if len(vars) != 1 || vars[0] != "OPENAI_API_KEY" {
+		t.Errorf("expected [OPENAI_API_KEY], got %v", vars)
+	}
+	if usesClaude {
+		t.Error("expected usesClaude=false for codex provider")
+	}
+}
+
+func TestStartupRequiredEnvVars_GeminiConfig_ReturnsGeminiKey(t *testing.T) {
+	cfgPath := writeMinimalConfig(t, t.TempDir(), "gemini")
+	vars, usesClaude := startupRequiredEnvVars(cfgPath)
+	if len(vars) != 1 || vars[0] != "GEMINI_API_KEY" {
+		t.Errorf("expected [GEMINI_API_KEY], got %v", vars)
+	}
+	if usesClaude {
+		t.Error("expected usesClaude=false for gemini provider")
+	}
+}
+
+func TestStartupRequiredEnvVars_ClaudeConfig_ReturnsAnthropicKey(t *testing.T) {
+	cfgPath := writeMinimalConfig(t, t.TempDir(), "claude")
+	vars, usesClaude := startupRequiredEnvVars(cfgPath)
+	if len(vars) != 1 || vars[0] != "ANTHROPIC_API_KEY" {
+		t.Errorf("expected [ANTHROPIC_API_KEY], got %v", vars)
+	}
+	if !usesClaude {
+		t.Error("expected usesClaude=true for claude provider")
 	}
 }

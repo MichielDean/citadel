@@ -51,11 +51,10 @@ keep dispatching droplets into aqueducts automatically.`,
 		if err != nil {
 			return fmt.Errorf("startup: home dir: %w", err)
 		}
-		if err := checkStartupCredentials(home); err != nil {
+		cfgPath := resolveConfigPath()
+		if err := checkStartupCredentials(home, cfgPath); err != nil {
 			return err
 		}
-
-		cfgPath := resolveConfigPath()
 		cfg, err := aqueduct.ParseAqueductConfig(cfgPath)
 		if err != nil {
 			return fmt.Errorf("loading config: %w", err)
@@ -510,17 +509,63 @@ func resolveConfigPath() string {
 	return filepath.Join(home, ".cistern", "cistern.yaml")
 }
 
-// checkStartupCredentials returns an actionable error if ANTHROPIC_API_KEY is
-// unset or the Claude OAuth token is expired, preventing silent startup failures.
-func checkStartupCredentials(home string) error {
-	if os.Getenv("ANTHROPIC_API_KEY") == "" {
-		return fmt.Errorf("ANTHROPIC_API_KEY not set — add it to ~/.cistern/env and source it before starting")
+// checkStartupCredentials returns an actionable error if the required provider
+// credentials are unset or (for claude) the OAuth token is expired, preventing
+// silent startup failures.
+//
+// It parses cfgPath to determine which provider(s) are configured across all
+// repos. If cfgPath is empty or cannot be parsed, it falls back to checking
+// ANTHROPIC_API_KEY as the default (claude provider).
+func checkStartupCredentials(home, cfgPath string) error {
+	requiredVars, usesClaude := startupRequiredEnvVars(cfgPath)
+	for _, key := range requiredVars {
+		if os.Getenv(key) == "" {
+			return fmt.Errorf("%s not set — add it to ~/.cistern/env and source it before starting", key)
+		}
 	}
-	creds := oauth.Read(home)
-	if creds != nil && creds.ExpiresAt > 0 && time.Now().After(time.UnixMilli(creds.ExpiresAt)) {
-		return fmt.Errorf("authentication failed: Claude OAuth token is expired — run: ct doctor --fix")
+	if usesClaude {
+		creds := oauth.Read(home)
+		if creds != nil && creds.ExpiresAt > 0 && time.Now().After(time.UnixMilli(creds.ExpiresAt)) {
+			return fmt.Errorf("authentication failed: Claude OAuth token is expired — run: ct doctor --fix")
+		}
 	}
 	return nil
+}
+
+// startupRequiredEnvVars parses the aqueduct config at cfgPath and returns the
+// deduplicated list of env vars required by the configured provider preset(s),
+// along with whether any repo uses the claude provider (which requires an OAuth
+// token check at startup).
+//
+// If cfgPath is empty or the config cannot be parsed, it returns
+// ["ANTHROPIC_API_KEY"] and usesClaude=true as a safe default so that existing
+// setups without a config continue to work.
+func startupRequiredEnvVars(cfgPath string) (requiredVars []string, usesClaude bool) {
+	if cfgPath != "" {
+		if cfg, err := aqueduct.ParseAqueductConfig(cfgPath); err == nil {
+			seen := map[string]bool{}
+			for _, repo := range cfg.Repos {
+				preset, presErr := cfg.ResolveProvider(repo.Name)
+				if presErr != nil {
+					continue
+				}
+				if preset.Name == "claude" {
+					usesClaude = true
+				}
+				for _, envVar := range preset.EnvPassthrough {
+					if !seen[envVar] {
+						seen[envVar] = true
+						requiredVars = append(requiredVars, envVar)
+					}
+				}
+			}
+			if len(requiredVars) > 0 {
+				return requiredVars, usesClaude
+			}
+		}
+	}
+	// Fallback: no config or no repos configured — default to claude.
+	return []string{"ANTHROPIC_API_KEY"}, true
 }
 
 // repoWorkerNames returns the configured aqueduct names for a repo,

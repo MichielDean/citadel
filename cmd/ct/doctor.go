@@ -121,13 +121,20 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		// Permissions check — informational warning, does not fail the run.
 		checkCisternEnvPermissions(envPath)
 
-		var envKeyFix func() error
-		if doctorFix {
-			envKeyFix = func() error { return fixCisternEnvAddKey(envPath, "ANTHROPIC_API_KEY") }
+		// Check that each env var required by the configured provider(s) is
+		// present in the env file. Falls back to ANTHROPIC_API_KEY when no
+		// config exists yet (new-install path).
+		requiredEnvVars, _ := startupRequiredEnvVars(cfgPath)
+		for _, k := range requiredEnvVars {
+			key := k
+			var envKeyFix func() error
+			if doctorFix {
+				envKeyFix = func() error { return fixCisternEnvAddKey(envPath, key) }
+			}
+			ok = checkWithFix("~/.cistern/env: "+key, func() error {
+				return checkCisternEnvHasKey(envPath, key)
+			}, envKeyFix) && ok
 		}
-		ok = checkWithFix("~/.cistern/env: ANTHROPIC_API_KEY", func() error {
-			return checkCisternEnvHasKey(envPath, "ANTHROPIC_API_KEY")
-		}, envKeyFix) && ok
 	}
 
 	// Extended runtime checks that depend on config and DB being present.
@@ -185,7 +192,7 @@ func runDoctorExtendedChecks(cfg *aqueduct.AqueductConfig, cfgPath, home, dbPath
 	seenSkills := map[string]bool{}
 	seenBinaries := map[string]bool{}
 	seenEnvVars := map[string]bool{}
-
+	usesClaude := false
 
 	for _, repo := range cfg.Repos {
 		wfPath := repo.WorkflowPath
@@ -196,6 +203,9 @@ func runDoctorExtendedChecks(cfg *aqueduct.AqueductConfig, cfgPath, home, dbPath
 		// Resolve the effective provider preset for this repo.
 		preset, presErr := cfg.ResolveProvider(repo.Name)
 		if presErr == nil {
+			if preset.Name == "claude" {
+				usesClaude = true
+			}
 			// Check 1: provider binary present (deduplicated by command across repos).
 			if !seenBinaries[preset.Command] {
 				seenBinaries[preset.Command] = true
@@ -343,21 +353,24 @@ func runDoctorExtendedChecks(cfg *aqueduct.AqueductConfig, cfgPath, home, dbPath
 	checkStalledDroplets(dbPath)
 
 	// Check 13: Claude OAuth token expiry.
-	oauthOk := checkOAuthTokenExpiry(home)
-	if !oauthOk && doctorFix {
-		if err := fixOAuthToken(home); err != nil {
-			fmt.Printf("  fix failed: %v\n", err)
-		} else {
-			fmt.Printf("↻ Claude OAuth token: refreshed\n")
-			oauthOk = checkOAuthTokenExpiry(home)
+	// Skipped when no configured repo uses the claude provider.
+	if usesClaude {
+		oauthOk := checkOAuthTokenExpiry(home)
+		if !oauthOk && doctorFix {
+			if err := fixOAuthToken(home); err != nil {
+				fmt.Printf("  fix failed: %v\n", err)
+			} else {
+				fmt.Printf("↻ Claude OAuth token: refreshed\n")
+				oauthOk = checkOAuthTokenExpiry(home)
+			}
 		}
-	}
-	ok = oauthOk && ok
+		ok = oauthOk && ok
 
-	// Check 14: Service env ANTHROPIC_API_KEY matches current credentials token.
-	// fixOAuthToken (above) updates env.conf when --fix is set, so re-running the
-	// freshness check here reflects the updated state.
-	ok = checkServiceTokenFreshness(home) && ok
+		// Check 14: Service env ANTHROPIC_API_KEY matches current credentials token.
+		// fixOAuthToken (above) updates env.conf when --fix is set, so re-running the
+		// freshness check here reflects the updated state.
+		ok = checkServiceTokenFreshness(home) && ok
+	}
 
 	return ok
 }
