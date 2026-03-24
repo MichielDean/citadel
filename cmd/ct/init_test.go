@@ -369,47 +369,6 @@ func TestInit_EnvFileNotOverwrittenWithoutForce(t *testing.T) {
 	}
 }
 
-// --- createCisternEnvFileIfAbsent unit tests ---
-
-func TestCreateCisternEnvFileIfAbsent_CreatesFileWithMode600(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "env")
-
-	if err := createCisternEnvFileIfAbsent(path); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("file not created: %v", err)
-	}
-	if perm := info.Mode().Perm(); perm != 0o600 {
-		t.Errorf("expected mode 0600, got %04o", perm)
-	}
-}
-
-func TestCreateCisternEnvFileIfAbsent_ExistingFile_IsNotModified(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "env")
-
-	existing := []byte("ANTHROPIC_API_KEY=existing\n")
-	if err := os.WriteFile(path, existing, 0o600); err != nil {
-		t.Fatalf("write existing: %v", err)
-	}
-
-	if err := createCisternEnvFileIfAbsent(path); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != string(existing) {
-		t.Error("existing env file was modified")
-	}
-}
-
 // --- addLineToGitignore unit tests ---
 
 func TestAddLineToGitignore_CreatesFileWithLine(t *testing.T) {

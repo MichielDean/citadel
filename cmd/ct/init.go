@@ -73,7 +73,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	// 5. Create ~/.cistern/env credential file (chmod 600) if absent.
 	envFilePath := filepath.Join(cisternDir, "env")
-	if err := createCisternEnvFileIfAbsent(envFilePath); err != nil {
+	if err := fixCisternEnvFile(envFilePath); err != nil {
 		return fmt.Errorf("create env file: %w", err)
 	}
 
@@ -144,18 +144,6 @@ func writeFileIfAbsent(path string, data []byte, force bool) error {
 	}
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
-	}
-	return nil
-}
-
-// createCisternEnvFileIfAbsent creates an empty ~/.cistern/env with mode 0o600
-// if the file does not already exist. Existing files are left untouched.
-func createCisternEnvFileIfAbsent(path string) error {
-	if _, err := os.Stat(path); err == nil {
-		return nil // already exists — do not modify
-	}
-	if err := os.WriteFile(path, []byte{}, 0o600); err != nil {
-		return fmt.Errorf("create %s: %w", path, err)
 	}
 	return nil
 }
