@@ -9,6 +9,13 @@
 - No host bind-mounts; `--privileged` grants an isolated cgroup namespace, not a shared one — no host-state leakage between runs
 - `test/docker/systemd/README.md` documents the `--privileged` requirement, capability table (`CAP_SYS_ADMIN`, `CAP_SYS_PTRACE`, writable cgroup namespace), masked-unit rationale, and the narrower capability set available for hardened environments
 
+### Docker systemd test infrastructure for installer tests (ci-chp73)
+- Adds `tests/installer/Dockerfile.systemd` — multi-stage build: `golang:1.26` builder compiles `ct` and `fakeagent`; `jrei/systemd-ubuntu:24.04` runtime runs systemd as PID 1 with no `pass` or GPG installed
+- Adds `tests/installer/build.sh` — builds the `cistern/installer-test:latest` image from the repository root; image tag overridable via `CISTERN_TEST_IMAGE`
+- Adds `tests/installer/run-tests.sh` — 8 smoke tests covering: systemd boot, `ct version`, fakeagent `--print` output, `claude` on PATH, absence of `pass`, `ct init` config creation, `ct doctor` claude check, and `start-castellarius.sh` executable; script waits up to 60 s for `multi-user.target` internally so callers need no external `sleep`
+- Adds `tests/installer/README.md` — documents required `--privileged` flag and all `docker run` options, test output format, GitHub Actions integration snippet, and credential story (no API key needed for smoke tests)
+- `fakeagent` (from `internal/testutil/fakeagent/`) is installed as `/usr/local/bin/claude` — satisfies `exec.LookPath("claude")` without a real Claude CLI or API key
+
 ### Auto-refresh Claude OAuth token on expiry (ci-cms3j)
 - `ct doctor --fix` now automatically refreshes the Claude OAuth access token when it is expired or near expiry: reads the stored refresh token, calls the Anthropic OAuth endpoint, writes the new access token to `~/.claude/.credentials.json`, updates the systemd service drop-in (`env.conf`) if present, and reloads/restarts the `cistern-castellarius` systemd service so the new token takes effect immediately
 - Before spawning each agent session, the Castellarius silently checks whether the access token is expired or within a 5-minute window. If so, it attempts a background refresh using the stored refresh token and injects the new token into the session environment — sessions no longer fail silently with stale credentials

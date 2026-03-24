@@ -1,0 +1,72 @@
+# tests/installer/Dockerfile.systemd
+#
+# Systemd-capable test image for Cistern installer smoke tests.
+#
+# Build from the repository root:
+#   docker build -f tests/installer/Dockerfile.systemd -t cistern/installer-test .
+#
+# Run (--privileged is required for systemd to manage cgroups):
+#   docker run --privileged --rm -d --name cistern-test cistern/installer-test
+#   docker exec cistern-test /usr/local/bin/run-tests.sh
+#   docker stop cistern-test
+
+# ─── Stage 1: build Go binaries ───────────────────────────────────────────────
+# golang:1.26 is based on Debian Bookworm. The runtime stage uses Ubuntu 24.04
+# (glibc 2.39) which is newer than Bookworm's glibc 2.36, so the CGO-linked
+# binaries are forward-compatible.
+FROM golang:1.26 AS builder
+
+WORKDIR /src
+
+# Cache dependency downloads before copying source.
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+# Build ct (CGO_ENABLED=1 required by mattn/go-sqlite3).
+RUN CGO_ENABLED=1 GOOS=linux \
+    go build -o /out/ct ./cmd/ct
+
+# Build fakeagent — the Claude stub used in tests.
+# No CGO dependency; built as a portable binary.
+RUN CGO_ENABLED=0 GOOS=linux \
+    go build -o /out/fakeagent ./internal/testutil/fakeagent/
+
+# ─── Stage 2: systemd-capable runtime ─────────────────────────────────────────
+# jrei/systemd-ubuntu:24.04 provides Ubuntu 24.04 with systemd as PID 1,
+# pre-configured for container use. Ubuntu 24.04 ships glibc 2.39, which
+# satisfies the runtime requirements of binaries built on Debian Bookworm.
+FROM jrei/systemd-ubuntu:24.04
+
+# Install runtime dependencies.
+# Deliberately excludes pass and gnupg — the credential story must work without
+# them (ANTHROPIC_API_KEY or OAuth tokens are used instead).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        tmux \
+        git \
+        curl \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Cistern binaries ─────────────────────────────────────────────────────────
+
+# ct CLI — the main Cistern binary.
+COPY --chmod=0755 --from=builder /out/ct /usr/local/bin/ct
+
+# fakeagent installed as "claude" — acts as the Claude CLI stub.
+# Placed at /usr/local/bin/claude so exec.LookPath("claude") resolves it,
+# matching the path npm installs the real Claude Code CLI.
+COPY --chmod=0755 --from=builder /out/fakeagent /usr/local/bin/claude
+
+# ── Installer scripts ─────────────────────────────────────────────────────────
+
+COPY --chmod=0755 start-castellarius.sh /usr/local/bin/start-castellarius.sh
+
+COPY --chmod=0755 tests/installer/run-tests.sh /usr/local/bin/run-tests.sh
+
+# ── systemd init ──────────────────────────────────────────────────────────────
+# systemd is PID 1. Tests are run by exec-ing into the container once systemd
+# has reached multi-user.target:
+#   docker exec <container> /usr/local/bin/run-tests.sh
+ENTRYPOINT ["/lib/systemd/systemd"]
