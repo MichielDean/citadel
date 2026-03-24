@@ -94,7 +94,10 @@ func (a *Adapter) spawnAutomated(ctx context.Context, req castellarius.Cataracta
 	// aqueduct-named sandbox for automated steps (they don't use the worktree directly).
 	sandboxDir := req.SandboxDir
 	if sandboxDir == "" {
-		home, _ := os.UserHomeDir()
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("adapter: home dir: %w", err)
+		}
 		sandboxDir = filepath.Join(home, ".cistern", "sandboxes", req.RepoConfig.Name, req.AqueductName)
 	}
 	branch := "feat/" + req.Item.ID

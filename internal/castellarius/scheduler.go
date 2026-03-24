@@ -650,7 +650,9 @@ func (s *Castellarius) observeRepo(_ context.Context, repo aqueduct.RepoConfig) 
 					)
 					s.logger.Warn("Phantom commit detected — recirculating to implement",
 						"droplet", item.ID, "commit", lastCommit)
-					_ = client.AddNote(item.ID, "scheduler", note)
+					if noteErr := client.AddNote(item.ID, "scheduler", note); noteErr != nil {
+						s.logger.Warn("scheduler: AddNote failed", "droplet", item.ID, "error", noteErr)
+					}
 					if err := client.Assign(item.ID, "", "implement"); err != nil {
 						s.logger.Error("observe: phantom commit recirculate failed", "droplet", item.ID, "error", err)
 					}
@@ -829,8 +831,10 @@ func (s *Castellarius) dispatchRepo(ctx context.Context, repo aqueduct.RepoConfi
 					s.logger.Error("dirty check: git status failed — recirculating conservatively",
 						"droplet", req.Item.ID, "error", dirtyErr)
 					s.dispatchLoop.recordFailure(req.Item.ID)
-					_ = client.AddNote(req.Item.ID, "scheduler",
-						fmt.Sprintf("Dispatch blocked: could not check worktree state: %v", dirtyErr))
+					if noteErr := client.AddNote(req.Item.ID, "scheduler",
+						fmt.Sprintf("Dispatch blocked: could not check worktree state: %v", dirtyErr)); noteErr != nil {
+						s.logger.Warn("scheduler: AddNote failed", "droplet", req.Item.ID, "error", noteErr)
+					}
 					if err2 := client.Assign(req.Item.ID, "", req.Step.Name); err2 != nil {
 						s.logger.Error("reset after dirty-check error", "droplet", req.Item.ID, "error", err2)
 					}
@@ -848,7 +852,9 @@ func (s *Castellarius) dispatchRepo(ctx context.Context, repo aqueduct.RepoConfi
 						"files", dirtyFiles,
 					)
 					s.dispatchLoop.recordFailure(req.Item.ID)
-					_ = client.AddNote(req.Item.ID, "scheduler", note)
+					if noteErr := client.AddNote(req.Item.ID, "scheduler", note); noteErr != nil {
+						s.logger.Warn("scheduler: AddNote failed", "droplet", req.Item.ID, "error", noteErr)
+					}
 					if err2 := client.Assign(req.Item.ID, "", req.Step.Name); err2 != nil {
 						s.logger.Error("reset after dirty check", "droplet", req.Item.ID, "error", err2)
 					}

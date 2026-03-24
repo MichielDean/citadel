@@ -1,6 +1,8 @@
 package castellarius
 
 import (
+	"bytes"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -283,5 +285,41 @@ func TestRecoverDispatchLoop_WorktreeRecreateFails_DoesNotWriteSuccessNote(t *te
 	}
 	if !hasFailureNote {
 		t.Error("expected a failure note for worktree recreation failure, got none")
+	}
+}
+
+// TestRecoverDispatchLoop_AddNoteError_EscalationPath_LogsWarn verifies that
+// when AddNote returns an error during the escalation path (fixAttempt >
+// dispatchMaxSelfFix), the error is logged at Warn level rather than silently
+// discarded.
+func TestRecoverDispatchLoop_AddNoteError_EscalationPath_LogsWarn(t *testing.T) {
+	const itemID = "dl-note-err-1"
+
+	client := newMockClient()
+	client.addNoteErr = errors.New("db write error")
+	item := &cistern.Droplet{ID: itemID, CurrentCataractae: "implement", Status: "in_progress"}
+	client.items[itemID] = item
+
+	config := testConfig()
+	workflows := map[string]*aqueduct.Workflow{"test-repo": testWorkflow()}
+	clients := map[string]CisternClient{"test-repo": client}
+	runner := newMockRunner(client)
+
+	var buf bytes.Buffer
+	logger := newTestLogger(&buf)
+	sched := NewFromParts(config, workflows, clients, runner,
+		WithLogger(logger),
+		WithSandboxRoot(t.TempDir()),
+	)
+
+	// Push fix attempt count above dispatchMaxSelfFix to trigger the escalation path.
+	for range dispatchMaxSelfFix + 1 {
+		sched.dispatchLoop.incrementFix(itemID)
+	}
+
+	sched.recoverDispatchLoop(client, item, config.Repos[0])
+
+	if !strings.Contains(buf.String(), "WARN") {
+		t.Errorf("expected WARN log when AddNote fails during escalation; log: %q", buf.String())
 	}
 }
