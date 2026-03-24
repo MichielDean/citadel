@@ -482,10 +482,11 @@ ct droplet block <id> --notes "..."                               Block with not
 ct droplet approve <id>                                           Approve a critical droplet for delivery
 
 # Peek — observe live agent output
-ct droplet peek <id>                                              Tail the active tmux session
-ct droplet peek <id> --lines 100                                  Show more lines (default: 50)
-ct droplet peek <id> --follow                                     Re-capture every 3 seconds (Ctrl-C to stop)
-ct droplet peek <id> --raw                                        Include ANSI color codes
+ct droplet peek <id>                                              Attach read-only to the live tmux session (or show last notes if session ended)
+ct droplet peek <id> --snapshot                                   Capture a static snapshot instead of live attach
+ct droplet peek <id> --snapshot --lines 100                       With --snapshot: show more lines (default: 50)
+ct droplet peek <id> --snapshot --follow                          With --snapshot: re-capture every 3 seconds (Ctrl-C to stop)
+ct droplet peek <id> --snapshot --raw                             With --snapshot: include ANSI color codes
 
 # Droplet issues — structured findings from adversarial-review
 ct droplet issue add <id> "<description>"                         File a finding

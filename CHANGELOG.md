@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Peek: attach read-only to live tmux session instead of polling snapshots (ci-61hbi)
+- `ct droplet peek <id>` now attaches read-only to the live agent tmux session by default (`tmux attach-session -r`), providing real-time scrolling output instead of static snapshots
+- Session fallback: if the session doesn't exist (agent completed), shows the last 10 lines of the most recent note
+- `--snapshot` flag restores the old polling behavior: `tmux capture-pane` every 500ms, for non-interactive use (scripts, web dashboard)
+- `--follow` flag (re-capture every 3 seconds) now requires `--snapshot`; using `--follow` without `--snapshot` returns an actionable error
+- `--lines` and `--raw` flags apply only with `--snapshot`; without `--snapshot` they are ignored
+- Dashboard TUI: pressing `p` when inside a tmux session now opens a new tmux window (`tmux new-window "tmux attach-session -r"`) so the user can observe the live agent in a separate window while the dashboard continues running; when not in tmux, falls back to the inline capture-pane overlay
+- Dashboard TUI: multi-aqueduct `p` picker now clears the peek-select mode overlay on successful new-window spawn, so the picker dismisses when the new window opens
+- Tests added: `TestPeekCmd_LiveAttach_ExistingSession` verifies live attach path; `TestDashboard_PeekSelect_InTmux_Success_ClearsPeekSelectMode` verifies the picker clears on spawn
+
 ### Startup credentials and doctor checks: provider-aware instead of hardcoded to Anthropic (ci-hhj3d)
 - `checkStartupCredentials()` in `cmd/ct/castellarius.go` now parses the aqueduct config and checks only the environment variables required by each configured repo's provider preset, instead of always requiring `ANTHROPIC_API_KEY`. Falls back to `ANTHROPIC_API_KEY` when no config exists (new-install path).
 - `startupRequiredEnvVars()` now uses a `resolved` flag to distinguish between "providers resolved but need zero env vars" (e.g., opencode provider) and "no providers resolved at all", fixing a bug where opencode users were incorrectly blocked on missing `ANTHROPIC_API_KEY` and expired Claude OAuth tokens.
