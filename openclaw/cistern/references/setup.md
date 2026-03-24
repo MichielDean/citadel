@@ -18,7 +18,21 @@ PATH="/usr/local/go/bin:$PATH" go build -o ~/go/bin/ct ./cmd/ct/
 
 ```bash
 ct --help                   # Verify binary works
-ct castellarius start       # Start the daemon
+ct init                     # Create ~/.cistern/ with default config, credentials file, and startup script
+```
+
+After `ct init`, add your credentials to `~/.cistern/env`:
+
+```bash
+echo 'ANTHROPIC_API_KEY=sk-ant-...' >> ~/.cistern/env
+echo 'GH_TOKEN=ghp_...' >> ~/.cistern/env
+chmod 600 ~/.cistern/env
+```
+
+Then start the daemon:
+
+```bash
+ct castellarius start       # Start via ~/.cistern/start-castellarius.sh (sources ~/.cistern/env)
 ct status                   # Confirm running
 ```
 

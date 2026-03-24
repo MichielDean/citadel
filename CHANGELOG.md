@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### ~/.cistern/env credential store; ct init, ct doctor, start-castellarius.sh (ci-qdc7q)
+- `~/.cistern/env` is now the canonical credential store — a simple `KEY=VALUE` file (one pair per line, chmod 600)
+- `ct init` creates `~/.cistern/env` with chmod 600, adds `env` to `~/.cistern/.gitignore`, and writes `~/.cistern/start-castellarius.sh`
+- `~/.cistern/start-castellarius.sh` sources `~/.cistern/env` before exec-ing `ct castellarius start` — updated credentials are picked up on every restart without editing the systemd service drop-in
+- `ct doctor` checks that `~/.cistern/env` exists, is chmod 600 (warn if world-readable), and contains `ANTHROPIC_API_KEY`
+- `ct doctor --fix` creates a missing `~/.cistern/env` and, in an interactive terminal, prompts for `ANTHROPIC_API_KEY` with masked input (no echo)
+
 ### systemd-capable Docker base image for installer tests (ci-9olg2)
 - Adds `test/docker/systemd/Dockerfile` — a Debian Bookworm image that boots with `systemd` as PID 1, suitable for testing systemd-managed service installers (e.g. `cistern-castellarius.service` via `install.sh`)
 - Sets `ENV container=docker` so systemd skips hardware-only targets; sends `STOPSIGNAL SIGRTMIN+3` so `docker stop` triggers an orderly shutdown instead of `SIGTERM`

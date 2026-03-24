@@ -84,12 +84,13 @@ ct doctor
 To recover:
 
 1. Run `claude` interactively in a terminal — it will detect the expired token and prompt you to log in again
-2. After refreshing, update the service drop-in with the new token:
+2. After refreshing, update `~/.cistern/env` with the new key and restart:
    ```bash
-   # Open and edit the ANTHROPIC_API_KEY line:
-   nano ~/.config/systemd/user/cistern-castellarius.service.d/env.conf
-   systemctl --user daemon-reload
-   systemctl --user restart cistern-castellarius
+   # Edit the ANTHROPIC_API_KEY line:
+   nano ~/.cistern/env
+   # Then restart the Castellarius to pick up the new value:
+   ct castellarius start
+   # or: systemctl --user restart cistern-castellarius
    ```
 3. Run `ct doctor` again to confirm both checks pass
 
