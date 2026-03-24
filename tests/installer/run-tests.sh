@@ -99,8 +99,8 @@ fi
 # Given: Dockerfile does not install pass
 # When:  checking for the pass binary
 # Then:  it must be absent (credential story works without it)
-if command -v pass >/dev/null 2>&1; then
-    fail "no_pass_installed" "pass binary found at $(command -v pass) — should not be installed"
+if type -P pass >/dev/null 2>&1; then
+    fail "no_pass_installed" "pass binary found at $(type -P pass) — should not be installed"
 else
     pass "no_pass_installed"
 fi
