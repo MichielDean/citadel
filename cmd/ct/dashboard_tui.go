@@ -245,7 +245,6 @@ func (m dashboardTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case tuiPeekNewWindowErrMsg:
-			m.peekSelectMode = false
 			return m.openInlinePeek(msg.ch, msg.err)
 		}
 		return m, nil
