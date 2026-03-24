@@ -71,6 +71,28 @@ Drought hooks run during idle periods. If they're not firing:
 2. Check if the aqueduct has active droplets (drought only triggers when empty)
 3. Check logs: `journalctl --user -u cistern-castellarius | grep drought`
 
+## Claude OAuth Token Expired
+
+Sessions crash immediately with no clear error when the Claude OAuth token is expired. `ct doctor` catches this before it becomes a mystery:
+
+```bash
+ct doctor
+# ✗ Claude OAuth token: expired 2h15m ago — run 'claude' interactively to refresh
+# ✗ service ANTHROPIC_API_KEY: stale — update env.conf with the current token and restart
+```
+
+To recover:
+
+1. Run `claude` interactively in a terminal — it will detect the expired token and prompt you to log in again
+2. After refreshing, update the service drop-in with the new token:
+   ```bash
+   # Open and edit the ANTHROPIC_API_KEY line:
+   nano ~/.config/systemd/user/cistern-castellarius.service.d/env.conf
+   systemctl --user daemon-reload
+   systemctl --user restart cistern-castellarius
+   ```
+3. Run `ct doctor` again to confirm both checks pass
+
 ## Database Issues
 
 The SQLite DB at `~/.cistern/cistern.db` is the source of truth.

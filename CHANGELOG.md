@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### ct doctor: OAuth token expiry and service env token freshness (ci-gr6up)
+- `ct doctor` now checks whether the Claude OAuth token in `~/.claude/.credentials.json` is fresh, expiring soon, or already expired — reports ✓ with expiry time, ⚠ with time remaining if within 24 h, or ✗ with a prompt to run `claude` interactively to refresh
+- `ct doctor` checks whether `ANTHROPIC_API_KEY` in the systemd service drop-in (`~/.config/systemd/user/cistern-castellarius.service.d/env.conf`) matches the current `accessToken` in `~/.claude/.credentials.json` — reports ✗ and prompts to update env.conf and restart if they differ
+- Both checks skip silently when the credentials file or service drop-in is absent — no false positives on non-systemd or non-Claude setups
+- Shared `readClaudeCredentials` helper deduplicates credential file reading across the two checks
+
 ### Arch renderer: static pixel map + semantic color roles (ci-mj0h3)
 - Replaces the inline switch-case arch-shape logic with a static `archPixelMap` (`[14][28]rune`) — pillar shape is now compiler-enforced and visually readable in source
 - Extracts named color-role variables (`archRoleBackground`, `archRoleEdge`, `archRoleIdle`, `archRoleActive`, `archRoleDrought`, `archRoleChannelWall`, `archRoleWaterBright/Mid/Dim`) replacing scattered inline hex literals — palette is now easy to retheme from one place
