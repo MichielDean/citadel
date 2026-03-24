@@ -699,5 +699,5 @@ func init() {
 	rootCmd.AddCommand(feedCmd)
 
 	dashboardCmd.Flags().BoolVar(&dashboardWebFlag, "web", false, "Start HTTP web dashboard instead of TUI")
-	dashboardCmd.Flags().StringVar(&dashboardAddrFlag, "addr", ":5737", "Address for web dashboard (default :5737)")
+	dashboardCmd.Flags().StringVar(&dashboardAddrFlag, "addr", "127.0.0.1:5737", "Address for web dashboard (default 127.0.0.1:5737)")
 }
