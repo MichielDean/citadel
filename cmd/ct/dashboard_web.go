@@ -302,6 +302,11 @@ const tuiClientChanSize = 64
 // tuiRestartDelay is the pause between child process exit and automatic restart.
 const tuiRestartDelay = 500 * time.Millisecond
 
+// tuiMaxBackoff is the maximum delay between retries when spawn fails repeatedly.
+// Spawn failures (missing binary, PTY allocation error) use exponential backoff
+// starting at tuiRestartDelay and capping here, preventing a busy-wait loop.
+const tuiMaxBackoff = 30 * time.Second
+
 // tuiClient is one active WebSocket consumer of DashboardTUI's broadcast.
 type tuiClient struct {
 	ch chan []byte
@@ -356,33 +361,52 @@ func (d *DashboardTUI) Stop() {
 }
 
 // run is the main lifecycle loop: spawn → read → restart.
+// Successful spawns restart with tuiRestartDelay. Spawn failures use exponential
+// backoff (starting at tuiRestartDelay, doubling each failure, capped at tuiMaxBackoff)
+// to avoid a busy-wait goroutine when the binary is missing or PTY allocation fails.
 func (d *DashboardTUI) run() {
 	defer close(d.doneCh)
+	backoff := tuiRestartDelay
 	for {
 		select {
 		case <-d.stopCh:
 			return
 		default:
 		}
-		d.runOnce()
+		var delay time.Duration
+		if d.runOnce() {
+			// Child spawned and ran (exited naturally or was stopped). Restart quickly.
+			delay = tuiRestartDelay
+			backoff = tuiRestartDelay // reset exponential backoff
+		} else {
+			// Spawn failed. Apply exponential backoff.
+			delay = backoff
+			backoff *= 2
+			if backoff > tuiMaxBackoff {
+				backoff = tuiMaxBackoff
+			}
+		}
 		// Pause before restart, or exit immediately if stopped.
 		select {
 		case <-d.stopCh:
 			return
-		case <-time.After(tuiRestartDelay):
+		case <-time.After(delay):
 		}
 	}
 }
 
 // runOnce spawns the child process once and reads its PTY output until it exits.
-func (d *DashboardTUI) runOnce() {
+// It returns true if the spawn succeeded (child ran until exit), or false if
+// spawn itself failed, so the caller can apply appropriate retry backoff.
+func (d *DashboardTUI) runOnce() bool {
 	spawn := d.spawnFn
 	if spawn == nil {
 		spawn = d.defaultSpawn
 	}
 	rwc, resizeFn, waitFn, err := spawn()
 	if err != nil {
-		return
+		fmt.Fprintf(os.Stderr, "ct dashboard: spawn error: %v\n", err)
+		return false
 	}
 
 	d.mu.Lock()
@@ -426,7 +450,7 @@ func (d *DashboardTUI) runOnce() {
 			d.broadcast(chunk)
 		}
 		if err != nil {
-			return
+			return true
 		}
 	}
 }

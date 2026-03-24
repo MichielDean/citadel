@@ -1120,6 +1120,124 @@ func TestDashboardTUI_ReconnectDoesNotRestartChild(t *testing.T) {
 	tui.Stop()
 }
 
+// TestDashboardTUI_RingBuffer_SnapshotOnReconnect verifies that PTY output written
+// before a WebSocket disconnect is captured in the ring buffer and returned as a
+// snapshot to a reconnecting client via attach().
+//
+// Given: a running DashboardTUI with a mock PTY pipe and a connected client
+// When:  known data is written through the mock PTY (simulating child output)
+// Then:  the connected client receives the broadcast
+// When:  the client detaches (WebSocket disconnect) and a new client re-attaches
+// Then:  the snapshot returned by attach() contains the PTY output in order
+func TestDashboardTUI_RingBuffer_SnapshotOnReconnect(t *testing.T) {
+	ptyA, ptyB := net.Pipe()
+	t.Cleanup(func() { ptyA.Close(); ptyB.Close() })
+
+	tui := newDashboardTUI("", "", "")
+	tui.spawnFn = func() (io.ReadWriteCloser, func(uint16, uint16), func(), error) {
+		return ptyA, nil, nil, nil
+	}
+	tui.Start()
+
+	// Attach clientA before writing so we can synchronize on the broadcast.
+	clientA, _ := tui.attach()
+
+	// Write two known chunks through the mock PTY. net.Pipe is synchronous:
+	// each Write blocks until the corresponding Read completes, so after Write
+	// returns the data is already in the ring buffer.
+	chunks := []string{"snapshot-chunk-1", "snapshot-chunk-2"}
+	for _, c := range chunks {
+		if _, err := ptyB.Write([]byte(c)); err != nil {
+			t.Fatalf("write to pty: %v", err)
+		}
+		// Drain clientA's channel to confirm the broadcast completed.
+		select {
+		case <-clientA.ch:
+		case <-time.After(500 * time.Millisecond):
+			t.Fatalf("clientA did not receive broadcast for chunk %q", c)
+		}
+	}
+
+	// Simulate WebSocket disconnect: detach without stopping the child.
+	tui.detach(clientA)
+
+	// Simulate WebSocket reconnect: attach a new client and capture the snapshot.
+	_, snapshot := tui.attach()
+
+	tui.Stop()
+
+	// Snapshot must contain both chunks in chronological order.
+	if len(snapshot) < len(chunks) {
+		t.Fatalf("snapshot has %d chunks, want at least %d", len(snapshot), len(chunks))
+	}
+	combined := make([]byte, 0)
+	for _, s := range snapshot {
+		combined = append(combined, s...)
+	}
+	got := string(combined)
+	prevIdx := -1
+	for _, c := range chunks {
+		idx := strings.Index(got, c)
+		if idx < 0 {
+			t.Errorf("snapshot missing chunk %q; full snapshot: %q", c, got)
+			continue
+		}
+		if idx < prevIdx {
+			t.Errorf("chunk %q appears before earlier chunk in snapshot (not chronological)", c)
+		}
+		prevIdx = idx
+	}
+}
+
+// TestDashboardTUI_RingBuffer_WrapAroundEvictsOldest verifies the ring buffer
+// wrap-around behaviour: when more than tuiOutputBufChunks entries are broadcast,
+// the oldest entries are evicted and the snapshot returned by attach() is in
+// chronological order starting from the (N+1)-th chunk written.
+//
+// Given: a DashboardTUI with no running child (broadcast driven directly)
+// When:  tuiOutputBufChunks+1 chunks are broadcast (one past capacity)
+// Then:  snapshot length == tuiOutputBufChunks (oldest evicted)
+// And:   snapshot[0] is the second chunk written (first was evicted)
+// And:   snapshot[last] is the most recent chunk
+// And:   all chunks appear in chronological order
+func TestDashboardTUI_RingBuffer_WrapAroundEvictsOldest(t *testing.T) {
+	tui := newDashboardTUI("", "", "")
+	// No Start() — we drive broadcast() directly to avoid PTY/goroutine overhead.
+
+	total := tuiOutputBufChunks + 1
+	for i := 0; i < total; i++ {
+		tui.broadcast([]byte(fmt.Sprintf("chunk-%04d", i)))
+	}
+
+	_, snapshot := tui.attach()
+
+	// Ring must be at full capacity.
+	if len(snapshot) != tuiOutputBufChunks {
+		t.Fatalf("snapshot len = %d, want %d (ring capacity)", len(snapshot), tuiOutputBufChunks)
+	}
+
+	// chunk-0000 was evicted; oldest surviving entry is chunk-0001.
+	want0 := fmt.Sprintf("chunk-%04d", 1)
+	if !bytes.Equal(snapshot[0], []byte(want0)) {
+		t.Errorf("snapshot[0] = %q, want %q (oldest after wrap)", snapshot[0], want0)
+	}
+
+	// Most recent entry is the last chunk written.
+	wantLast := fmt.Sprintf("chunk-%04d", total-1)
+	if !bytes.Equal(snapshot[len(snapshot)-1], []byte(wantLast)) {
+		t.Errorf("snapshot[last] = %q, want %q", snapshot[len(snapshot)-1], wantLast)
+	}
+
+	// Every consecutive pair must be in chronological (lexicographic) order.
+	for i := 1; i < len(snapshot); i++ {
+		prev := string(snapshot[i-1])
+		curr := string(snapshot[i])
+		if prev >= curr {
+			t.Errorf("snapshot not chronological at index %d: %q >= %q", i, prev, curr)
+		}
+	}
+}
+
 // readWSTextFrame reads one unmasked WebSocket text frame from br and returns the payload.
 func readWSTextFrame(br *bufio.Reader) (string, error) {
 	header := make([]byte, 2)
