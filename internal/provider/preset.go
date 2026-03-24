@@ -60,8 +60,6 @@ type ProviderPreset struct {
 	InstructionsFile string `json:"instructions_file,omitempty"`
 	// ReadyPromptPrefix is text that signals the agent is ready to receive input.
 	ReadyPromptPrefix string `json:"ready_prompt_prefix,omitempty"`
-	// ReadyDelayMs is milliseconds to wait after spawn before sending the first prompt.
-	ReadyDelayMs int `json:"ready_delay_ms,omitempty"`
 	// ResumeFlag is the CLI flag used to resume a previous session (e.g. "--resume").
 	ResumeFlag string `json:"resume_flag,omitempty"`
 	// ResumeStyle controls whether resuming uses a flag or a positional subcommand.
@@ -131,9 +129,9 @@ var builtins = []ProviderPreset{
 		Name:             "copilot",
 		Command:          "copilot",
 		Args:             []string{"--yolo"},
+		PromptFlag:       "-p",
 		EnvPassthrough:   []string{"GH_TOKEN"},
 		InstructionsFile: "AGENTS.md",
-		ReadyDelayMs:     5000,
 		NonInteractive:   NonInteractiveConfig{PromptFlag: "-p"},
 	},
 	{

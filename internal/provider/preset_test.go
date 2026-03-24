@@ -68,11 +68,9 @@ func TestBuiltins_CopilotPreset(t *testing.T) {
 
 	assertStr(t, "Command", "copilot", got.Command)
 	assertStrs(t, "Args", []string{"--yolo"}, got.Args)
+	assertStr(t, "PromptFlag", "-p", got.PromptFlag)
 	assertStrs(t, "EnvPassthrough", []string{"GH_TOKEN"}, got.EnvPassthrough)
 	assertStr(t, "InstructionsFile", "AGENTS.md", got.InstructionsFile)
-	if got.ReadyDelayMs != 5000 {
-		t.Errorf("ReadyDelayMs = %d, want 5000", got.ReadyDelayMs)
-	}
 }
 
 // TestBuiltins_OpencodePreset validates each field of the opencode built-in.
