@@ -1,35 +1,9 @@
 # ─── systemd-capable base image for installer tests ──────────────────────────
 #
-# WHY --privileged IS REQUIRED
-# ─────────────────────────────────────────────────────────────────────────────
-# systemd acts as PID 1 and manages the Linux cgroup hierarchy.  Inside a
-# normal (non-privileged) Docker container the kernel presents the cgroup
-# filesystem as read-only or restricted; systemd detects this and either
-# refuses to start or enters a permanently degraded state that cannot
-# supervise child services.
+# Boots with systemd as PID 1 for testing systemd-managed service installers.
+# Requires --privileged to give systemd a writable cgroup namespace.
+# See README.md for capability details, masked units, and hardening options.
 #
-# --privileged provides:
-#   • A writable cgroup namespace (an isolated subtree — NOT the host tree)
-#   • CAP_SYS_ADMIN  — required for mounting the cgroup hierarchy and
-#                      managing kernel namespaces
-#   • CAP_SYS_PTRACE — used by systemd-journald to read process metadata
-#   • Full /sys/fs/cgroup access so systemd can create per-service slices
-#
-# A fine-grained capability set + custom seccomp profile can replace
-# --privileged in hardened production environments, but --privileged is the
-# correct, self-documenting choice for a developer/CI test harness where
-# reproducibility matters more than minimal attack surface.
-#
-# NO HOST-STATE LEAKAGE
-# ─────────────────────────────────────────────────────────────────────────────
-# This image does NOT bind-mount /sys/fs/cgroup or any other host directory.
-# --privileged creates an *isolated* cgroup namespace for the container; the
-# host cgroup tree is not visible to or modified by the container.  Each
-# `docker run` starts from a clean, immutable image layer with no persistent
-# state.
-#
-# USAGE
-# ─────────────────────────────────────────────────────────────────────────────
 #   docker build -t cistern-systemd-test .
 #   docker run --privileged --rm -d --name systemd-test cistern-systemd-test
 #   docker exec systemd-test systemctl is-system-running   # → running|degraded
