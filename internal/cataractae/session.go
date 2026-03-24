@@ -3,12 +3,16 @@ package cataractae
 import (
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
+	"time"
 
+	"github.com/MichielDean/cistern/internal/oauth"
 	"github.com/MichielDean/cistern/internal/provider"
 )
 
@@ -61,6 +65,12 @@ func (s *Session) spawn() error {
 	if err != nil {
 		return fmt.Errorf("spawn: cannot determine home directory: %w", err)
 	}
+
+	// Pre-spawn: silently refresh Claude OAuth token if expired or near expiry.
+	if err := ensureClaudeOAuthFresh(home); err != nil {
+		return fmt.Errorf("spawn: %w", err)
+	}
+
 	skillsDir := filepath.Join(home, ".cistern", "skills")
 
 	args := []string{"new-session", "-d", "-s", s.ID, "-c", s.WorkDir}
@@ -414,6 +424,63 @@ func (s *Session) isAgentAlive() bool {
 // tests can substitute it to inject a known absolute path without modifying the
 // process environment or requiring the binary to exist on the test machine.
 var claudePathFn = claudePath
+
+// oauthTokenURL is the OAuth token endpoint used for pre-spawn token refresh.
+// Replaced in tests with a test server URL.
+var oauthTokenURL = oauth.DefaultTokenURL
+
+// oauthHTTPDo is the HTTP transport used for pre-spawn token refresh.
+// Replaced in tests with a test server client.
+var oauthHTTPDo func(*http.Request) (*http.Response, error) = http.DefaultClient.Do
+
+// ensureClaudeOAuthFreshMu guards ensureClaudeOAuthFresh against concurrent calls
+// from parallel spawn goroutines. This prevents concurrent read-modify-write races
+// on ~/.claude/.credentials.json, env.conf, and os.Setenv.
+var ensureClaudeOAuthFreshMu sync.Mutex
+
+// ensureClaudeOAuthFresh checks whether the Claude OAuth access token is expired
+// or within the 5-minute refresh window and, if so, attempts a silent refresh.
+// On success the new token is written to credentials and injected into the
+// current process environment so collectEnvArgs picks it up.
+// Returns nil when no credentials file is present or no refresh token is available
+// (those cases are skipped silently — other auth methods may be in use).
+// Returns an error if the token needs refreshing but the refresh fails.
+func ensureClaudeOAuthFresh(home string) error {
+	ensureClaudeOAuthFreshMu.Lock()
+	defer ensureClaudeOAuthFreshMu.Unlock()
+
+	creds := oauth.Read(home)
+	if creds == nil || creds.RefreshToken == "" {
+		return nil // no credentials or no refresh token — skip silently
+	}
+	if !oauth.IsExpiredOrNear(creds, 5*time.Minute) {
+		return nil // token is fresh
+	}
+
+	result, err := oauth.Refresh(creds.RefreshToken, oauthTokenURL, oauthHTTPDo)
+	if err != nil {
+		return fmt.Errorf("Claude OAuth token expired and refresh failed — run claude interactively to re-authenticate: %w", err)
+	}
+
+	if err := oauth.WriteAccessToken(home, result.AccessToken, result.ExpiresAt); err != nil {
+		log.Printf("session: warning: could not write refreshed OAuth token: %v", err)
+	}
+
+	// Update env.conf for persistence across service restarts (best-effort).
+	envConfPath := filepath.Join(home, ".config", "systemd", "user",
+		"cistern-castellarius.service.d", "env.conf")
+	if _, statErr := os.Stat(envConfPath); statErr == nil {
+		if err := oauth.UpdateEnvConf(envConfPath, result.AccessToken); err != nil {
+			log.Printf("session: warning: could not update env.conf with refreshed token: %v", err)
+		}
+	}
+
+	// Inject into current process so collectEnvArgs picks up the new token.
+	os.Setenv("ANTHROPIC_API_KEY", result.AccessToken) //nolint:errcheck
+
+	log.Printf("session: Claude OAuth token refreshed successfully")
+	return nil
+}
 
 // claudePath returns the absolute path to the claude binary.
 func claudePath() string {

@@ -286,6 +286,8 @@ Requirements:
 - `gh` CLI authenticated (`gh auth login`)
 - `git`, `tmux`
 
+The Castellarius automatically refreshes the Claude OAuth access token before each agent spawn when it is expired or within 5 minutes of expiry. If the refresh fails (e.g. the refresh token itself has expired), the spawn fails with a clear error directing you to run `claude` interactively to re-authenticate. Run `ct doctor --fix` to refresh the token on demand and reload the systemd service.
+
 ## Configuration
 
 ```bash
@@ -483,7 +485,7 @@ ct skills remove <name>              Remove a skill
 
 # Utilities
 ct doctor                      Full health check (prerequisites, config, instructions file integrity, skills)
-ct doctor --fix                Auto-repair common issues
+ct doctor --fix                Auto-repair common issues (includes OAuth token refresh)
 ct version                     Print version string
 ct version --json              Machine-readable: {"version":"...","commit":"..."}
 ct update                      Pull latest main and rebuild ct in-place; warns if Castellarius is running

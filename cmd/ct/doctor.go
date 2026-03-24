@@ -1,8 +1,8 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/user"
@@ -12,6 +12,7 @@ import (
 
 	"github.com/MichielDean/cistern/internal/aqueduct"
 	"github.com/MichielDean/cistern/internal/cistern"
+	"github.com/MichielDean/cistern/internal/oauth"
 	"github.com/spf13/cobra"
 )
 
@@ -312,9 +313,20 @@ func runDoctorExtendedChecks(cfg *aqueduct.AqueductConfig, cfgPath, home, dbPath
 	checkStalledDroplets(dbPath)
 
 	// Check 13: Claude OAuth token expiry.
-	ok = checkOAuthTokenExpiry(home) && ok
+	oauthOk := checkOAuthTokenExpiry(home)
+	if !oauthOk && doctorFix {
+		if err := fixOAuthToken(home); err != nil {
+			fmt.Printf("  fix failed: %v\n", err)
+		} else {
+			fmt.Printf("↻ Claude OAuth token: refreshed\n")
+			oauthOk = checkOAuthTokenExpiry(home)
+		}
+	}
+	ok = oauthOk && ok
 
 	// Check 14: Service env ANTHROPIC_API_KEY matches current credentials token.
+	// fixOAuthToken (above) updates env.conf when --fix is set, so re-running the
+	// freshness check here reflects the updated state.
 	ok = checkServiceTokenFreshness(home) && ok
 
 	return ok
@@ -693,39 +705,61 @@ func checkStalledDroplets(dbPath string) {
 	}
 }
 
-// claudeCredentials holds the fields we need from ~/.claude/.credentials.json.
-type claudeCredentials struct {
-	ExpiresAt   int64
-	AccessToken string
-}
+// doctorOAuthHTTPDo is the HTTP transport used by fixOAuthToken.
+// Replaced in tests with a test server client.
+var doctorOAuthHTTPDo func(*http.Request) (*http.Response, error) = http.DefaultClient.Do
 
-// readClaudeCredentials reads and parses ~/.claude/.credentials.json.
-// Returns nil if the file is absent, unreadable, or malformed.
-func readClaudeCredentials(home string) *claudeCredentials {
-	data, err := os.ReadFile(filepath.Join(home, ".claude", ".credentials.json"))
+// doctorOAuthTokenURL is the OAuth token endpoint used by fixOAuthToken.
+// Replaced in tests with a test server URL.
+var doctorOAuthTokenURL = oauth.DefaultTokenURL
+
+// execCommandFn wraps exec.Command to allow injection in tests.
+var execCommandFn = exec.Command
+
+// fixOAuthToken refreshes the Claude OAuth access token using the stored refresh
+// token and writes the new access token to ~/.claude/.credentials.json and the
+// service env.conf. It then reloads the systemd service so the new token takes effect.
+func fixOAuthToken(home string) error {
+	creds := oauth.Read(home)
+	if creds == nil {
+		return fmt.Errorf("cannot read credentials — run 'claude' interactively to authenticate")
+	}
+	if creds.RefreshToken == "" {
+		return fmt.Errorf("no refresh token available — run 'claude' interactively to re-authenticate")
+	}
+
+	result, err := oauth.Refresh(creds.RefreshToken, doctorOAuthTokenURL, doctorOAuthHTTPDo)
 	if err != nil {
-		return nil
+		return fmt.Errorf("OAuth refresh failed: %w", err)
 	}
-	var raw struct {
-		ClaudeAiOauth struct {
-			ExpiresAt   int64  `json:"expiresAt"`
-			AccessToken string `json:"accessToken"`
-		} `json:"claudeAiOauth"`
+
+	if err := oauth.WriteAccessToken(home, result.AccessToken, result.ExpiresAt); err != nil {
+		return fmt.Errorf("write credentials: %w", err)
 	}
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil
+
+	envConfPath := filepath.Join(home, ".config", "systemd", "user",
+		"cistern-castellarius.service.d", "env.conf")
+	if _, statErr := os.Stat(envConfPath); statErr == nil {
+		if err := oauth.UpdateEnvConf(envConfPath, result.AccessToken); err != nil {
+			return fmt.Errorf("update env.conf: %w", err)
+		}
+		// Reload the systemd unit so the new token takes effect.
+		if out, err := execCommandFn("systemctl", "--user", "daemon-reload").CombinedOutput(); err != nil {
+			return fmt.Errorf("systemctl daemon-reload: %w: %s", err, out)
+		}
+		if out, err := execCommandFn("systemctl", "--user", "restart", "cistern-castellarius").CombinedOutput(); err != nil {
+			return fmt.Errorf("systemctl restart: %w: %s", err, out)
+		}
 	}
-	return &claudeCredentials{
-		ExpiresAt:   raw.ClaudeAiOauth.ExpiresAt,
-		AccessToken: raw.ClaudeAiOauth.AccessToken,
-	}
+
+	return nil
 }
 
 // checkOAuthTokenExpiry reports whether the Claude OAuth token is fresh,
 // expiring within 24h (warning), or expired (fail).
 // Skipped silently when the credentials file is absent or has no expiry.
 func checkOAuthTokenExpiry(home string) bool {
-	creds := readClaudeCredentials(home)
+	creds := oauth.Read(home)
 	if creds == nil || creds.ExpiresAt == 0 {
 		return true
 	}
@@ -772,7 +806,7 @@ func checkServiceTokenFreshness(home string) bool {
 		return true
 	}
 
-	creds := readClaudeCredentials(home)
+	creds := oauth.Read(home)
 	if creds == nil || creds.AccessToken == "" {
 		return true
 	}

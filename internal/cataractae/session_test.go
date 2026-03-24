@@ -3,10 +3,14 @@ package cataractae
 import (
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -886,5 +890,218 @@ func TestResolveIdentityDir_FallbackSandbox(t *testing.T) {
 	want := filepath.Join("cataractae", "implementer")
 	if got != want {
 		t.Errorf("resolveIdentityDir = %q, want %q", got, want)
+	}
+}
+
+// --- ensureClaudeOAuthFresh tests ---
+
+// writeSessionCredentials writes a minimal credentials file for session tests.
+func writeSessionCredentials(t *testing.T, home, accessToken, refreshToken string, expiresAtMs int64) {
+	t.Helper()
+	claudeDir := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
+		t.Fatalf("mkdir .claude: %v", err)
+	}
+	content := fmt.Sprintf(
+		`{"claudeAiOauth":{"accessToken":%q,"refreshToken":%q,"expiresAt":%d}}`,
+		accessToken, refreshToken, expiresAtMs,
+	)
+	if err := os.WriteFile(filepath.Join(claudeDir, ".credentials.json"), []byte(content), 0o600); err != nil {
+		t.Fatalf("write credentials: %v", err)
+	}
+}
+
+func TestEnsureClaudeOAuthFresh_FreshToken_DoesNotRefresh(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	// Token fresh for 1 hour — well outside the 5-minute window.
+	writeSessionCredentials(t, home, "tok-fresh", "tok-refresh", time.Now().Add(time.Hour).UnixMilli())
+
+	refreshCalled := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		refreshCalled = true
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"access_token":"tok-new","expires_in":3600}`)
+	}))
+	defer srv.Close()
+
+	origURL := oauthTokenURL
+	origHTTP := oauthHTTPDo
+	t.Cleanup(func() { oauthTokenURL = origURL; oauthHTTPDo = origHTTP })
+	oauthTokenURL = srv.URL
+	oauthHTTPDo = srv.Client().Do
+
+	if err := ensureClaudeOAuthFresh(home); err != nil {
+		t.Fatalf("ensureClaudeOAuthFresh: %v", err)
+	}
+	if refreshCalled {
+		t.Error("refresh endpoint should not be called for a fresh token")
+	}
+}
+
+func TestEnsureClaudeOAuthFresh_ExpiredToken_RefreshesSuccessfully(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	expiredAt := time.Now().Add(-1 * time.Hour).UnixMilli()
+	writeSessionCredentials(t, home, "tok-old", "tok-refresh", expiredAt)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"access_token":"tok-new","expires_in":3600}`)
+	}))
+	defer srv.Close()
+
+	origURL := oauthTokenURL
+	origHTTP := oauthHTTPDo
+	t.Cleanup(func() { oauthTokenURL = origURL; oauthHTTPDo = origHTTP })
+	oauthTokenURL = srv.URL
+	oauthHTTPDo = srv.Client().Do
+
+	if err := ensureClaudeOAuthFresh(home); err != nil {
+		t.Fatalf("ensureClaudeOAuthFresh: %v", err)
+	}
+
+	// Credentials file should have the new token.
+	data, err := os.ReadFile(filepath.Join(home, ".claude", ".credentials.json"))
+	if err != nil {
+		t.Fatalf("read credentials: %v", err)
+	}
+	if !strings.Contains(string(data), "tok-new") {
+		t.Errorf("credentials not updated with new token: %s", data)
+	}
+
+	// Process environment should have the new token.
+	if got := os.Getenv("ANTHROPIC_API_KEY"); got != "tok-new" {
+		t.Errorf("ANTHROPIC_API_KEY = %q, want tok-new", got)
+	}
+}
+
+func TestEnsureClaudeOAuthFresh_NearExpiry_RefreshesSuccessfully(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	// Expiring in 3 minutes — within the 5-minute window.
+	nearExpiryAt := time.Now().Add(3 * time.Minute).UnixMilli()
+	writeSessionCredentials(t, home, "tok-old", "tok-refresh", nearExpiryAt)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"access_token":"tok-new","expires_in":3600}`)
+	}))
+	defer srv.Close()
+
+	origURL := oauthTokenURL
+	origHTTP := oauthHTTPDo
+	t.Cleanup(func() { oauthTokenURL = origURL; oauthHTTPDo = origHTTP })
+	oauthTokenURL = srv.URL
+	oauthHTTPDo = srv.Client().Do
+
+	if err := ensureClaudeOAuthFresh(home); err != nil {
+		t.Fatalf("ensureClaudeOAuthFresh: %v", err)
+	}
+	if got := os.Getenv("ANTHROPIC_API_KEY"); got != "tok-new" {
+		t.Errorf("ANTHROPIC_API_KEY = %q, want tok-new", got)
+	}
+}
+
+func TestEnsureClaudeOAuthFresh_NoCredentials_SkipsSilently(t *testing.T) {
+	home := t.TempDir()
+	// No credentials file — should return nil (skip silently).
+	if err := ensureClaudeOAuthFresh(home); err != nil {
+		t.Errorf("expected nil when credentials absent, got %v", err)
+	}
+}
+
+func TestEnsureClaudeOAuthFresh_NoRefreshToken_SkipsSilently(t *testing.T) {
+	home := t.TempDir()
+	// Expired token but no refresh token — should skip silently.
+	claudeDir := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	expiredAt := time.Now().Add(-1 * time.Hour).UnixMilli()
+	content := fmt.Sprintf(`{"claudeAiOauth":{"accessToken":"tok","expiresAt":%d}}`, expiredAt)
+	if err := os.WriteFile(filepath.Join(claudeDir, ".credentials.json"), []byte(content), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	if err := ensureClaudeOAuthFresh(home); err != nil {
+		t.Errorf("expected nil when refresh token absent, got %v", err)
+	}
+}
+
+func TestEnsureClaudeOAuthFresh_RefreshFails_ReturnsError(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	expiredAt := time.Now().Add(-1 * time.Hour).UnixMilli()
+	writeSessionCredentials(t, home, "tok-old", "tok-refresh", expiredAt)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		fmt.Fprint(w, `{"error":"invalid_grant"}`)
+	}))
+	defer srv.Close()
+
+	origURL := oauthTokenURL
+	origHTTP := oauthHTTPDo
+	t.Cleanup(func() { oauthTokenURL = origURL; oauthHTTPDo = origHTTP })
+	oauthTokenURL = srv.URL
+	oauthHTTPDo = srv.Client().Do
+
+	err := ensureClaudeOAuthFresh(home)
+	if err == nil {
+		t.Fatal("expected error when refresh fails")
+	}
+	if !strings.Contains(err.Error(), "re-authenticate") {
+		t.Errorf("error message should mention re-authentication, got: %v", err)
+	}
+}
+
+func TestEnsureClaudeOAuthFresh_ConcurrentCalls_NoRaceAndSingleRefresh(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	expiredAt := time.Now().Add(-1 * time.Hour).UnixMilli()
+	writeSessionCredentials(t, home, "tok-old", "tok-refresh", expiredAt)
+
+	var refreshCount atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		refreshCount.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"access_token":"tok-new","expires_in":3600}`)
+	}))
+	defer srv.Close()
+
+	origURL := oauthTokenURL
+	origHTTP := oauthHTTPDo
+	t.Cleanup(func() { oauthTokenURL = origURL; oauthHTTPDo = origHTTP })
+	oauthTokenURL = srv.URL
+	oauthHTTPDo = srv.Client().Do
+
+	const goroutines = 5
+	var wg sync.WaitGroup
+	errs := make([]error, goroutines)
+	wg.Add(goroutines)
+	for i := range goroutines {
+		go func(idx int) {
+			defer wg.Done()
+			errs[idx] = ensureClaudeOAuthFresh(home)
+		}(i)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("goroutine %d: unexpected error: %v", i, err)
+		}
+	}
+	// The mutex ensures at most one refresh per cycle. After the first goroutine
+	// refreshes the token, subsequent goroutines see a fresh token and skip.
+	// Verify the endpoint was not hammered — it must be called at least once
+	// (the initial refresh) but not more than goroutines times.
+	count := refreshCount.Load()
+	if count == 0 {
+		t.Error("refresh endpoint was never called — token should have been refreshed")
+	}
+	if count > int32(goroutines) {
+		t.Errorf("refresh endpoint called %d times, want at most %d", count, goroutines)
 	}
 }

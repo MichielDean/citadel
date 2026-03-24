@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Auto-refresh Claude OAuth token on expiry (ci-cms3j)
+- `ct doctor --fix` now automatically refreshes the Claude OAuth access token when it is expired or near expiry: reads the stored refresh token, calls the Anthropic OAuth endpoint, writes the new access token to `~/.claude/.credentials.json`, updates the systemd service drop-in (`env.conf`) if present, and reloads/restarts the `cistern-castellarius` systemd service so the new token takes effect immediately
+- Before spawning each agent session, the Castellarius silently checks whether the access token is expired or within a 5-minute window. If so, it attempts a background refresh using the stored refresh token and injects the new token into the session environment — sessions no longer fail silently with stale credentials
+- If the pre-spawn refresh fails (no refresh token, network error, or token truly expired), the error message directs the user to run `claude` interactively to re-authenticate
+- Both refresh paths use a 30-second timeout — a hung OAuth endpoint cannot block a spawn indefinitely
+- Extracted shared OAuth logic into `internal/oauth` package (`Read`, `Refresh`, `WriteAccessToken`, `UpdateEnvConf`, `IsExpiredOrNear`) — no duplicate credential-parsing code
+
 ### ct doctor: OAuth token expiry and service env token freshness (ci-gr6up)
 - `ct doctor` now checks whether the Claude OAuth token in `~/.claude/.credentials.json` is fresh, expiring soon, or already expired — reports ✓ with expiry time, ⚠ with time remaining if within 24 h, or ✗ with a prompt to run `claude` interactively to refresh
 - `ct doctor` checks whether `ANTHROPIC_API_KEY` in the systemd service drop-in (`~/.config/systemd/user/cistern-castellarius.service.d/env.conf`) matches the current `accessToken` in `~/.claude/.credentials.json` — reports ✗ and prompts to update env.conf and restart if they differ
