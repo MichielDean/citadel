@@ -75,10 +75,8 @@ wait_for_service_active() {
     local service="$1"
     local max_wait="${2:-10}"
     local elapsed=0
-    local status
     while [[ "${elapsed}" -lt "${max_wait}" ]]; do
-        status=$(exec_in_container systemctl is-active "${service}" 2>/dev/null || true)
-        if [[ "${status}" == "active" ]]; then
+        if [[ "$(service_status "${service}")" == "active" ]]; then
             return 0
         fi
         sleep 1
@@ -184,15 +182,10 @@ test_fresh_install() {
     # Install and start the system service.
     install_system_service "${home_dir}" || return 1
 
-    # Wait up to 10 s for the service to reach the "active" state.
+    # Then: service unit is loaded and active (wait up to 10 s).
     if ! wait_for_service_active "cistern-castellarius" 10; then
         return 1
     fi
-
-    # Then: service unit is loaded and active.
-    local status
-    status=$(service_status "cistern-castellarius")
-    [[ "${status}" == "active" ]] || return 1
 
     # Then: agent binary (claude stub) is present on PATH.
     exec_in_container which claude >/dev/null || return 1
@@ -242,15 +235,10 @@ test_upgrade() {
     # This simulates "service restarts cleanly" after the upgrade.
     install_system_service "${home_dir}" || return 1
 
-    # Wait up to 10 s for the service to come back up.
+    # Then: service restarts cleanly and is active (wait up to 10 s).
     if ! wait_for_service_active "cistern-castellarius" 10; then
         return 1
     fi
-
-    # Then: service restarts cleanly and is active.
-    local status
-    status=$(service_status "cistern-castellarius")
-    [[ "${status}" == "active" ]] || return 1
 
     # Then: ct doctor still exits 0 after the upgrade.
     exec_in_container env HOME="${home_dir}" CT_NO_ASCII_LOGO=1 ct doctor \
