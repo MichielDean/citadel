@@ -96,7 +96,7 @@ func (s *Castellarius) checkStuckDeliveriesForRepo(ctx context.Context, repo aqu
 // It looks up the associated PR, kills the stuck agent session, and sets an
 // appropriate outcome so the next observe tick routes the droplet correctly.
 func (s *Castellarius) recoverStuckDelivery(ctx context.Context, repo aqueduct.RepoConfig, client CisternClient, item *cistern.Droplet) {
-	sandboxDir := filepath.Join(s.sandboxRoot, repo.Name, item.Assignee)
+	sandboxDir := filepath.Join(s.sandboxRoot, repo.Name, item.ID)
 	sessionID := repo.Name + "-" + item.Assignee
 
 	prURL, state, mergeStateStatus, err := s.findPRFn(ctx, repo.Name, item.ID, sandboxDir)

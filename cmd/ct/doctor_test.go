@@ -1457,3 +1457,138 @@ func TestFixOAuthToken_RefreshHTTPError_ReturnsError(t *testing.T) {
 		t.Error("expected error when OAuth refresh returns HTTP 401")
 	}
 }
+
+// --- checkCisternEnvHasKey unit tests ---
+
+func TestCheckCisternEnvHasKey_KeyPresent_ReturnsNil(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "env")
+	if err := os.WriteFile(path, []byte("ANTHROPIC_API_KEY=sk-ant-abc123\n"), 0o600); err != nil {
+		t.Fatalf("write env: %v", err)
+	}
+	if err := checkCisternEnvHasKey(path, "ANTHROPIC_API_KEY"); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestCheckCisternEnvHasKey_KeyAbsent_ReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "env")
+	if err := os.WriteFile(path, []byte("GH_TOKEN=ghp_abc\n"), 0o600); err != nil {
+		t.Fatalf("write env: %v", err)
+	}
+	if err := checkCisternEnvHasKey(path, "ANTHROPIC_API_KEY"); err == nil {
+		t.Error("expected error when key is absent from env file")
+	}
+}
+
+func TestCheckCisternEnvHasKey_KeyPresentButEmpty_ReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "env")
+	if err := os.WriteFile(path, []byte("ANTHROPIC_API_KEY=\n"), 0o600); err != nil {
+		t.Fatalf("write env: %v", err)
+	}
+	if err := checkCisternEnvHasKey(path, "ANTHROPIC_API_KEY"); err == nil {
+		t.Error("expected error when key is present but has empty value")
+	}
+}
+
+func TestCheckCisternEnvHasKey_FileAbsent_ReturnsError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nonexistent", "env")
+	if err := checkCisternEnvHasKey(path, "ANTHROPIC_API_KEY"); err == nil {
+		t.Error("expected error when env file does not exist")
+	}
+}
+
+func TestCheckCisternEnvHasKey_CommentsAndBlankLines_Ignored(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "env")
+	content := "# credentials\n\nANTHROPIC_API_KEY=sk-ant-real\nGH_TOKEN=ghp_abc\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write env: %v", err)
+	}
+	if err := checkCisternEnvHasKey(path, "ANTHROPIC_API_KEY"); err != nil {
+		t.Errorf("unexpected error with comments and blank lines: %v", err)
+	}
+}
+
+func TestCheckCisternEnvHasKey_MultipleKeys_FindsCorrectOne(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "env")
+	content := "GH_TOKEN=ghp_abc\nANTHROPIC_API_KEY=sk-ant-real\nEXTRA_VAR=value\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write env: %v", err)
+	}
+	if err := checkCisternEnvHasKey(path, "ANTHROPIC_API_KEY"); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// --- fixCisternEnvFile unit tests ---
+
+func TestFixCisternEnvFile_CreatesFileWithRestrictedPermissions(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".cistern", "env")
+
+	if err := fixCisternEnvFile(path); err != nil {
+		t.Fatalf("fixCisternEnvFile: %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("file not created: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Errorf("expected mode 0600, got %04o", perm)
+	}
+}
+
+func TestFixCisternEnvFile_CreatesParentDirectories(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "nested", "dirs", "env")
+
+	if err := fixCisternEnvFile(path); err != nil {
+		t.Fatalf("fixCisternEnvFile: %v", err)
+	}
+
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		t.Error("env file was not created in nested dirs")
+	}
+}
+
+func TestFixCisternEnvFile_ExistingFile_IsNotModified(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "env")
+
+	existing := []byte("ANTHROPIC_API_KEY=sk-ant-existing\n")
+	if err := os.WriteFile(path, existing, 0o600); err != nil {
+		t.Fatalf("write existing: %v", err)
+	}
+
+	if err := fixCisternEnvFile(path); err != nil {
+		t.Fatalf("fixCisternEnvFile: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != string(existing) {
+		t.Error("existing env file content was modified")
+	}
+}
+
+func TestFixCisternEnvFile_IsIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "env")
+
+	for i := 0; i < 3; i++ {
+		if err := fixCisternEnvFile(path); err != nil {
+			t.Fatalf("run %d: fixCisternEnvFile: %v", i+1, err)
+		}
+	}
+
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		t.Error("env file does not exist after idempotent runs")
+	}
+}

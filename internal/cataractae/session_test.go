@@ -49,8 +49,8 @@ func TestBuildClaudeCmd_QuotesPathWithSpaces(t *testing.T) {
 func TestBuildClaudeCmd_WithModel(t *testing.T) {
 	s := &Session{ID: "test", WorkDir: "/tmp", Model: "haiku"}
 	cmd := s.buildClaudeCmd("/home/user/.cistern/skills")
-	if !strings.Contains(cmd, "--model haiku") {
-		t.Errorf("claudeCmd missing --model flag: %s", cmd)
+	if !strings.Contains(cmd, "--model 'haiku'") {
+		t.Errorf("claudeCmd missing shell-quoted --model flag: %s", cmd)
 	}
 }
 
@@ -178,19 +178,14 @@ func TestClaudePath_LookPath(t *testing.T) {
 	}
 }
 
-// TestClaudePresetBackwardCompat is the backward-compatibility regression test
-// for the session.go refactor (ci-sc2wl).
-//
-// Given: an AqueductConfig with no provider block (defaults to the "claude"
-// built-in preset), when buildPresetCmd is called with that preset it must
-// produce a command string byte-for-byte identical to what the legacy
-// buildClaudeCmd produces today.
-//
-// This test must stay green before ci-sc2wl merges.
+// TestClaudePresetBackwardCompat verifies that buildPresetCmd produces a correctly
+// shell-quoted command string for the claude built-in preset. It was originally
+// written as a parity-with-buildClaudeCmd gate (ci-sc2wl); after ci-qdc7q it
+// checks the correct quoting behaviour instead, since command and args are now
+// shell-quoted for safety.
 func TestClaudePresetBackwardCompat(t *testing.T) {
-	// Normalise claudePath() and resolveCommandFn to "claude" so both code paths
-	// agree on the executable name regardless of what is installed on this machine.
-	t.Setenv("CLAUDE_PATH", "claude")
+	// Normalise resolveCommandFn to identity so tests do not depend on
+	// claude being installed on the test machine.
 	orig := resolveCommandFn
 	resolveCommandFn = func(cmd string) string { return cmd }
 	t.Cleanup(func() { resolveCommandFn = orig })
@@ -210,83 +205,73 @@ func TestClaudePresetBackwardCompat(t *testing.T) {
 
 	t.Run("without model", func(t *testing.T) {
 		s := &Session{ID: "test", WorkDir: "/tmp"}
-		want := s.buildClaudeCmd(skillsDir)
 		got, err := s.buildPresetCmd(claudePreset, skillsDir)
 		if err != nil {
 			t.Fatalf("buildPresetCmd: %v", err)
 		}
-		if got != want {
-			t.Errorf("backward compat broken (no model):\nwant: %q\ngot:  %q", want, got)
+		// Command and arg must be shell-quoted.
+		if !strings.HasPrefix(got, "'claude' '--dangerously-skip-permissions'") {
+			t.Errorf("buildPresetCmd: want shell-quoted command+arg prefix, got: %q", got)
+		}
+		if !strings.Contains(got, "--add-dir '"+skillsDir+"'") {
+			t.Errorf("buildPresetCmd missing add-dir with quoted skillsDir, got: %q", got)
+		}
+		if strings.Contains(got, "--model") {
+			t.Errorf("buildPresetCmd should not contain --model when model is empty, got: %q", got)
 		}
 	})
 
 	t.Run("with model", func(t *testing.T) {
 		s := &Session{ID: "test", WorkDir: "/tmp", Model: "haiku"}
-		want := s.buildClaudeCmd(skillsDir)
 		got, err := s.buildPresetCmd(claudePreset, skillsDir)
 		if err != nil {
 			t.Fatalf("buildPresetCmd: %v", err)
 		}
-		if got != want {
-			t.Errorf("backward compat broken (with model):\nwant: %q\ngot:  %q", want, got)
+		if !strings.HasPrefix(got, "'claude' '--dangerously-skip-permissions'") {
+			t.Errorf("buildPresetCmd: want shell-quoted command+arg prefix, got: %q", got)
+		}
+		if !strings.Contains(got, "--model 'haiku'") {
+			t.Errorf("buildPresetCmd missing shell-quoted model flag, got: %q", got)
 		}
 	})
 
 	t.Run("skills dir with spaces", func(t *testing.T) {
 		s := &Session{ID: "test", WorkDir: "/tmp"}
 		dir := "/home/john doe/.cistern/skills"
-		want := s.buildClaudeCmd(dir)
 		got, err := s.buildPresetCmd(claudePreset, dir)
 		if err != nil {
 			t.Fatalf("buildPresetCmd: %v", err)
 		}
-		if got != want {
-			t.Errorf("backward compat broken (spaces in path):\nwant: %q\ngot:  %q", want, got)
+		if !strings.Contains(got, "--add-dir '/home/john doe/.cistern/skills'") {
+			t.Errorf("buildPresetCmd missing shell-quoted skillsDir with spaces, got: %q", got)
 		}
 	})
 
-	// This subtest verifies the LookPath contract: when claudePath() resolves to
-	// an absolute path (e.g. /usr/local/bin/claude via exec.LookPath), the preset's
-	// Command field must carry that same resolved path for buildPresetCmd to produce
-	// a command identical to buildClaudeCmd. The test patches claudePathFn directly
-	// so that neither CLAUDE_PATH nor a real binary installation is required.
-	t.Run("LookPath resolution — preset Command must carry resolved absolute path", func(t *testing.T) {
-		// Clear the parent's CLAUDE_PATH=claude to exercise the LookPath code path.
-		t.Setenv("CLAUDE_PATH", "")
-
-		// Patch claudePathFn to simulate LookPath resolving to an absolute path.
+	// This subtest verifies the LookPath contract: when resolveCommandFn returns
+	// an absolute path, buildPresetCmd must shell-quote it so paths with spaces
+	// are safe in /bin/sh -c.
+	t.Run("LookPath resolution — resolved absolute path is shell-quoted", func(t *testing.T) {
 		const resolvedPath = "/opt/test/claude"
-		orig := claudePathFn
-		claudePathFn = func() string { return resolvedPath }
-		t.Cleanup(func() { claudePathFn = orig })
-
-		// The preset must carry the same resolved path; without it the commands diverge.
 		resolvedPreset := claudePreset
 		resolvedPreset.Command = resolvedPath
 
 		s := &Session{ID: "test", WorkDir: "/tmp"}
-		want := s.buildClaudeCmd(skillsDir)
 		got, err := s.buildPresetCmd(resolvedPreset, skillsDir)
 		if err != nil {
 			t.Fatalf("buildPresetCmd: %v", err)
 		}
-		if got != want {
-			t.Errorf("LookPath compat broken — preset.Command must match resolved path:\nwant: %q\ngot:  %q", want, got)
+		want := "'" + resolvedPath + "'"
+		if !strings.HasPrefix(got, want) {
+			t.Errorf("buildPresetCmd: resolved path must be shell-quoted\nwant prefix: %s\ngot: %q", want, got)
 		}
 	})
 }
 
-// TestClaudeDefaultFallback is the non-negotiable regression gate for the
-// provider-preset refactor.
-//
-// Given: an AqueductConfig with no provider block (zero value — no Provider
-// field set), the resolved preset must be "claude", and the command string
-// produced by buildPresetCmd must match buildClaudeCmd() output
-// character-for-character.
+// TestClaudeDefaultFallback verifies that an empty provider name resolves to the
+// "claude" built-in preset and that buildPresetCmd produces a correctly
+// shell-quoted command string.
 func TestClaudeDefaultFallback(t *testing.T) {
-	// Normalise claudePathFn and resolveCommandFn so both code paths agree on
-	// the binary name regardless of what's installed on the test machine.
-	t.Setenv("CLAUDE_PATH", "claude")
+	// Normalise resolveCommandFn so the test does not depend on claude being installed.
 	orig := resolveCommandFn
 	resolveCommandFn = func(cmd string) string { return cmd }
 	t.Cleanup(func() { resolveCommandFn = orig })
@@ -301,25 +286,32 @@ func TestClaudeDefaultFallback(t *testing.T) {
 
 	t.Run("without model", func(t *testing.T) {
 		s := &Session{ID: "test", WorkDir: "/tmp"}
-		want := s.buildClaudeCmd(skillsDir)
 		got, err := s.buildPresetCmd(preset, skillsDir)
 		if err != nil {
 			t.Fatalf("buildPresetCmd error: %v", err)
 		}
-		if got != want {
-			t.Errorf("default fallback command mismatch (no model):\nwant: %q\ngot:  %q", want, got)
+		if !strings.HasPrefix(got, "'claude' '--dangerously-skip-permissions'") {
+			t.Errorf("default fallback: want shell-quoted command+arg prefix, got: %q", got)
+		}
+		if !strings.Contains(got, "--add-dir '"+skillsDir+"'") {
+			t.Errorf("default fallback: missing add-dir with quoted skillsDir, got: %q", got)
+		}
+		if strings.Contains(got, "--model") {
+			t.Errorf("default fallback: should not contain --model when model is empty, got: %q", got)
 		}
 	})
 
 	t.Run("with model", func(t *testing.T) {
 		s := &Session{ID: "test", WorkDir: "/tmp", Model: "haiku"}
-		want := s.buildClaudeCmd(skillsDir)
 		got, err := s.buildPresetCmd(preset, skillsDir)
 		if err != nil {
 			t.Fatalf("buildPresetCmd error: %v", err)
 		}
-		if got != want {
-			t.Errorf("default fallback command mismatch (with model):\nwant: %q\ngot:  %q", want, got)
+		if !strings.HasPrefix(got, "'claude' '--dangerously-skip-permissions'") {
+			t.Errorf("default fallback: want shell-quoted command+arg prefix, got: %q", got)
+		}
+		if !strings.Contains(got, "--model 'haiku'") {
+			t.Errorf("default fallback: missing shell-quoted model flag, got: %q", got)
 		}
 	})
 }
@@ -704,6 +696,56 @@ func TestIsAgentAlive_TmuxError_ReturnsFalse(t *testing.T) {
 	}
 }
 
+// TestBuildPresetCmd_ModelWithSpaces_IsShellQuoted verifies that a model value
+// containing spaces is shell-quoted before being interpolated into the tmux
+// command string. An unquoted model with spaces would split in /bin/sh -c.
+func TestBuildPresetCmd_ModelWithSpaces_IsShellQuoted(t *testing.T) {
+	s := &Session{ID: "test", WorkDir: "/tmp", Model: "claude opus 4.6"}
+	preset := provider.ProviderPreset{
+		Name:      "myagent",
+		Command:   "myagent",
+		ModelFlag: "--model",
+	}
+	cmd, err := s.buildPresetCmd(preset, "/skills")
+	if err != nil {
+		t.Fatalf("buildPresetCmd: %v", err)
+	}
+	// Unquoted form must not appear — it would split at spaces in the shell.
+	if strings.Contains(cmd, "--model claude opus") {
+		t.Errorf("buildPresetCmd contains unquoted model with space — will break shell: %s", cmd)
+	}
+	// Shell-quoted form must be present.
+	want := "--model 'claude opus 4.6'"
+	if !strings.Contains(cmd, want) {
+		t.Errorf("buildPresetCmd missing shell-quoted model\nwant substring: %s\ngot: %s", want, cmd)
+	}
+}
+
+// TestBuildContinueCmd_ModelWithSpaces_IsShellQuoted verifies that a model value
+// containing spaces is shell-quoted in buildContinueCmd, consistent with buildPresetCmd.
+func TestBuildContinueCmd_ModelWithSpaces_IsShellQuoted(t *testing.T) {
+	s := &Session{ID: "test", WorkDir: "/tmp", Model: "claude opus 4.6"}
+	preset := provider.ProviderPreset{
+		Name:         "myagent",
+		Command:      "myagent",
+		ModelFlag:    "--model",
+		ContinueFlag: "--continue",
+	}
+	cmd, err := s.buildContinueCmd(preset, "/skills")
+	if err != nil {
+		t.Fatalf("buildContinueCmd: %v", err)
+	}
+	// Unquoted form must not appear.
+	if strings.Contains(cmd, "--model claude opus") {
+		t.Errorf("buildContinueCmd contains unquoted model with space — will break shell: %s", cmd)
+	}
+	// Shell-quoted form must be present.
+	want := "--model 'claude opus 4.6'"
+	if !strings.Contains(cmd, want) {
+		t.Errorf("buildContinueCmd missing shell-quoted model\nwant substring: %s\ngot: %s", want, cmd)
+	}
+}
+
 // TestBuildPresetCmd_EmptyCommand_ReturnsError verifies that buildPresetCmd
 // returns a descriptive error when the preset has no command configured.
 // A misconfigured provider with Name set but Command empty must not silently
@@ -759,8 +801,8 @@ func TestBuildPresetCmd_PromptFlag_OmittedWhenEmpty(t *testing.T) {
 	if strings.Contains(cmd, " -p ") || strings.Contains(cmd, " --prompt") {
 		t.Errorf("buildPresetCmd with empty PromptFlag should not contain a prompt flag: %s", cmd)
 	}
-	if !strings.HasPrefix(cmd, "opencode") {
-		t.Errorf("buildPresetCmd output = %q, want prefix %q", cmd, "opencode")
+	if !strings.HasPrefix(cmd, "'opencode'") {
+		t.Errorf("buildPresetCmd output = %q, want prefix %q", cmd, "'opencode'")
 	}
 }
 
@@ -1103,5 +1145,111 @@ func TestEnsureClaudeOAuthFresh_ConcurrentCalls_NoRaceAndSingleRefresh(t *testin
 	}
 	if count > int32(goroutines) {
 		t.Errorf("refresh endpoint called %d times, want at most %d", count, goroutines)
+	}
+}
+
+// TestBuildPresetCmd_CommandWithSpaces_IsShellQuoted verifies that a command
+// path containing spaces is shell-quoted before being interpolated into the
+// tmux command string. An unquoted path with spaces would split in /bin/sh -c.
+func TestBuildPresetCmd_CommandWithSpaces_IsShellQuoted(t *testing.T) {
+	orig := resolveCommandFn
+	resolveCommandFn = func(cmd string) string { return cmd }
+	t.Cleanup(func() { resolveCommandFn = orig })
+
+	s := &Session{ID: "test", WorkDir: "/tmp"}
+	preset := provider.ProviderPreset{
+		Name:    "myagent",
+		Command: "/home/john doe/bin/myagent",
+	}
+	cmd, err := s.buildPresetCmd(preset, "/skills")
+	if err != nil {
+		t.Fatalf("buildPresetCmd: %v", err)
+	}
+	// Unquoted form must not appear — it would split at the space.
+	if strings.Contains(cmd, "/home/john doe/bin/myagent") && !strings.Contains(cmd, "'/home/john doe/bin/myagent'") {
+		t.Errorf("buildPresetCmd contains unquoted command path with space — will break shell: %s", cmd)
+	}
+	// Shell-quoted form must be present.
+	want := "'/home/john doe/bin/myagent'"
+	if !strings.HasPrefix(cmd, want) {
+		t.Errorf("buildPresetCmd should start with shell-quoted command\nwant prefix: %s\ngot: %s", want, cmd)
+	}
+}
+
+// TestBuildPresetCmd_ArgsWithSpaces_AreShellQuoted verifies that Args elements
+// containing spaces or shell metacharacters are shell-quoted. User-supplied
+// preset overrides via LoadUserPresets can contain arbitrary strings.
+func TestBuildPresetCmd_ArgsWithSpaces_AreShellQuoted(t *testing.T) {
+	orig := resolveCommandFn
+	resolveCommandFn = func(cmd string) string { return cmd }
+	t.Cleanup(func() { resolveCommandFn = orig })
+
+	s := &Session{ID: "test", WorkDir: "/tmp"}
+	preset := provider.ProviderPreset{
+		Name:    "myagent",
+		Command: "myagent",
+		Args:    []string{"--flag with spaces", "--another$arg"},
+	}
+	cmd, err := s.buildPresetCmd(preset, "/skills")
+	if err != nil {
+		t.Fatalf("buildPresetCmd: %v", err)
+	}
+	// Shell-quoted forms must be present.
+	for _, want := range []string{"'--flag with spaces'", "'--another$arg'"} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("buildPresetCmd missing shell-quoted arg\nwant substring: %s\ngot: %s", want, cmd)
+		}
+	}
+	// Unquoted dollar sign must not appear bare (would be shell-expanded).
+	if strings.Contains(cmd, "--another$arg") && !strings.Contains(cmd, "'--another$arg'") {
+		t.Errorf("buildPresetCmd contains bare dollar sign in arg — shell-expansion risk: %s", cmd)
+	}
+}
+
+// TestBuildContinueCmd_CommandWithSpaces_IsShellQuoted verifies that a command
+// path containing spaces is shell-quoted in buildContinueCmd, consistent with
+// buildPresetCmd.
+func TestBuildContinueCmd_CommandWithSpaces_IsShellQuoted(t *testing.T) {
+	orig := resolveCommandFn
+	resolveCommandFn = func(cmd string) string { return cmd }
+	t.Cleanup(func() { resolveCommandFn = orig })
+
+	s := &Session{ID: "test", WorkDir: "/tmp"}
+	preset := provider.ProviderPreset{
+		Name:         "myagent",
+		Command:      "/home/john doe/bin/myagent",
+		ContinueFlag: "--continue",
+	}
+	cmd, err := s.buildContinueCmd(preset, "/skills")
+	if err != nil {
+		t.Fatalf("buildContinueCmd: %v", err)
+	}
+	want := "'/home/john doe/bin/myagent'"
+	if !strings.HasPrefix(cmd, want) {
+		t.Errorf("buildContinueCmd should start with shell-quoted command\nwant prefix: %s\ngot: %s", want, cmd)
+	}
+}
+
+// TestBuildContinueCmd_ArgsWithSpaces_AreShellQuoted verifies that Args elements
+// containing spaces are shell-quoted in buildContinueCmd.
+func TestBuildContinueCmd_ArgsWithSpaces_AreShellQuoted(t *testing.T) {
+	orig := resolveCommandFn
+	resolveCommandFn = func(cmd string) string { return cmd }
+	t.Cleanup(func() { resolveCommandFn = orig })
+
+	s := &Session{ID: "test", WorkDir: "/tmp"}
+	preset := provider.ProviderPreset{
+		Name:         "myagent",
+		Command:      "myagent",
+		Args:         []string{"--flag with spaces"},
+		ContinueFlag: "--continue",
+	}
+	cmd, err := s.buildContinueCmd(preset, "/skills")
+	if err != nil {
+		t.Fatalf("buildContinueCmd: %v", err)
+	}
+	want := "'--flag with spaces'"
+	if !strings.Contains(cmd, want) {
+		t.Errorf("buildContinueCmd missing shell-quoted arg\nwant substring: %s\ngot: %s", want, cmd)
 	}
 }

@@ -621,6 +621,34 @@ func TestDefaultRebaseAndPush_AbortsOnConflict(t *testing.T) {
 	}
 }
 
+// TestRecoverStuckDelivery_SandboxDirUsesDropletID verifies that recoverStuckDelivery
+// passes a path keyed on item.ID (not item.Assignee) to findPRFn. The per-droplet
+// worktree refactor placed worktrees at sandboxRoot/<repo>/<dropletID>, so recovery
+// must target the same location — not the old per-worker path.
+func TestRecoverStuckDelivery_SandboxDirUsesDropletID(t *testing.T) {
+	item := stuckItem("sd-dir-check", 2*time.Hour)
+	c := newStuckClient(item)
+	var capturedDir string
+	s := stuckScheduler(c,
+		findPRResult{prURL: "https://github.com/o/r/pull/1", state: "MERGED"},
+		nil, nil, nil, nil,
+	)
+	s.sandboxRoot = "/sandbox"
+	s.findPRFn = func(_ context.Context, _, _, dir string) (string, string, string, error) {
+		capturedDir = dir
+		return "https://github.com/o/r/pull/1", "MERGED", "", nil
+	}
+
+	s.recoverStuckDelivery(context.Background(), s.config.Repos[0], c, item)
+
+	// sandboxDir must use item.ID (droplet ID), not item.Assignee (worker name).
+	wantDir := filepath.Join("/sandbox", "test-repo", item.ID)
+	if capturedDir != wantDir {
+		t.Errorf("sandboxDir = %q, want %q (must use droplet ID, not assignee %q)",
+			capturedDir, wantDir, item.Assignee)
+	}
+}
+
 // --- AddNote error logging tests ---
 
 // TestRecoverStuckDelivery_AddNoteError_LogsWarn verifies that when AddNote

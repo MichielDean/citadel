@@ -14,6 +14,7 @@ import (
 	"github.com/MichielDean/cistern/internal/cistern"
 	"github.com/MichielDean/cistern/internal/oauth"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 var doctorFix bool
@@ -99,6 +100,35 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		os.Remove(tmp)
 		return nil
 	}, nil) && ok
+
+	// ~/.cistern/env credential file checks.
+	envPath := filepath.Join(home, ".cistern", "env")
+
+	var envFileFix func() error
+	if doctorFix {
+		envFileFix = func() error { return fixCisternEnvFile(envPath) }
+	}
+	envExists := checkWithFix("~/.cistern/env exists", func() error {
+		_, err := os.Stat(envPath)
+		if os.IsNotExist(err) {
+			return fmt.Errorf("not found — run: ct init")
+		}
+		return err
+	}, envFileFix)
+	ok = envExists && ok
+
+	if envExists {
+		// Permissions check — informational warning, does not fail the run.
+		checkCisternEnvPermissions(envPath)
+
+		var envKeyFix func() error
+		if doctorFix {
+			envKeyFix = func() error { return fixCisternEnvAddKey(envPath, "ANTHROPIC_API_KEY") }
+		}
+		ok = checkWithFix("~/.cistern/env: ANTHROPIC_API_KEY", func() error {
+			return checkCisternEnvHasKey(envPath, "ANTHROPIC_API_KEY")
+		}, envKeyFix) && ok
+	}
 
 	// Extended runtime checks that depend on config and DB being present.
 	// Re-parse config here in case it was just fixed above.
@@ -818,6 +848,92 @@ func checkServiceTokenFreshness(home string) bool {
 
 	fmt.Printf("✓ service ANTHROPIC_API_KEY: matches current credentials\n")
 	return true
+}
+
+// checkCisternEnvPermissions prints a warning if ~/.cistern/env is readable by
+// group or other (mode &0o077 != 0). With --fix it applies chmod 600.
+// This is informational and never affects the ok result.
+func checkCisternEnvPermissions(envPath string) {
+	info, err := os.Stat(envPath)
+	if err != nil {
+		return
+	}
+	mode := info.Mode().Perm()
+	if mode&0o077 == 0 {
+		fmt.Printf("✓ ~/.cistern/env: chmod 600\n")
+		return
+	}
+	if doctorFix {
+		if chErr := os.Chmod(envPath, 0o600); chErr != nil {
+			fmt.Printf("⚠ ~/.cistern/env: permissions %04o — chmod 600 failed: %v\n", mode, chErr)
+		} else {
+			fmt.Printf("↻ ~/.cistern/env: chmod 600 applied\n")
+		}
+	} else {
+		fmt.Printf("⚠ ~/.cistern/env: permissions %04o (world-readable) — run: chmod 600 %s\n", mode, envPath)
+	}
+}
+
+// checkCisternEnvHasKey verifies that key=<non-empty-value> appears in the env
+// file at envPath. Lines beginning with '#' and blank lines are ignored.
+func checkCisternEnvHasKey(envPath, key string) error {
+	data, err := os.ReadFile(envPath)
+	if err != nil {
+		return fmt.Errorf("cannot read env file: %w", err)
+	}
+	prefix := key + "="
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "#") || line == "" {
+			continue
+		}
+		if after, ok := strings.CutPrefix(line, prefix); ok && after != "" {
+			return nil
+		}
+	}
+	return fmt.Errorf("not set in %s", envPath)
+}
+
+// fixCisternEnvFile creates envPath with mode 0o600 if it does not exist.
+// Parent directories are created as needed. Existing files are not modified.
+func fixCisternEnvFile(envPath string) error {
+	if err := os.MkdirAll(filepath.Dir(envPath), 0o755); err != nil {
+		return fmt.Errorf("create directory: %w", err)
+	}
+	if _, err := os.Stat(envPath); os.IsNotExist(err) {
+		if err := os.WriteFile(envPath, []byte{}, 0o600); err != nil {
+			return fmt.Errorf("create env file: %w", err)
+		}
+	}
+	return nil
+}
+
+// fixCisternEnvAddKey appends key=<value> to the env file at envPath.
+// In an interactive terminal it prompts the user for the value.
+// In non-interactive mode it returns an error with manual-edit instructions.
+func fixCisternEnvAddKey(envPath, key string) error {
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return fmt.Errorf("add %s=<your-key> to %s manually", key, envPath)
+	}
+	fmt.Printf("Enter %s: ", key)
+	raw, err := term.ReadPassword(int(os.Stdin.Fd()))
+	fmt.Println() // move to next line after masked input
+	if err != nil {
+		return fmt.Errorf("read input: %w", err)
+	}
+	value := strings.TrimSpace(string(raw))
+	if value == "" {
+		return fmt.Errorf("no value provided for %s", key)
+	}
+	f, err := os.OpenFile(envPath, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("open env file: %w", err)
+	}
+	defer f.Close()
+	if _, err := fmt.Fprintf(f, "%s=%s\n", key, value); err != nil {
+		return fmt.Errorf("write key: %w", err)
+	}
+	return nil
 }
 
 // checkWithFix runs fn. If fn fails and fix is non-nil, it runs fix then

@@ -13,6 +13,7 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -33,6 +34,14 @@ var staticAssets embed.FS
 // network partition (no TCP FIN) causes the goroutine to block indefinitely
 // inside bufio.Writer.Flush.
 const wsWriteTimeout = 10 * time.Second
+
+// wsTuiReadTimeout is the read deadline applied in the /ws/tui WS handler's
+// frame-reader goroutine (B). It is reset after each received frame to keep
+// active sessions alive. Without a deadline, a network partition + idle PTY
+// leaks goroutines A (ptmx.Read) and B (io.ReadFull) — neither gets an error,
+// and cancel() is never called. Five minutes allows long idle-but-connected
+// sessions while still reaping silently-partitioned ones.
+const wsTuiReadTimeout = 5 * time.Minute
 
 // wsMaxClientPayload is the maximum payload size accepted from a client frame.
 // Client→server frames carry only resize JSON (~40 bytes) or close frames,
@@ -232,6 +241,21 @@ func wsReadClientFrame(br *bufio.Reader, buf []byte) (opcode byte, payload []byt
 // connection and its buffered read-writer. On failure it writes an HTTP error
 // and returns a non-nil error.
 func wsUpgrade(w http.ResponseWriter, r *http.Request) (net.Conn, *bufio.ReadWriter, error) {
+	// Validate Origin header to prevent cross-origin WebSocket hijacking.
+	// Browsers allow JS on any origin to connect to localhost WS endpoints, so
+	// the localhost binding alone is not sufficient protection.
+	if origin := r.Header.Get("Origin"); origin != "" {
+		u, err := url.Parse(origin)
+		if err != nil {
+			http.Error(w, "invalid Origin header", http.StatusForbidden)
+			return nil, nil, fmt.Errorf("invalid Origin header: %w", err)
+		}
+		h := u.Hostname()
+		if h != "localhost" && h != "127.0.0.1" && h != "::1" {
+			http.Error(w, "cross-origin WebSocket request rejected", http.StatusForbidden)
+			return nil, nil, fmt.Errorf("cross-origin WebSocket rejected: %s", origin)
+		}
+	}
 	if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
 		http.Error(w, "websocket upgrade required", http.StatusUpgradeRequired)
 		return nil, nil, fmt.Errorf("not a websocket request")
@@ -373,26 +397,56 @@ func newDashboardMux(cfgPath, dbPath string) http.Handler {
 		}
 		defer conn.Close()
 
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		// Reader goroutine: detects client close frames and network partitions.
+		// Sets wsTuiReadTimeout on the connection so a silently-partitioned client
+		// (no TCP FIN, no frames) is reaped after 5 minutes. Without this, when
+		// tmux output is stable (no diffs) the ticker loop never writes and never
+		// sets a write deadline — the goroutine and TCP connection leak indefinitely.
+		go func() {
+			defer cancel()
+			buf := make([]byte, wsMaxClientPayload)
+			conn.SetReadDeadline(time.Now().Add(wsTuiReadTimeout)) //nolint:errcheck
+			for {
+				opcode, _, nb, err := wsReadClientFrame(brw.Reader, buf)
+				buf = nb
+				if err != nil {
+					return
+				}
+				conn.SetReadDeadline(time.Now().Add(wsTuiReadTimeout)) //nolint:errcheck
+				if opcode == wsOpcodeClose {
+					return
+				}
+			}
+		}()
+
 		var prev string
 		capturer := defaultCapturer
 		ticker := time.NewTicker(peekInterval)
 		defer ticker.Stop()
 
-		for range ticker.C {
-			next := "session not active"
-			if sess, ok := lookupAqueductSession(dbPath, name); ok && capturer.HasSession(sess.sessionID) {
-				content, err := capturer.Capture(sess.sessionID, lines)
-				if err != nil {
-					continue
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				next := "session not active"
+				if sess, ok := lookupAqueductSession(dbPath, name); ok && capturer.HasSession(sess.sessionID) {
+					content, err := capturer.Capture(sess.sessionID, lines)
+					if err != nil {
+						continue
+					}
+					next = stripANSI(content)
 				}
-				next = stripANSI(content)
-			}
-			if diff := computeDiff(prev, next); diff != "" {
-				conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout)) //nolint:errcheck
-				if wsSendText(brw.Writer, diff) != nil {
-					return
+				if diff := computeDiff(prev, next); diff != "" {
+					conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout)) //nolint:errcheck
+					if wsSendText(brw.Writer, diff) != nil {
+						return
+					}
+					prev = next
 				}
-				prev = next
 			}
 		}
 	})
@@ -471,15 +525,19 @@ func newDashboardMux(cfgPath, dbPath string) http.Handler {
 		go func() {
 			defer cancel() // arm watchdog (C) on any exit
 			buf := make([]byte, wsMaxClientPayload)
-			// No read deadline — this is an interactive session; the user may idle
-			// indefinitely between keystrokes. Goroutine C handles cleanup on disconnect.
-			_ = conn.SetReadDeadline(time.Time{})
+			// Set a read deadline to reap silently-partitioned connections.
+			// Without it, a network partition + idle PTY leaks goroutines A
+			// (ptmx.Read) and B (io.ReadFull) — neither gets an error, and
+			// cancel() is never called. The deadline is reset after each
+			// received frame so genuinely-active sessions are never reaped.
+			conn.SetReadDeadline(time.Now().Add(wsTuiReadTimeout)) //nolint:errcheck
 			for {
 				opcode, payload, nb, err := wsReadClientFrame(brw.Reader, buf)
 				buf = nb
 				if err != nil {
 					return
 				}
+				conn.SetReadDeadline(time.Now().Add(wsTuiReadTimeout)) //nolint:errcheck
 				switch opcode {
 				case wsOpcodeText:
 					handleTuiTextFrame(payload, ptmx, func(cols, rows uint16) {

@@ -82,7 +82,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("resolving binary symlinks: %w", err)
 	}
 
-	pullOut, pullErr := runGitCommand(repoPath, "pull", "--ff-only", "origin", "main")
+	pullOut, pullErr := runGitCommand(repoPath, "-c", "core.hooksPath=/dev/null", "pull", "--ff-only", "origin", "main")
 	if pullErr != nil {
 		if isFFOnlyFailure(pullOut) {
 			return fmt.Errorf("local repo has commits not in origin/main — rebase or reset manually before updating")

@@ -493,6 +493,82 @@ func TestPeekHTTP_LinesQueryParam(t *testing.T) {
 	}
 }
 
+// TestWsUpgrade_CrossOriginRejected verifies that wsUpgrade returns 403 Forbidden
+// for WebSocket requests with a non-localhost Origin header.
+func TestWsUpgrade_CrossOriginRejected(t *testing.T) {
+	cases := []struct {
+		name   string
+		origin string
+	}{
+		{"evil_http", "http://evil.com"},
+		{"evil_https", "https://evil.com"},
+		{"remote_ip", "http://192.168.1.1:8080"},
+		{"localhost_subdomain", "http://localhost.evil.com"},
+		{"127_lookalike", "http://127.0.0.1.evil.com"},
+	}
+	mux := newDashboardMux(tempCfg(t), tempDB(t))
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/ws/aqueducts/virgo/peek", nil)
+			req.Header.Set("Upgrade", "websocket")
+			req.Header.Set("Sec-Websocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+			req.Header.Set("Origin", tc.origin)
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, req)
+			if w.Code != http.StatusForbidden {
+				t.Errorf("Origin %q: status = %d, want 403 Forbidden", tc.origin, w.Code)
+			}
+		})
+	}
+}
+
+// TestWsUpgrade_LocalhostOriginAllowed verifies that wsUpgrade permits WebSocket
+// requests from localhost, 127.0.0.1, and ::1 origins (the request proceeds past
+// Origin validation; httptest.ResponseRecorder does not support hijacking so it
+// terminates with 500, but the key assertion is that 403 is NOT returned).
+func TestWsUpgrade_LocalhostOriginAllowed(t *testing.T) {
+	cases := []struct {
+		name   string
+		origin string
+	}{
+		{"localhost", "http://localhost"},
+		{"localhost_with_port", "http://localhost:5737"},
+		{"loopback_ipv4", "http://127.0.0.1"},
+		{"loopback_ipv4_with_port", "http://127.0.0.1:5737"},
+		{"loopback_ipv6", "http://[::1]"},
+		{"loopback_ipv6_with_port", "http://[::1]:5737"},
+	}
+	mux := newDashboardMux(tempCfg(t), tempDB(t))
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/ws/aqueducts/virgo/peek", nil)
+			req.Header.Set("Upgrade", "websocket")
+			req.Header.Set("Sec-Websocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+			req.Header.Set("Origin", tc.origin)
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, req)
+			if w.Code == http.StatusForbidden {
+				t.Errorf("Origin %q: got 403, want non-403 (localhost origin must be allowed)", tc.origin)
+			}
+		})
+	}
+}
+
+// TestWsUpgrade_MissingOriginAllowed verifies that wsUpgrade allows requests
+// with no Origin header (non-browser clients such as native tools and tests).
+func TestWsUpgrade_MissingOriginAllowed(t *testing.T) {
+	mux := newDashboardMux(tempCfg(t), tempDB(t))
+	req := httptest.NewRequest(http.MethodGet, "/ws/aqueducts/virgo/peek", nil)
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Sec-Websocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+	// No Origin header set.
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code == http.StatusForbidden {
+		t.Errorf("missing Origin: got 403, want non-403 (no Origin header should be allowed)")
+	}
+}
+
 // TestWsPeek_NonWebSocketRejected verifies that a plain GET to the WS endpoint
 // returns 426 Upgrade Required.
 func TestWsPeek_NonWebSocketRejected(t *testing.T) {
@@ -704,6 +780,100 @@ func TestWsTui_WSReaderReadDeadlineExitsOnPartition(t *testing.T) {
 	case <-ctx.Done():
 	default:
 		t.Error("cancel() was not called by WS reader goroutine on read deadline")
+	}
+	runtime.KeepAlive(client)
+}
+
+// TestWsPeek_ReaderGoroutine_ExitsOnConnClose verifies that the peek handler's
+// reader goroutine exits and calls cancel() when the underlying connection is
+// closed without a WebSocket close frame, mirroring the /ws/tui behaviour in
+// TestWsTui_WSReaderExitsOnConnClose.
+func TestWsPeek_ReaderGoroutine_ExitsOnConnClose(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+
+	br := bufio.NewReader(server)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer cancel()
+		buf := make([]byte, wsMaxClientPayload)
+		for {
+			opcode, _, nb, err := wsReadClientFrame(br, buf)
+			buf = nb
+			if err != nil {
+				return
+			}
+			if opcode == wsOpcodeClose {
+				return
+			}
+		}
+	}()
+
+	// Simulate abrupt client disconnect — no WebSocket close frame.
+	client.Close()
+
+	select {
+	case <-done:
+	case <-time.After(1 * time.Second):
+		t.Fatal("peek reader goroutine did not exit after connection close")
+	}
+	select {
+	case <-ctx.Done():
+	default:
+		t.Error("cancel() was not called by peek reader goroutine on connection close")
+	}
+}
+
+// TestWsPeek_ReaderGoroutine_ExitsOnReadDeadline verifies that the peek handler's
+// reader goroutine exits and calls cancel() when the read deadline fires with no
+// client frames, simulating a network partition with stable tmux output (no diffs).
+// This is the leak scenario fixed by the reader goroutine: without it the ticker
+// loop never writes, never fires a write deadline, and loops forever.
+func TestWsPeek_ReaderGoroutine_ExitsOnReadDeadline(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	// client is intentionally not closed — simulates a network partition where
+	// no TCP FIN arrives; server cannot distinguish idle from silently dead.
+
+	br := bufio.NewReader(server)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer cancel()
+		buf := make([]byte, wsMaxClientPayload)
+		for {
+			// Mirrors production read-deadline fix; shorter timeout for test speed.
+			server.SetReadDeadline(time.Now().Add(50 * time.Millisecond)) //nolint:errcheck
+			opcode, _, nb, err := wsReadClientFrame(br, buf)
+			buf = nb
+			if err != nil {
+				return
+			}
+			server.SetReadDeadline(time.Now().Add(50 * time.Millisecond)) //nolint:errcheck
+			if opcode == wsOpcodeClose {
+				return
+			}
+		}
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("peek reader goroutine did not exit after read deadline (network partition case)")
+	}
+	select {
+	case <-ctx.Done():
+	default:
+		t.Error("cancel() was not called by peek reader goroutine on read deadline")
 	}
 	runtime.KeepAlive(client)
 }

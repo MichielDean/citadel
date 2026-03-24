@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/MichielDean/cistern/internal/aqueduct"
 	"github.com/spf13/cobra"
@@ -15,6 +16,9 @@ var defaultCisternConfig []byte
 
 //go:embed assets/aqueduct/aqueduct.yaml
 var defaultAqueductWorkflow []byte
+
+//go:embed assets/start-castellarius.sh
+var defaultStartCastellarius []byte
 
 var initForce bool
 
@@ -67,16 +71,42 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("generate cataractae: %w", err)
 	}
 
-	// 5. Print next-steps message.
+	// 5. Create ~/.cistern/env credential file (chmod 600) if absent.
+	envFilePath := filepath.Join(cisternDir, "env")
+	if err := fixCisternEnvFile(envFilePath); err != nil {
+		return fmt.Errorf("create env file: %w", err)
+	}
+
+	// 6. Add "env" to ~/.cistern/.gitignore so the credential file is never committed.
+	gitignorePath := filepath.Join(cisternDir, ".gitignore")
+	if err := addLineToGitignore(gitignorePath, "env"); err != nil {
+		return fmt.Errorf("update .gitignore: %w", err)
+	}
+
+	// 7. Write start-castellarius.sh from embedded template.
+	startScriptDst := filepath.Join(cisternDir, "start-castellarius.sh")
+	if err := writeFileIfAbsent(startScriptDst, defaultStartCastellarius, initForce); err != nil {
+		return err
+	}
+	if err := os.Chmod(startScriptDst, 0o755); err != nil {
+		return fmt.Errorf("chmod start-castellarius.sh: %w", err)
+	}
+
+	// 8. Print next-steps message.
 	fmt.Printf(`Cistern initialized.
-  Config     : ~/.cistern/cistern.yaml
-  Aqueduct   : ~/.cistern/aqueduct/aqueduct.yaml
-  Cataractae : ~/.cistern/cataractae/
+  Config          : ~/.cistern/cistern.yaml
+  Aqueduct        : ~/.cistern/aqueduct/aqueduct.yaml
+  Cataractae      : ~/.cistern/cataractae/
+  Credentials     : ~/.cistern/env  (chmod 600)
+  Startup script  : ~/.cistern/start-castellarius.sh
 
 Next:
   1. Edit ~/.cistern/cistern.yaml — add your repos
-  2. ct droplet add --title "Your first droplet" --repo yourrepo
-  3. ct castellarius start
+  2. Add your credentials to ~/.cistern/env:
+       echo 'ANTHROPIC_API_KEY=sk-ant-...' >> ~/.cistern/env
+       chmod 600 ~/.cistern/env
+  3. ct droplet add --title "Your first droplet" --repo yourrepo
+  4. ct castellarius start
 `)
 	return nil
 }
@@ -116,6 +146,34 @@ func writeFileIfAbsent(path string, data []byte, force bool) error {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 	return nil
+}
+
+// addLineToGitignore appends line to the file at gitignorePath, creating the
+// file if necessary. If line is already present the file is not modified.
+func addLineToGitignore(gitignorePath, line string) error {
+	raw, err := os.ReadFile(gitignorePath)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read %s: %w", gitignorePath, err)
+	}
+	content := string(raw)
+	for _, existing := range strings.Split(content, "\n") {
+		if strings.TrimSpace(existing) == line {
+			return nil // already present
+		}
+	}
+	f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", gitignorePath, err)
+	}
+	defer f.Close()
+	// Ensure the new line starts on its own line.
+	if len(content) > 0 && !strings.HasSuffix(content, "\n") {
+		if _, err := fmt.Fprint(f, "\n"); err != nil {
+			return err
+		}
+	}
+	_, err = fmt.Fprintln(f, line)
+	return err
 }
 
 func init() {

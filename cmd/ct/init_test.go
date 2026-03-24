@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -191,5 +192,249 @@ t.Setenv("USERPROFILE", home)
 		if err := initCmd.RunE(initCmd, nil); err != nil {
 			t.Fatalf("run %d error: %v", i+1, err)
 		}
+	}
+}
+
+// --- ~/.cistern/env credential file tests ---
+
+func TestInit_CreatesEnvFile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	initForce = false
+
+	if err := initCmd.RunE(initCmd, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	envFile := filepath.Join(home, ".cistern", "env")
+	if _, err := os.Stat(envFile); os.IsNotExist(err) {
+		t.Error("expected ~/.cistern/env to exist after ct init")
+	}
+}
+
+func TestInit_EnvFileHasRestrictedPermissions(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	initForce = false
+
+	if err := initCmd.RunE(initCmd, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	envFile := filepath.Join(home, ".cistern", "env")
+	info, err := os.Stat(envFile)
+	if err != nil {
+		t.Fatalf("stat env file: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Errorf("expected mode 0600, got %04o", perm)
+	}
+}
+
+func TestInit_CreatesGitignoreWithEnvEntry(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	initForce = false
+
+	if err := initCmd.RunE(initCmd, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	gitignorePath := filepath.Join(home, ".cistern", ".gitignore")
+	data, err := os.ReadFile(gitignorePath)
+	if err != nil {
+		t.Fatalf("read .gitignore: %v", err)
+	}
+	found := false
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.TrimSpace(line) == "env" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf(".gitignore does not contain 'env' entry; content: %q", string(data))
+	}
+}
+
+func TestInit_GitignoreDoesNotDuplicateEntry(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	initForce = false
+
+	// Run twice — the 'env' entry must appear exactly once.
+	for i := 0; i < 2; i++ {
+		if err := initCmd.RunE(initCmd, nil); err != nil {
+			t.Fatalf("run %d error: %v", i+1, err)
+		}
+	}
+
+	gitignorePath := filepath.Join(home, ".cistern", ".gitignore")
+	data, err := os.ReadFile(gitignorePath)
+	if err != nil {
+		t.Fatalf("read .gitignore: %v", err)
+	}
+	count := 0
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.TrimSpace(line) == "env" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("expected exactly one 'env' entry in .gitignore, found %d", count)
+	}
+}
+
+func TestInit_WritesStartCastellariusScript(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	initForce = false
+
+	if err := initCmd.RunE(initCmd, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	scriptPath := filepath.Join(home, ".cistern", "start-castellarius.sh")
+	data, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatalf("start-castellarius.sh not created: %v", err)
+	}
+	if len(data) == 0 {
+		t.Fatal("start-castellarius.sh is empty")
+	}
+	// Script must source ~/.cistern/env and exec ct.
+	content := string(data)
+	if !strings.Contains(content, ".cistern/env") {
+		t.Error("start-castellarius.sh does not reference ~/.cistern/env")
+	}
+	if !strings.Contains(content, "ct castellarius start") {
+		t.Error("start-castellarius.sh does not exec ct castellarius start")
+	}
+}
+
+func TestInit_StartScriptIsExecutable(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	initForce = false
+
+	if err := initCmd.RunE(initCmd, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	scriptPath := filepath.Join(home, ".cistern", "start-castellarius.sh")
+	info, err := os.Stat(scriptPath)
+	if err != nil {
+		t.Fatalf("stat script: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm&0o111 == 0 {
+		t.Errorf("expected start-castellarius.sh to be executable, got mode %04o", perm)
+	}
+}
+
+func TestInit_EnvFileNotOverwrittenWithoutForce(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	initForce = false
+
+	// First run to create env file.
+	if err := initCmd.RunE(initCmd, nil); err != nil {
+		t.Fatalf("first run error: %v", err)
+	}
+
+	// Write sentinel content to env file.
+	envFile := filepath.Join(home, ".cistern", "env")
+	sentinel := []byte("ANTHROPIC_API_KEY=sk-ant-sentinel\n")
+	if err := os.WriteFile(envFile, sentinel, 0o600); err != nil {
+		t.Fatalf("write sentinel: %v", err)
+	}
+
+	// Second run without --force must not overwrite the env file.
+	if err := initCmd.RunE(initCmd, nil); err != nil {
+		t.Fatalf("second run error: %v", err)
+	}
+
+	data, err := os.ReadFile(envFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != string(sentinel) {
+		t.Error("~/.cistern/env was overwritten without --force")
+	}
+}
+
+// --- addLineToGitignore unit tests ---
+
+func TestAddLineToGitignore_CreatesFileWithLine(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".gitignore")
+
+	if err := addLineToGitignore(path, "env"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("file not created: %v", err)
+	}
+	if !strings.Contains(string(data), "env") {
+		t.Error("gitignore does not contain the added line")
+	}
+}
+
+func TestAddLineToGitignore_DoesNotDuplicateExistingLine(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".gitignore")
+
+	for i := 0; i < 3; i++ {
+		if err := addLineToGitignore(path, "env"); err != nil {
+			t.Fatalf("run %d error: %v", i+1, err)
+		}
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.TrimSpace(line) == "env" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("expected exactly one 'env' entry, found %d", count)
+	}
+}
+
+func TestAddLineToGitignore_AppendsToExistingFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".gitignore")
+
+	existing := "*.log\n"
+	if err := os.WriteFile(path, []byte(existing), 0o644); err != nil {
+		t.Fatalf("write existing: %v", err)
+	}
+
+	if err := addLineToGitignore(path, "env"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "*.log") {
+		t.Error("existing .gitignore content was lost")
+	}
+	if !strings.Contains(content, "env") {
+		t.Error("new line was not added to .gitignore")
 	}
 }

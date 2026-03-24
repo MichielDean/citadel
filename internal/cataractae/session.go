@@ -172,7 +172,7 @@ func (s *Session) buildClaudeCmd(skillsDir string) string {
 	prompt := strings.ReplaceAll(s.buildPrompt(), "'", `'\''`)
 	var flagsStr string
 	if s.Model != "" {
-		flagsStr = "--model " + s.Model + " "
+		flagsStr = "--model " + shellQuote(s.Model) + " "
 	}
 	return fmt.Sprintf("%s --dangerously-skip-permissions --add-dir %s %s-p '%s'",
 		claudePathFn(), shellQuote(skillsDir), flagsStr, prompt)
@@ -193,6 +193,23 @@ func resolveCommand(command string) string {
 	return command
 }
 
+// presetBaseParts builds the shared command parts for preset commands: the
+// resolved+quoted command, shell-quoted args, optional --add-dir, and optional
+// model flag. Both buildPresetCmd and buildContinueCmd append their own tail.
+func (s *Session) presetBaseParts(preset provider.ProviderPreset, skillsDir string) []string {
+	parts := []string{shellQuote(resolveCommandFn(preset.Command))}
+	for _, a := range preset.Args {
+		parts = append(parts, shellQuote(a))
+	}
+	if preset.AddDirFlag != "" {
+		parts = append(parts, preset.AddDirFlag, shellQuote(skillsDir))
+	}
+	if s.Model != "" && preset.ModelFlag != "" {
+		parts = append(parts, preset.ModelFlag, shellQuote(s.Model))
+	}
+	return parts
+}
+
 // buildPresetCmd constructs the shell command string for a ProviderPreset.
 // Returns an error if preset.Command is empty.
 // The command is resolved to an absolute path via exec.LookPath so the tmux
@@ -202,15 +219,7 @@ func (s *Session) buildPresetCmd(preset provider.ProviderPreset, skillsDir strin
 		return "", fmt.Errorf("preset %q has no command configured", preset.Name)
 	}
 
-	parts := append([]string{resolveCommandFn(preset.Command)}, preset.Args...)
-
-	if preset.AddDirFlag != "" {
-		parts = append(parts, preset.AddDirFlag, shellQuote(skillsDir))
-	}
-
-	if s.Model != "" && preset.ModelFlag != "" {
-		parts = append(parts, preset.ModelFlag, s.Model)
-	}
+	parts := s.presetBaseParts(preset, skillsDir)
 
 	if preset.PromptFlag != "" {
 		prompt := strings.ReplaceAll(s.buildPrompt(), "'", `'\''`)
@@ -232,16 +241,7 @@ func (s *Session) buildContinueCmd(preset provider.ProviderPreset, skillsDir str
 		return "", fmt.Errorf("preset %q has no ContinueFlag configured", preset.Name)
 	}
 
-	parts := append([]string{resolveCommandFn(preset.Command)}, preset.Args...)
-
-	if preset.AddDirFlag != "" {
-		parts = append(parts, preset.AddDirFlag, shellQuote(skillsDir))
-	}
-
-	if s.Model != "" && preset.ModelFlag != "" {
-		parts = append(parts, preset.ModelFlag, s.Model)
-	}
-
+	parts := s.presetBaseParts(preset, skillsDir)
 	parts = append(parts, preset.ContinueFlag)
 
 	return strings.Join(parts, " "), nil
