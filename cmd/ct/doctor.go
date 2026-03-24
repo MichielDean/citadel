@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
 	"net/http"
 	"os"
@@ -917,12 +916,12 @@ func fixCisternEnvAddKey(envPath, key string) error {
 		return fmt.Errorf("add %s=<your-key> to %s manually", key, envPath)
 	}
 	fmt.Printf("Enter %s: ", key)
-	reader := bufio.NewReader(os.Stdin)
-	value, err := reader.ReadString('\n')
+	raw, err := term.ReadPassword(int(os.Stdin.Fd()))
+	fmt.Println() // move to next line after masked input
 	if err != nil {
 		return fmt.Errorf("read input: %w", err)
 	}
-	value = strings.TrimSpace(value)
+	value := strings.TrimSpace(string(raw))
 	if value == "" {
 		return fmt.Errorf("no value provided for %s", key)
 	}
