@@ -110,13 +110,11 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		envFileFix = func() error { return fixCisternEnvFile(envPath) }
 	}
 	envExists := checkWithFix("~/.cistern/env exists", func() error {
-		if _, err := os.Stat(envPath); err != nil {
-			if os.IsNotExist(err) {
-				return fmt.Errorf("not found — run: ct init")
-			}
-			return err
+		_, err := os.Stat(envPath)
+		if os.IsNotExist(err) {
+			return fmt.Errorf("not found — run: ct init")
 		}
-		return nil
+		return err
 	}, envFileFix)
 	ok = envExists && ok
 
@@ -862,18 +860,18 @@ func checkCisternEnvPermissions(envPath string) {
 		return
 	}
 	mode := info.Mode().Perm()
-	if mode&0o077 != 0 {
-		if doctorFix {
-			if chErr := os.Chmod(envPath, 0o600); chErr != nil {
-				fmt.Printf("⚠ ~/.cistern/env: permissions %04o — chmod 600 failed: %v\n", mode, chErr)
-			} else {
-				fmt.Printf("↻ ~/.cistern/env: chmod 600 applied\n")
-			}
+	if mode&0o077 == 0 {
+		fmt.Printf("✓ ~/.cistern/env: chmod 600\n")
+		return
+	}
+	if doctorFix {
+		if chErr := os.Chmod(envPath, 0o600); chErr != nil {
+			fmt.Printf("⚠ ~/.cistern/env: permissions %04o — chmod 600 failed: %v\n", mode, chErr)
 		} else {
-			fmt.Printf("⚠ ~/.cistern/env: permissions %04o (world-readable) — run: chmod 600 %s\n", mode, envPath)
+			fmt.Printf("↻ ~/.cistern/env: chmod 600 applied\n")
 		}
 	} else {
-		fmt.Printf("✓ ~/.cistern/env: chmod 600\n")
+		fmt.Printf("⚠ ~/.cistern/env: permissions %04o (world-readable) — run: chmod 600 %s\n", mode, envPath)
 	}
 }
 

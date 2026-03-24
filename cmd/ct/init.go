@@ -163,8 +163,9 @@ func createCisternEnvFileIfAbsent(path string) error {
 // addLineToGitignore appends line to the file at gitignorePath, creating the
 // file if necessary. If line is already present the file is not modified.
 func addLineToGitignore(gitignorePath, line string) error {
-	content, _ := os.ReadFile(gitignorePath)
-	for _, existing := range strings.Split(string(content), "\n") {
+	raw, _ := os.ReadFile(gitignorePath)
+	content := string(raw)
+	for _, existing := range strings.Split(content, "\n") {
 		if strings.TrimSpace(existing) == line {
 			return nil // already present
 		}
@@ -175,7 +176,7 @@ func addLineToGitignore(gitignorePath, line string) error {
 	}
 	defer f.Close()
 	// Ensure the new line starts on its own line.
-	if len(content) > 0 && !strings.HasSuffix(string(content), "\n") {
+	if len(content) > 0 && !strings.HasSuffix(content, "\n") {
 		if _, err := fmt.Fprint(f, "\n"); err != nil {
 			return err
 		}
