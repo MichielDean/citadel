@@ -279,14 +279,14 @@ func buildContextPreamble(identityDir string, preset provider.ProviderPreset) st
 	return strings.Join(parts, "\n\n")
 }
 
-// resolveIdentityBase returns the base directory for the cataractae identity files.
+// resolveIdentityDir returns the directory containing the cataractae identity files.
 // Checks ~/.cistern/cataractae/<identity>/ (directory existence) first; falls back
 // to the sandbox-relative path when the cistern directory is absent.
 //
-// Both resolveIdentityPath and resolveIdentityDir delegate here so they always
-// agree on which location to use — preventing the divergence that occurs when the
-// cistern directory exists but a provider-specific instructions file does not.
-func (s *Session) resolveIdentityBase() string {
+// resolveIdentityPath delegates here so both methods always agree on which
+// location to use — preventing the divergence that occurs when the cistern
+// directory exists but a provider-specific instructions file does not.
+func (s *Session) resolveIdentityDir() string {
 	home, err := os.UserHomeDir()
 	if err == nil {
 		cisternDir := filepath.Join(home, ".cistern", "cataractae", s.Identity)
@@ -298,15 +298,9 @@ func (s *Session) resolveIdentityBase() string {
 }
 
 // resolveIdentityPath returns the path to the cataractae identity's instructions file.
-// Delegates to resolveIdentityBase for location resolution.
+// Delegates to resolveIdentityDir for location resolution.
 func (s *Session) resolveIdentityPath() string {
-	return filepath.Join(s.resolveIdentityBase(), s.Preset.InstrFile())
-}
-
-// resolveIdentityDir returns the directory containing the cataractae identity files.
-// Delegates to resolveIdentityBase for location resolution.
-func (s *Session) resolveIdentityDir() string {
-	return s.resolveIdentityBase()
+	return filepath.Join(s.resolveIdentityDir(), s.Preset.InstrFile())
 }
 
 // kill terminates the tmux session if it exists.
