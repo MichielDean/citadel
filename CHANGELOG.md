@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### systemd-capable Docker base image for installer tests (ci-9olg2)
+- Adds `test/docker/systemd/Dockerfile` — a Debian Bookworm image that boots with `systemd` as PID 1, suitable for testing systemd-managed service installers (e.g. `cistern-castellarius.service` via `install.sh`)
+- Sets `ENV container=docker` so systemd skips hardware-only targets; sends `STOPSIGNAL SIGRTMIN+3` so `docker stop` triggers an orderly shutdown instead of `SIGTERM`
+- Masks 13 units that require hardware, VT consoles, or kernel interfaces unavailable in Docker (`systemd-udevd`, `getty@tty1`, `sys-kernel-debug.mount`, etc.) — prevents spurious `failed` units on every boot
+- No host bind-mounts; `--privileged` grants an isolated cgroup namespace, not a shared one — no host-state leakage between runs
+- `test/docker/systemd/README.md` documents the `--privileged` requirement, capability table (`CAP_SYS_ADMIN`, `CAP_SYS_PTRACE`, writable cgroup namespace), masked-unit rationale, and the narrower capability set available for hardened environments
+
 ### Auto-refresh Claude OAuth token on expiry (ci-cms3j)
 - `ct doctor --fix` now automatically refreshes the Claude OAuth access token when it is expired or near expiry: reads the stored refresh token, calls the Anthropic OAuth endpoint, writes the new access token to `~/.claude/.credentials.json`, updates the systemd service drop-in (`env.conf`) if present, and reloads/restarts the `cistern-castellarius` systemd service so the new token takes effect immediately
 - Before spawning each agent session, the Castellarius silently checks whether the access token is expired or within a 5-minute window. If so, it attempts a background refresh using the stored refresh token and injects the new token into the session environment — sessions no longer fail silently with stale credentials
