@@ -46,18 +46,18 @@ jobs:
 
       - name: Run installer integration tests
         run: |
-          # --privileged: grants all Linux capabilities needed by systemd.
-          # -v /sys/fs/cgroup:/sys/fs/cgroup:rw: gives systemd read-write access
-          #   to the host cgroupv2 hierarchy (required on Linux 5.10+ systems).
-          # --tmpfs /run --tmpfs /run/lock: systemd writes runtime state here.
-          # --security-opt apparmor=unconfined: prevents the Docker AppArmor
-          #   profile from blocking systemd's namespace and cgroup syscalls
-          #   (--privileged does not disable AppArmor).
-          # Note: --cgroupns=host is intentionally omitted; with cgroupv2 it
-          #   causes systemd inside the container to conflict with the host's
-          #   systemd cgroup tree, producing exit code 255.
+          # Flags required for systemd to run as PID 1 in Docker on Linux 5.10+:
+          # --privileged: grants all Linux capabilities.
+          # --cgroupns=host: use host cgroup namespace so systemd can manage
+          #   service cgroups (removing this causes 200ms exit on cgroupv2).
+          # -v /sys/fs/cgroup:/sys/fs/cgroup:rw: explicit rw mount so systemd
+          #   can write to the unified cgroupv2 hierarchy.
+          # --tmpfs /run --tmpfs /run/lock: writable tmpfs for systemd runtime.
+          # --security-opt apparmor=unconfined: Docker's AppArmor profile blocks
+          #   syscalls systemd needs; --privileged alone does not disable it.
           docker run \
             --privileged \
+            --cgroupns=host \
             -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
             --tmpfs /run \
             --tmpfs /run/lock \
