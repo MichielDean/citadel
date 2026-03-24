@@ -8,11 +8,13 @@ on:
     paths:
       - 'cmd/ct/doctor.go'
       - 'cmd/ct/init.go'
+      - 'cmd/ct/assets/start-castellarius.sh'
       - 'start-castellarius.sh'
       - 'run-installer-tests.sh'
       - 'test/installer/**'
       - 'test/docker/**'
       - 'tests/installer/**'
+      - 'internal/testutil/fakeagent/**'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.head.ref || github.ref }}

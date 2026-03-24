@@ -22,4 +22,10 @@ if ! grep -qE '^ANTHROPIC_API_KEY=[^[:space:]]+' "${CISTERN_ENV}"; then
     exit 1
 fi
 
+# Source the env file to load credentials into the process environment.
+set -a
+# shellcheck source=/dev/null
+. "${CISTERN_ENV}"
+set +a
+
 exec ct castellarius start "$@"

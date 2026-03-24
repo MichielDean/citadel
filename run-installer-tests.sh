@@ -227,6 +227,10 @@ test_upgrade() {
     exec_in_container env HOME="${home_dir}" CT_NO_ASCII_LOGO=1 ct init \
         >/dev/null 2>&1 || return 1
 
+    # Then: stale_old_key must still be present — ct init must not overwrite
+    # the existing cistern.yaml (writeFileIfAbsent preserves prior-version keys).
+    exec_in_container grep -q 'stale_old_key' "${cistern_dir}/cistern.yaml" || return 1
+
     # Create cistern.db via ct doctor --fix so the service can open it.
     exec_in_container env HOME="${home_dir}" CT_NO_ASCII_LOGO=1 ct doctor --fix \
         >/dev/null 2>&1 || true
