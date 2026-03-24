@@ -19,7 +19,61 @@ Cistern is an agentic workflow orchestrator. It routes units of work called **dr
 | **Castellarius** | The overseer daemon — routes droplets, manages pipelines |
 | **Recirculate** | Send a droplet back for revision |
 | **Drought** | Idle state — maintenance hooks run here |
-| **Filtration** | Optional LLM refinement step before implementation |
+| **Filtration** | LLM refinement that sharpens a rough idea into well-specified droplets before they enter the pipeline |
+
+## Adding a Droplet
+
+**Always get the user's confirmation before filing any droplet.**
+
+### Two modes: direct or filtered
+
+**Direct** — when requirements are already clear and well-specified:
+```bash
+ct droplet add \
+  --title "Short imperative description" \
+  --repo <repo-name> \
+  --complexity standard \
+  --priority 2 \
+  --description "What, why, acceptance criteria"
+```
+
+**Filtered** — when the idea is rough, vague, or complex enough to benefit from LLM decomposition. Filtration calls the LLM, clarifies scope, and may split the idea into multiple well-specified droplets:
+```bash
+ct droplet add \
+  --repo <repo-name> \
+  --filter \
+  --title "Rough idea title" \
+  --description "Rough description of what you want"
+```
+
+Filtration requires a TTY. Run it in a tmux session:
+```bash
+tmux new-session -d -s filtration
+tmux send-keys -t filtration "ANTHROPIC_API_KEY=\$(cat ~/.cistern/env | grep ANTHROPIC_API_KEY | cut -d= -f2) PATH=\$HOME/go/bin:\$HOME/.local/bin:\$PATH ct droplet add --repo <repo> --filter --title '...' --description '...'" Enter
+# Then watch: tmux attach -t filtration
+```
+
+Or write the command to a script and run it in tmux to avoid shell quoting issues with multiline descriptions.
+
+**When to use filtration:**
+- The idea is exploratory or spans multiple concerns
+- You're not sure of the right complexity or decomposition
+- The description is a few sentences of intent, not a spec
+- The user says something like "plan this out" or "figure out what we need"
+
+**When to file directly:**
+- Requirements are already clear and specific
+- It's a small, well-understood fix
+- The user already described it in detail
+
+### Complexity
+
+| Level | Code | Stages skipped |
+|-------|------|---------------|
+| trivial | 1 | review, qa — fast lane for obvious fixes |
+| standard | 2 | qa |
+| full | 3 | all stages — default |
+| critical | 4 | all stages + human approval before merge |
 
 ## Key Commands
 
@@ -28,20 +82,23 @@ Cistern is an agentic workflow orchestrator. It routes units of work called **dr
 ct status                        # Pipeline overview
 ct droplet list                  # All droplets
 ct droplet list --status pending # Filter by status
+ct droplet list --repo <repo>    # Filter by repo
 ct droplet show <id>             # Detail view
 
-# Add work
-ct droplet add --title "Fix login bug" --repo ScaledTest
-ct droplet add --title "..." --repo <repo> --complexity standard --priority 2
+# Manage flowing work
+ct droplet restart <id>          # Retry a failed droplet
+ct droplet escalate <id>         # Bump priority
+ct droplet note <id> "..."       # Add a note to a droplet
 
 # Daemon control
 ct castellarius start
 ct castellarius status
 journalctl --user -u cistern-castellarius -f   # Live logs
+cat ~/.cistern/castellarius.log                # Log file
 
 # Cataractae
 ct cataractae list               # List all stages
-ct cataractae generate           # Generate missing stages
+ct cataractae generate           # Generate missing stage configs
 
 # Dashboard
 ct dashboard                     # Live TUI (requires tmux)
@@ -49,46 +106,23 @@ ct dashboard                     # Live TUI (requires tmux)
 
 See [references/commands.md](references/commands.md) for the full command reference.
 
-## Adding a Droplet
-
-```bash
-ct droplet add \
-  --title "Short imperative description" \
-  --repo <repo-name> \
-  [--complexity trivial|standard|full|critical] \
-  [--priority 1-4] \
-  [--depends-on <id>]
-```
-
-Complexity controls which stages run:
-- `trivial` (1): skip review + qa — fast lane
-- `standard` (2): skip qa
-- `full` (3): all stages — default
-- `critical` (4): requires human approval before merge
-
-**Rule:** Never file a droplet without the user's confirmation first.
-
 ## Pipeline
 
 ```
-implement → adversarial-review → qa → security-review → docs → delivery
+implement → simplify → adversarial-review → qa → security-review → docs → delivery
 ```
 
-Castellarius routes each droplet through the stages configured for its aqueduct. Completed droplets move to the next stage automatically; failed ones can be restarted.
-
-```bash
-ct droplet restart <id>   # Retry a failed droplet
-ct droplet escalate <id>  # Escalate priority
-```
+Castellarius routes each droplet through the stages configured for its aqueduct. Completed droplets move to the next stage automatically; recirculated ones go back for revision.
 
 ## Troubleshooting
 
 | Symptom | Check |
 |---------|-------|
-| Castellarius not running | `ct castellarius status` → `ct castellarius start` |
-| Droplet stuck in a stage | `ct droplet show <id>` — check last error |
+| Castellarius not running | `systemctl --user status cistern-castellarius` → `systemctl --user start cistern-castellarius` |
+| Sessions crashing immediately | Token mismatch — check `~/.cistern/env` has valid `ANTHROPIC_API_KEY`; run `claude -p "hi"` with that key to verify |
+| Droplet stuck looping | `ct droplet show <id>` — check notes for dispatch-loop recovery messages |
 | Logs for a failed stage | `journalctl --user -u cistern-castellarius -f` |
-| Binary out of date | Rebuild: see [references/setup.md](references/setup.md) |
+| Binary out of date | `ct update` or rebuild: see [references/setup.md](references/setup.md) |
 
 See [references/troubleshooting.md](references/troubleshooting.md) for detailed recovery workflows.
 
