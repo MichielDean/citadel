@@ -107,11 +107,10 @@ test_ct_available() {
     exec_in_container ct version >/dev/null
 }
 
-# test_fakeagent_available verifies that fakeagent is in the PATH and that
-# the /usr/local/bin/claude symlink resolves correctly.
+# test_fakeagent_available verifies that the fakeagent stub is installed as
+# "claude" and is on PATH — matching the path npm installs the real Claude CLI.
 test_fakeagent_available() {
-    exec_in_container which fakeagent >/dev/null &&
-    exec_in_container which claude    >/dev/null
+    exec_in_container which claude >/dev/null
 }
 
 # test_ct_init verifies that `ct init` exits 0 and creates the Cistern config
