@@ -60,7 +60,7 @@ Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 WantedBy=multi-user.target
 EOF
 systemctl daemon-reload &&
-systemctl reset-failed cistern-castellarius.service 2>/dev/null || true &&
+(systemctl reset-failed cistern-castellarius.service 2>/dev/null || true) &&
 systemctl enable cistern-castellarius &&
 systemctl restart cistern-castellarius
 INSTALL_SCRIPT
@@ -290,7 +290,7 @@ test_missing_credentials() {
     # Then: journal contains the actionable error from start-castellarius.sh.
     local logs
     logs=$(exec_in_container journalctl -u cistern-castellarius --no-pager -n 20 2>/dev/null || true)
-    echo "${logs}" | grep -qi 'not found\|cistern' || return 1
+    echo "${logs}" | grep -qi 'not found' || return 1
 
     return 0
 }
@@ -340,7 +340,7 @@ test_wrong_token() {
     # Then: journal contains the actionable error from start-castellarius.sh.
     local logs
     logs=$(exec_in_container journalctl -u cistern-castellarius --no-pager -n 20 2>/dev/null || true)
-    echo "${logs}" | grep -qi 'ANTHROPIC_API_KEY\|cistern' || return 1
+    echo "${logs}" | grep -qi 'ANTHROPIC_API_KEY not set' || return 1
 
     return 0
 }
