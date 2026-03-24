@@ -10,6 +10,12 @@
 - Adds a `gh` stub to `test/docker/installer-test/Dockerfile` — a one-line `exit 0` script at `/usr/local/bin/gh` so `ct doctor`'s "gh CLI installed" and "gh authenticated" checks succeed without a real GitHub CLI or credentials
 - Container cleanup on failure is guaranteed by the pre-existing EXIT trap — no orphaned containers; total test count in `run-installer-tests.sh` reaches 8
 
+### Installer: service uses wrapper script; credentials not baked into service file (ci-ynllg)
+- `installSystemdService()` (`ct doctor --fix`, auto-install path) now sets `ExecStart=~/.cistern/start-castellarius.sh` — the wrapper script, not `ct` directly; credentials are no longer baked into the systemd service file
+- `ANTHROPIC_API_KEY` is removed from the service `Environment=` lines — credentials are loaded at runtime by the wrapper sourcing `~/.cistern/env` on every restart
+- `installSystemdService()` creates `~/.cistern/start-castellarius.sh` (chmod 755) and `~/.cistern/env` stub (chmod 600) during install if absent, mirroring what `ct init` does
+- `ct doctor` no longer false-alarms on `ANTHROPIC_API_KEY` missing from the systemd environment property — that property only reflects unit-file directives, not runtime variables sourced by the wrapper; the check now lives in the `~/.cistern/env` checks
+
 ### ~/.cistern/env credential store; ct init, ct doctor, start-castellarius.sh (ci-qdc7q)
 - `~/.cistern/env` is now the canonical credential store — a simple `KEY=VALUE` file (one pair per line, chmod 600)
 - `ct init` creates `~/.cistern/env` with chmod 600, adds `env` to `~/.cistern/.gitignore`, and writes `~/.cistern/start-castellarius.sh`

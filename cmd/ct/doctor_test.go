@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -1590,5 +1591,287 @@ func TestFixCisternEnvFile_IsIdempotent(t *testing.T) {
 
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		t.Error("env file does not exist after idempotent runs")
+	}
+}
+
+func TestFixCisternEnvFile_NewFile_ContainsCommentStub(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "env")
+
+	if err := fixCisternEnvFile(path); err != nil {
+		t.Fatalf("fixCisternEnvFile: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read env: %v", err)
+	}
+	if !strings.Contains(string(data), "ANTHROPIC_API_KEY") {
+		t.Error("new env file does not contain ANTHROPIC_API_KEY comment stub")
+	}
+	if !strings.Contains(string(data), "#") {
+		t.Error("new env file does not contain comment lines")
+	}
+}
+
+// TestFixCisternEnvFile_StatError_ReturnsError verifies that when os.Stat
+// returns a non-IsNotExist error (e.g. EACCES), fixCisternEnvFile propagates
+// it instead of silently swallowing it.
+func TestFixCisternEnvFile_StatError_ReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "env")
+
+	origStatFn := osStatFn
+	t.Cleanup(func() { osStatFn = origStatFn })
+	syntheticErr := fmt.Errorf("permission denied")
+	osStatFn = func(name string) (os.FileInfo, error) {
+		if name == path {
+			return nil, syntheticErr
+		}
+		return os.Stat(name)
+	}
+
+	err := fixCisternEnvFile(path)
+	if err == nil {
+		t.Fatal("expected error when stat returns a non-IsNotExist error, got nil")
+	}
+	if !strings.Contains(err.Error(), "stat env file") {
+		t.Errorf("expected error to contain 'stat env file', got: %v", err)
+	}
+}
+
+// --- installSystemdService tests ---
+
+// setupInstallSystemdServiceTest redirects HOME to a temp dir and stubs out
+// resolveGoBinFn and execCommandFn so installSystemdService does not need a
+// real Go installation or a running systemd. Returns the temp home directory.
+func setupInstallSystemdServiceTest(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	fakeGobin := t.TempDir()
+	origResolveGoBinFn := resolveGoBinFn
+	t.Cleanup(func() { resolveGoBinFn = origResolveGoBinFn })
+	resolveGoBinFn = func() (string, error) { return fakeGobin, nil }
+
+	origExecCommandFn := execCommandFn
+	t.Cleanup(func() { execCommandFn = origExecCommandFn })
+	execCommandFn = func(name string, args ...string) *exec.Cmd {
+		if name == "systemctl" {
+			return exec.Command("true")
+		}
+		return exec.Command(name, args...)
+	}
+
+	return home
+}
+
+func TestInstallSystemdService_WritesWrapperScript(t *testing.T) {
+	home := setupInstallSystemdServiceTest(t)
+
+	if err := installSystemdService(); err != nil {
+		t.Fatalf("installSystemdService: %v", err)
+	}
+
+	wrapperPath := filepath.Join(home, ".cistern", "start-castellarius.sh")
+	info, err := os.Stat(wrapperPath)
+	if err != nil {
+		t.Fatalf("wrapper script not created: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm&0o111 == 0 {
+		t.Errorf("wrapper script not executable: mode %04o", perm)
+	}
+	data, err := os.ReadFile(wrapperPath)
+	if err != nil {
+		t.Fatalf("read wrapper script: %v", err)
+	}
+	if !strings.Contains(string(data), "castellarius start") {
+		t.Error("wrapper script does not contain 'castellarius start'")
+	}
+}
+
+func TestInstallSystemdService_WrapperScriptNotOverwritten(t *testing.T) {
+	home := setupInstallSystemdServiceTest(t)
+
+	// Pre-create the wrapper with custom content.
+	cisternDir := filepath.Join(home, ".cistern")
+	if err := os.MkdirAll(cisternDir, 0o755); err != nil {
+		t.Fatalf("mkdir cistern: %v", err)
+	}
+	wrapperPath := filepath.Join(cisternDir, "start-castellarius.sh")
+	custom := []byte("#!/bin/bash\n# custom wrapper\n")
+	if err := os.WriteFile(wrapperPath, custom, 0o755); err != nil {
+		t.Fatalf("write custom wrapper: %v", err)
+	}
+
+	if err := installSystemdService(); err != nil {
+		t.Fatalf("installSystemdService: %v", err)
+	}
+
+	data, err := os.ReadFile(wrapperPath)
+	if err != nil {
+		t.Fatalf("read wrapper: %v", err)
+	}
+	if string(data) != string(custom) {
+		t.Error("existing wrapper script was overwritten")
+	}
+}
+
+func TestInstallSystemdService_CreatesEnvStubIfAbsent(t *testing.T) {
+	home := setupInstallSystemdServiceTest(t)
+
+	if err := installSystemdService(); err != nil {
+		t.Fatalf("installSystemdService: %v", err)
+	}
+
+	envPath := filepath.Join(home, ".cistern", "env")
+	info, err := os.Stat(envPath)
+	if err != nil {
+		t.Fatalf("env file not created: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Errorf("env file has wrong permissions: got %04o, want 0600", perm)
+	}
+}
+
+func TestInstallSystemdService_PreservesExistingEnvFile(t *testing.T) {
+	home := setupInstallSystemdServiceTest(t)
+
+	cisternDir := filepath.Join(home, ".cistern")
+	if err := os.MkdirAll(cisternDir, 0o755); err != nil {
+		t.Fatalf("mkdir cistern: %v", err)
+	}
+	envPath := filepath.Join(cisternDir, "env")
+	existing := []byte("ANTHROPIC_API_KEY=sk-ant-existing\n")
+	if err := os.WriteFile(envPath, existing, 0o600); err != nil {
+		t.Fatalf("write existing env: %v", err)
+	}
+
+	if err := installSystemdService(); err != nil {
+		t.Fatalf("installSystemdService: %v", err)
+	}
+
+	data, err := os.ReadFile(envPath)
+	if err != nil {
+		t.Fatalf("read env: %v", err)
+	}
+	if string(data) != string(existing) {
+		t.Errorf("existing env file was modified: got %q, want %q", string(data), string(existing))
+	}
+}
+
+func TestInstallSystemdService_AddsEnvToGitignore(t *testing.T) {
+	home := setupInstallSystemdServiceTest(t)
+
+	if err := installSystemdService(); err != nil {
+		t.Fatalf("installSystemdService: %v", err)
+	}
+
+	gitignorePath := filepath.Join(home, ".cistern", ".gitignore")
+	data, err := os.ReadFile(gitignorePath)
+	if err != nil {
+		t.Fatalf("read .gitignore: %v", err)
+	}
+	if !strings.Contains(string(data), "env") {
+		t.Error(".gitignore does not contain 'env'")
+	}
+}
+
+func TestInstallSystemdService_ServiceFileUsesWrapperScript(t *testing.T) {
+	home := setupInstallSystemdServiceTest(t)
+
+	if err := installSystemdService(); err != nil {
+		t.Fatalf("installSystemdService: %v", err)
+	}
+
+	svcPath := filepath.Join(home, ".config", "systemd", "user", "cistern-castellarius.service")
+	data, err := os.ReadFile(svcPath)
+	if err != nil {
+		t.Fatalf("read service file: %v", err)
+	}
+	wrapperPath := filepath.Join(home, ".cistern", "start-castellarius.sh")
+	want := "ExecStart=" + wrapperPath
+	if !strings.Contains(string(data), want) {
+		t.Errorf("service file ExecStart does not point to wrapper script; want %q in:\n%s", want, data)
+	}
+}
+
+func TestInstallSystemdService_ServiceFileHasNoAnthropicAPIKey(t *testing.T) {
+	home := setupInstallSystemdServiceTest(t)
+
+	if err := installSystemdService(); err != nil {
+		t.Fatalf("installSystemdService: %v", err)
+	}
+
+	svcPath := filepath.Join(home, ".config", "systemd", "user", "cistern-castellarius.service")
+	data, err := os.ReadFile(svcPath)
+	if err != nil {
+		t.Fatalf("read service file: %v", err)
+	}
+	if strings.Contains(string(data), "ANTHROPIC_API_KEY") {
+		t.Error("service file must not contain ANTHROPIC_API_KEY — credentials are loaded by the wrapper script")
+	}
+}
+
+// TestInstallSystemdService_WrapperStatError_ReturnsError verifies that when
+// os.Stat on the wrapper path returns a non-IsNotExist error (e.g. EACCES),
+// installSystemdService propagates the error instead of silently continuing.
+func TestInstallSystemdService_WrapperStatError_ReturnsError(t *testing.T) {
+	setupInstallSystemdServiceTest(t)
+
+	// Inject a stat function that returns a non-IsNotExist error for the wrapper path.
+	origStatFn := osStatFn
+	t.Cleanup(func() { osStatFn = origStatFn })
+	syntheticErr := fmt.Errorf("permission denied")
+	osStatFn = func(name string) (os.FileInfo, error) {
+		if strings.HasSuffix(name, "start-castellarius.sh") {
+			return nil, syntheticErr
+		}
+		return os.Stat(name)
+	}
+
+	err := installSystemdService()
+	if err == nil {
+		t.Fatal("expected error when stat returns a non-IsNotExist error, got nil")
+	}
+	if !strings.Contains(err.Error(), "stat wrapper script") {
+		t.Errorf("expected error to contain 'stat wrapper script', got: %v", err)
+	}
+}
+
+// TestCheckSystemdServiceEnv_NoAPIKeyCheck verifies that checkSystemdServiceEnv
+// does NOT produce a warning about ANTHROPIC_API_KEY being absent from the
+// service environment. ANTHROPIC_API_KEY is now loaded at runtime by the wrapper
+// script sourcing ~/.cistern/env, so it will never appear in systemd's
+// Environment property — reporting its absence as a failure would be a false positive.
+func TestCheckSystemdServiceEnv_NoAPIKeyCheck(t *testing.T) {
+	// Inject a fake systemctl that returns a service env with no ANTHROPIC_API_KEY.
+	origFn := checkSystemdEnvFn
+	t.Cleanup(func() { checkSystemdEnvFn = origFn })
+	checkSystemdEnvFn = func(_ string) ([]byte, error) {
+		return []byte("Environment=PATH=/usr/local/bin:/usr/bin:/bin\n"), nil
+	}
+
+	// Capture stdout to verify no ANTHROPIC_API_KEY warning is emitted.
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	origStdout := os.Stdout
+	os.Stdout = w
+
+	checkSystemdServiceEnv("cistern-castellarius", nil)
+
+	w.Close()
+	os.Stdout = origStdout
+
+	var buf bytes.Buffer
+	buf.ReadFrom(r)
+	output := buf.String()
+
+	if strings.Contains(output, "ANTHROPIC_API_KEY") {
+		t.Errorf("checkSystemdServiceEnv emitted an ANTHROPIC_API_KEY warning; output:\n%s", output)
 	}
 }

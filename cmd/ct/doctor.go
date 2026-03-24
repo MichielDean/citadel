@@ -515,7 +515,7 @@ func checkSystemdService(cfg *aqueduct.AqueductConfig) {
 // ~/.local/bin (or similar) is missing from the systemd service PATH.
 func checkSystemdServiceEnv(serviceName string, cfg *aqueduct.AqueductConfig) {
 	// Read the service's effective environment from systemd.
-	out, err := exec.Command("systemctl", "--user", "show", serviceName, "--property=Environment").Output()
+	out, err := checkSystemdEnvFn(serviceName)
 	if err != nil {
 		return // can't read env — skip silently
 	}
@@ -565,20 +565,19 @@ func checkSystemdServiceEnv(serviceName string, cfg *aqueduct.AqueductConfig) {
 			}
 		}
 	}
-
-	// Check ANTHROPIC_API_KEY is set in service env (not just the current shell).
-	if !strings.Contains(serviceEnv, "ANTHROPIC_API_KEY=") {
-		fmt.Printf("✗ service env: ANTHROPIC_API_KEY not set in service environment\n" +
-			"  Fix: add Environment=ANTHROPIC_API_KEY=<key> to the service drop-in at\n" +
-			"  ~/.config/systemd/user/cistern-castellarius.service.d/env.conf\n")
-	} else {
-		fmt.Printf("✓ service env: ANTHROPIC_API_KEY set\n")
-	}
 }
 
+// resolveGoBinFn wraps resolveGoBin to allow injection in tests.
+var resolveGoBinFn = resolveGoBin
+
+// osStatFn wraps os.Stat to allow injection in tests.
+var osStatFn = os.Stat
+
 // installSystemdService writes the cistern-castellarius.service file and enables it.
+// It also writes ~/.cistern/start-castellarius.sh, creates ~/.cistern/env if absent,
+// and adds "env" to ~/.cistern/.gitignore.
 func installSystemdService() error {
-	gobin, err := resolveGoBin()
+	gobin, err := resolveGoBinFn()
 	if err != nil {
 		return fmt.Errorf("cannot resolve Go bin dir: %w", err)
 	}
@@ -586,19 +585,46 @@ func installSystemdService() error {
 	if err != nil {
 		return err
 	}
-	ctBin := filepath.Join(gobin, "ct")
+
+	cisternDir := filepath.Join(home, ".cistern")
+	if err := os.MkdirAll(cisternDir, 0o755); err != nil {
+		return fmt.Errorf("create .cistern dir: %w", err)
+	}
+
+	// Write start-castellarius.sh wrapper if not present (chmod 755).
+	wrapperPath := filepath.Join(cisternDir, "start-castellarius.sh")
+	if _, statErr := osStatFn(wrapperPath); os.IsNotExist(statErr) {
+		if err := os.WriteFile(wrapperPath, defaultStartCastellarius, 0o755); err != nil {
+			return fmt.Errorf("write wrapper script: %w", err)
+		}
+	} else if statErr != nil {
+		return fmt.Errorf("stat wrapper script: %w", statErr)
+	}
+
+	// Create ~/.cistern/env credential stub if absent.
+	envPath := filepath.Join(cisternDir, "env")
+	if err := fixCisternEnvFile(envPath); err != nil {
+		return fmt.Errorf("create env file: %w", err)
+	}
+
+	// Add "env" to ~/.cistern/.gitignore.
+	gitignorePath := filepath.Join(cisternDir, ".gitignore")
+	if err := addLineToGitignore(gitignorePath, "env"); err != nil {
+		return fmt.Errorf("update .gitignore: %w", err)
+	}
+
 	serviceDir := filepath.Join(home, ".config", "systemd", "user")
 	if err := os.MkdirAll(serviceDir, 0o755); err != nil {
 		return err
 	}
-	logPath := filepath.Join(home, ".cistern", "castellarius.log")
+	logPath := filepath.Join(cisternDir, "castellarius.log")
 	content := fmt.Sprintf(`[Unit]
 Description=Cistern Castellarius — aqueduct scheduler
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=%s castellarius start
+ExecStart=%s
 Restart=always
 RestartSec=5
 StartLimitIntervalSec=120
@@ -614,17 +640,17 @@ Environment=PATH=%s:/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin
 
 [Install]
 WantedBy=default.target
-`, ctBin, logPath, logPath, home, gobin)
+`, wrapperPath, logPath, logPath, home, gobin)
 
 	svcPath := filepath.Join(serviceDir, "cistern-castellarius.service")
 	if err := os.WriteFile(svcPath, []byte(content), 0o644); err != nil {
 		return err
 	}
-	exec.Command("systemctl", "--user", "daemon-reload").Run() //nolint:errcheck
-	if err := exec.Command("systemctl", "--user", "enable", "cistern-castellarius").Run(); err != nil {
+	execCommandFn("systemctl", "--user", "daemon-reload").Run() //nolint:errcheck
+	if err := execCommandFn("systemctl", "--user", "enable", "cistern-castellarius").Run(); err != nil {
 		return fmt.Errorf("enable failed: %w", err)
 	}
-	exec.Command("systemctl", "--user", "start", "cistern-castellarius").Run() //nolint:errcheck
+	execCommandFn("systemctl", "--user", "start", "cistern-castellarius").Run() //nolint:errcheck
 	return nil
 }
 
@@ -745,6 +771,12 @@ var doctorOAuthTokenURL = oauth.DefaultTokenURL
 
 // execCommandFn wraps exec.Command to allow injection in tests.
 var execCommandFn = exec.Command
+
+// checkSystemdEnvFn reads the effective environment of a systemd user service.
+// It is a variable to allow injection in tests.
+var checkSystemdEnvFn = func(serviceName string) ([]byte, error) {
+	return exec.Command("systemctl", "--user", "show", serviceName, "--property=Environment").Output()
+}
 
 // fixOAuthToken refreshes the Claude OAuth access token using the stored refresh
 // token and writes the new access token to ~/.claude/.credentials.json and the
@@ -894,16 +926,22 @@ func checkCisternEnvHasKey(envPath, key string) error {
 	return fmt.Errorf("not set in %s", envPath)
 }
 
+// cisternEnvStub is the default content written to a new ~/.cistern/env file.
+const cisternEnvStub = "# Cistern credentials — add your API key here\n# ANTHROPIC_API_KEY=sk-ant-...\n# GH_TOKEN=ghp_...\n"
+
 // fixCisternEnvFile creates envPath with mode 0o600 if it does not exist.
+// New files are populated with a commented-out stub.
 // Parent directories are created as needed. Existing files are not modified.
 func fixCisternEnvFile(envPath string) error {
 	if err := os.MkdirAll(filepath.Dir(envPath), 0o755); err != nil {
 		return fmt.Errorf("create directory: %w", err)
 	}
-	if _, err := os.Stat(envPath); os.IsNotExist(err) {
-		if err := os.WriteFile(envPath, []byte{}, 0o600); err != nil {
+	if _, err := osStatFn(envPath); os.IsNotExist(err) {
+		if err := os.WriteFile(envPath, []byte(cisternEnvStub), 0o600); err != nil {
 			return fmt.Errorf("create env file: %w", err)
 		}
+	} else if err != nil {
+		return fmt.Errorf("stat env file: %w", err)
 	}
 	return nil
 }
