@@ -1170,11 +1170,7 @@ func TestDashboardTUI_RingBuffer_SnapshotOnReconnect(t *testing.T) {
 	if len(snapshot) < len(chunks) {
 		t.Fatalf("snapshot has %d chunks, want at least %d", len(snapshot), len(chunks))
 	}
-	combined := make([]byte, 0)
-	for _, s := range snapshot {
-		combined = append(combined, s...)
-	}
-	got := string(combined)
+	got := string(bytes.Join(snapshot, nil))
 	prevIdx := -1
 	for _, c := range chunks {
 		idx := strings.Index(got, c)

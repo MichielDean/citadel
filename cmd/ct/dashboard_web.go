@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha1"
 	"embed"
@@ -328,9 +329,9 @@ type DashboardTUI struct {
 	rwc      io.ReadWriteCloser      // current PTY/pipe master (protected by mu)
 	resizeFn func(cols, rows uint16) // current resize callback (protected by mu)
 	clients  map[*tuiClient]struct{} // active WS consumers (protected by mu)
-	ring       [][]byte               // ring buffer of recent PTY chunks (protected by mu)
-	ringHead   int                    // index of oldest valid entry (protected by mu)
-	ringLen    int                    // number of valid entries (protected by mu)
+	ring     [][]byte                // ring buffer of recent PTY chunks (protected by mu)
+	ringHead int                     // index of oldest valid entry (protected by mu)
+	ringLen  int                     // number of valid entries (protected by mu)
 
 	stopCh chan struct{} // closed by Stop to terminate run loop
 	doneCh chan struct{} // closed when run loop has fully exited
@@ -445,9 +446,7 @@ func (d *DashboardTUI) runOnce() bool {
 	for {
 		n, err := rwc.Read(buf)
 		if n > 0 {
-			chunk := make([]byte, n)
-			copy(chunk, buf[:n])
-			d.broadcast(chunk)
+			d.broadcast(bytes.Clone(buf[:n]))
 		}
 		if err != nil {
 			return true
