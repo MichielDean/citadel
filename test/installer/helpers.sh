@@ -143,7 +143,6 @@ setup_container() {
     printf 'Waiting for systemd to initialise (up to 30 s)...\n'
     if ! wait_for_systemd 30; then
         printf 'error: systemd did not reach running/degraded within 30 s\n' >&2
-        stop_container
         exit 1
     fi
 }
