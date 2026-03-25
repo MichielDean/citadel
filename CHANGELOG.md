@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Castellarius: auto-promote recirculate to pass when no route exists (ci-blpza)
+- When a cataractae signals `ct droplet recirculate` but the aqueduct config has no `on_recirculate` route for that step, the Castellarius now auto-promotes the outcome to `pass` instead of stalling
+- Rationale: The work is almost certainly complete — the agent chose the wrong signal. There is no upstream to send it to, so recirculate is semantically meaningless here. Auto-promoting is non-destructive.
+- User-visible: When auto-promoted, a note is attached to the droplet: `Auto-promoted: cataractae "<name>" signaled recirculate but has no on_recirculate route — treated as pass. Review agent behavior if this recurs.`
+- Logged at WARN level in the Castellarius logs for visibility without failing the pipeline
+- Interim fix: Once ci-amg37 (prompt templating) lands, recirculate will not appear in the agent's context at all, making this edge case unreachable
+- Tests added: `TestTick_RecirculateAutoPromotesToPass` verifies routing to the on_pass target with warning note; `TestTick_RecirculateNoPassRoute_StillEscalates` verifies escalation still occurs when neither on_recirculate nor on_pass routes exist
+
 ### Peek: attach read-only to live tmux session instead of polling snapshots (ci-61hbi)
 - `ct droplet peek <id>` now attaches read-only to the live agent tmux session by default (`tmux attach-session -r`), providing real-time scrolling output instead of static snapshots
 - Session fallback: if the session doesn't exist (agent completed), shows the last 10 lines of the most recent note
