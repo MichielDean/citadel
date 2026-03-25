@@ -42,13 +42,18 @@ func TestCapturePane_FullScrollback_ReturnsHistoryBeyondVisible(t *testing.T) {
 	}
 
 	// Poll the visible pane until the sentinel appears (up to 10 seconds).
+	found := false
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		raw, _ := exec.Command("tmux", "capture-pane", "-t", session+":0.0", "-p").Output()
 		if strings.Contains(string(raw), "SCROLLBACK_DONE") {
+			found = true
 			break
 		}
 		time.Sleep(100 * time.Millisecond)
+	}
+	if !found {
+		t.Fatal("timed out waiting for tmux shell to finish writing scrollback lines")
 	}
 
 	// Capture with lines=0: must return the full scrollback buffer.
