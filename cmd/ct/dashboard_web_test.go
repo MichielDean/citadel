@@ -1042,6 +1042,72 @@ func TestDashboardHTML_OnDataForwardsKeystrokes(t *testing.T) {
 	}
 }
 
+// TestDashboardHTML_EscHintButton_ElementExists verifies that the web dashboard
+// HTML contains an always-visible ESC hint element to guide users back from the
+// peek overlay when the Esc key may not be accessible from the browser.
+//
+// Given: the dashboardHTML const
+// When:  we inspect the static markup
+// Then:  an element with id="esc-hint" must be present
+func TestDashboardHTML_EscHintButton_ElementExists(t *testing.T) {
+	if !strings.Contains(dashboardHTML, `id="esc-hint"`) {
+		t.Error(`dashboardHTML must contain an element with id="esc-hint"`)
+	}
+}
+
+// TestDashboardHTML_EscHintButton_OnclickCallsSendEsc verifies that the esc-hint
+// element's onclick attribute invokes the sendEsc function when clicked.
+//
+// Given: the dashboardHTML const
+// When:  we inspect the esc-hint element's onclick handler
+// Then:  the onclick attribute must call sendEsc()
+func TestDashboardHTML_EscHintButton_OnclickCallsSendEsc(t *testing.T) {
+	if !strings.Contains(dashboardHTML, `onclick="sendEsc()`) {
+		t.Error(`dashboardHTML esc-hint element must have onclick="sendEsc()"`)
+	}
+}
+
+// TestDashboardHTML_SendEscFunction_SendsEscByte verifies that the sendEsc
+// JavaScript function exists and forwards the ESC byte (\x1b) to the PTY via
+// WebSocket, so clicking the hint has the same effect as pressing Esc.
+//
+// Given: the dashboardHTML const
+// When:  we inspect the embedded JavaScript
+// Then:  a sendEsc() function must be defined that calls ws.send('\x1b')
+func TestDashboardHTML_SendEscFunction_SendsEscByte(t *testing.T) {
+	if !strings.Contains(dashboardHTML, "function sendEsc()") {
+		t.Error("dashboardHTML must define a sendEsc() JavaScript function")
+	}
+	if !strings.Contains(dashboardHTML, `ws.send('\x1b')`) {
+		t.Error(`dashboardHTML sendEsc() must call ws.send('\x1b') to forward the ESC byte`)
+	}
+}
+
+// TestDashboardHTML_KeydownListener_InterceptsEscape verifies that the web
+// dashboard registers a capture-phase keydown listener that intercepts the
+// Escape key and forwards it to the PTY without a double-send from term.onData.
+//
+// Given: the dashboardHTML const
+// When:  we inspect the embedded JavaScript
+// Then:  a document keydown listener using capture:true must handle e.key === 'Escape'
+// And:   the handler must call stopPropagation() to prevent xterm.js double-send
+func TestDashboardHTML_KeydownListener_InterceptsEscape(t *testing.T) {
+	checks := []struct {
+		want string
+		desc string
+	}{
+		{`addEventListener('keydown'`, "document keydown listener"},
+		{`e.key === 'Escape'`, "Escape key check"},
+		{"stopPropagation()", "stopPropagation to prevent double-send"},
+		{"capture", "capture:true to intercept before xterm.js"},
+	}
+	for _, c := range checks {
+		if !strings.Contains(dashboardHTML, c.want) {
+			t.Errorf("dashboardHTML keydown listener must contain %s (%q)", c.desc, c.want)
+		}
+	}
+}
+
 // TestDashboardTUI_ReconnectDoesNotRestartChild asserts that disconnecting and
 // reconnecting a WebSocket client does not cause the child process to restart.
 //

@@ -899,11 +899,15 @@ html,body{width:100%;height:100%;background:#0d1117;overflow:hidden}
 .xterm-viewport::-webkit-scrollbar-track{background:#0d1117}
 .xterm-viewport::-webkit-scrollbar-thumb{background:#30363d;border-radius:3px}
 .xterm-viewport{scrollbar-color:#30363d #0d1117;scrollbar-width:thin}
+/* ESC = back hint — fixed corner overlay, always visible, subtle */
+#esc-hint{position:fixed;bottom:10px;right:14px;z-index:9999;background:rgba(13,17,23,0.82);border:1px solid #30363d;border-radius:4px;padding:3px 8px;font-family:monospace;font-size:11px;color:#8b949e;cursor:pointer;user-select:none;-webkit-user-select:none;outline:none}
+#esc-hint:hover{color:#e6edf3;border-color:#58a6ff}
 </style>
 <link rel="stylesheet" href="/static/xterm.min.css"/>
 </head>
 <body>
 <div id="scroll"><div id="wrap"><div id="terminal"></div></div></div>
+<button id="esc-hint" onclick="sendEsc()" title="Send Esc to terminal (back / close overlay)">ESC = back</button>
 <script src="/static/xterm.min.js"></script>
 <script src="/static/addon-fit.min.js"></script>
 <script>
@@ -946,6 +950,26 @@ term.onData(function(data) {
     ws.send(data);
   }
 });
+
+/* sendEsc forwards the Escape byte (\x1b) to the PTY. Called by the ESC hint
+   button (onclick) and by the keydown capture listener below. */
+function sendEsc() {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send('\x1b');
+  }
+}
+
+/* Intercept Esc at the capture phase so the PTY receives it reliably even
+   when xterm.js does not have keyboard focus or the browser would otherwise
+   swallow it (e.g. to close a dialog or auto-complete dropdown).
+   stopPropagation() prevents xterm.js from also firing term.onData for the
+   same event, which would cause a double-send of \x1b to the PTY. */
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') {
+    e.stopPropagation();
+    sendEsc();
+  }
+}, {capture:true});
 
 var ws = null;
 var scale = 0.75; /* default: render ~133% more content, scaled down to fit */
