@@ -1553,10 +1553,12 @@ func TestSpawn_TmuxServerDead_RecoverySucceeds(t *testing.T) {
 	killCalled := false
 	execTmuxNewSession = func(_ []string) ([]byte, error) {
 		callCount++
-		if callCount == 1 {
+		if callCount <= 2 {
+			// First call (outside mutex) and double-check (inside mutex) both see
+			// a dead server. Third call (after kill) succeeds.
 			return []byte("no server running on /tmp/tmux-1000/default"), fmt.Errorf("exit status 1")
 		}
-		return nil, nil // retry succeeds
+		return nil, nil // retry after kill succeeds
 	}
 	execTmuxKillServer = func() { killCalled = true }
 
@@ -1574,8 +1576,8 @@ func TestSpawn_TmuxServerDead_RecoverySucceeds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("spawn returned unexpected error: %v", err)
 	}
-	if callCount != 2 {
-		t.Errorf("execTmuxNewSession called %d times, want 2", callCount)
+	if callCount != 3 {
+		t.Errorf("execTmuxNewSession called %d times, want 3 (initial + double-check + retry-after-kill)", callCount)
 	}
 	if !killCalled {
 		t.Error("execTmuxKillServer was not called during recovery")
@@ -1621,8 +1623,8 @@ func TestSpawn_TmuxServerDead_RecoveryFails(t *testing.T) {
 	if err == nil {
 		t.Fatal("spawn should have returned an error when recovery fails")
 	}
-	if callCount != 2 {
-		t.Errorf("execTmuxNewSession called %d times, want 2", callCount)
+	if callCount != 3 {
+		t.Errorf("execTmuxNewSession called %d times, want 3 (initial + double-check + retry-after-kill)", callCount)
 	}
 	if !strings.Contains(err.Error(), "server dead, recovery failed") {
 		t.Errorf("error should describe recovery failure; got: %v", err)
@@ -1727,6 +1729,74 @@ func TestSpawn_TmuxServerDead_ConcurrentRecoveryIsSerializedByMutex(t *testing.T
 
 	if atomic.LoadInt64(&raceDetected) != 0 {
 		t.Error("execTmuxKillServer was called concurrently — tmuxRecoveryMu did not serialize recovery")
+	}
+}
+
+// TestSpawn_TmuxServerDead_DoubleCheckPreventsKillingRecoveredServer verifies
+// that when goroutine A recovers the dead tmux server inside the mutex, goroutine
+// B's double-check (retrying before killing) detects the server is now alive and
+// skips execTmuxKillServer entirely — preventing B from destroying A's session.
+// This validates the double-checked locking pattern: re-validate after acquiring
+// the lock before proceeding with the destructive kill step.
+func TestSpawn_TmuxServerDead_DoubleCheckPreventsKillingRecoveredServer(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_PATH", "true")
+
+	origSpawn := execTmuxNewSession
+	origKill := execTmuxKillServer
+	t.Cleanup(func() {
+		execTmuxNewSession = origSpawn
+		execTmuxKillServer = origKill
+	})
+
+	orig := quickExitWindow
+	quickExitWindow = 10 * time.Second
+	t.Cleanup(func() { quickExitWindow = orig })
+
+	// The server is "dead" until execTmuxKillServer is called; after that it is
+	// "alive". This models: goroutine A's kill restarts the server, so goroutine
+	// B's double-check (which runs after A releases the mutex) succeeds and B
+	// skips its own kill.
+	var killCount int64
+	execTmuxNewSession = func(_ []string) ([]byte, error) {
+		if atomic.LoadInt64(&killCount) == 0 {
+			return []byte("no server running on /tmp/tmux-1000/default"), fmt.Errorf("exit status 1")
+		}
+		return nil, nil // server recovered after kill
+	}
+	execTmuxKillServer = func() {
+		atomic.AddInt64(&killCount, 1)
+	}
+
+	workDir := t.TempDir()
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	for i := range 2 {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			s := &Session{ID: fmt.Sprintf("double-check-%d", i), WorkDir: workDir}
+			errs[i] = s.spawn()
+			s.kill() // cancel quick-exit goroutine
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	// Both spawns must succeed.
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("goroutine %d: spawn returned unexpected error: %v", i, err)
+		}
+	}
+	// execTmuxKillServer must be called exactly once: by the goroutine that held
+	// the mutex first. The second goroutine's double-check sees the recovered
+	// server and skips the kill.
+	if got := atomic.LoadInt64(&killCount); got != 1 {
+		t.Errorf("execTmuxKillServer called %d times, want 1 (double-check must prevent second kill)", got)
 	}
 }
 

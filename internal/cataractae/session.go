@@ -151,23 +151,30 @@ func (s *Session) spawn() error {
 		if !isTmuxServerDeadError(out) {
 			return fmt.Errorf("tmux new-session %s: %w: %s", s.ID, spawnErr, out)
 		}
-		// The tmux server is dead — attempt recovery: clear stale state then retry.
-		// Serialize this block so concurrent spawns do not interleave: one goroutine
-		// must complete the full kill→retry cycle before another begins, preventing
-		// a second goroutine from calling execTmuxKillServer on a server the first
-		// goroutine just recovered.
+		// The tmux server is dead — attempt recovery with double-checked locking.
+		// Serialize recovery so concurrent spawns do not interleave: one goroutine
+		// must complete the full kill→retry cycle before another begins.
+		// Double-check after acquiring the lock: if another goroutine already
+		// recovered the server while we were waiting, the retry will succeed and
+		// we skip the kill entirely, preventing destruction of the recovered session.
 		tmuxRecoveryMu.Lock()
 		defer tmuxRecoveryMu.Unlock()
-		slog.Default().Info("session: dead tmux server detected — attempting restart",
-			"session", s.ID)
-		execTmuxKillServer()
 		if out, spawnErr = execTmuxNewSession(args); spawnErr != nil {
-			slog.Default().Error("session: tmux server recovery failed — spawn aborted",
-				"session", s.ID, "error", spawnErr)
-			return fmt.Errorf("tmux new-session %s: server dead, recovery failed: %w: %s", s.ID, spawnErr, out)
+			if !isTmuxServerDeadError(out) {
+				return fmt.Errorf("tmux new-session %s: %w: %s", s.ID, spawnErr, out)
+			}
+			// Server is still dead — kill stale state and retry.
+			slog.Default().Info("session: dead tmux server detected — attempting restart",
+				"session", s.ID)
+			execTmuxKillServer()
+			if out, spawnErr = execTmuxNewSession(args); spawnErr != nil {
+				slog.Default().Error("session: tmux server recovery failed — spawn aborted",
+					"session", s.ID, "error", spawnErr)
+				return fmt.Errorf("tmux new-session %s: server dead, recovery failed: %w: %s", s.ID, spawnErr, out)
+			}
+			slog.Default().Info("session: recovered from dead tmux server — retried spawn successfully",
+				"session", s.ID)
 		}
-		slog.Default().Info("session: recovered from dead tmux server — retried spawn successfully",
-			"session", s.ID)
 	}
 
 	// Quick-exit detection: warn if the session dies within quickExitWindow of
