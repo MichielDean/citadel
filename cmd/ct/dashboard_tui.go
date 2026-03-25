@@ -581,11 +581,22 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string
 	}
 	nameLine := "  " + g.Render(padRight(ch.Name, nameW)) + "  " + dim.Render(repoLabel)
 
-	// Info line: droplet ID and elapsed time — shown only when active.
+	// Info line: droplet ID, elapsed time, and title — shown only when active.
 	var infoLine string
 	if ch.DropletID != "" {
-		info    := ch.DropletID + "  " + formatElapsed(ch.Elapsed)
-		infoLine = indent + g.Render(info)
+		infoBase := ch.DropletID + "  " + formatElapsed(ch.Elapsed)
+		// indent visual width: 2 (leading "  ") + nameW (10) + 2 ("  ") = 14
+		const indentW = 2 + nameW + 2
+		titleW := m.width - indentW - len([]rune(infoBase)) - 2
+		if titleW > 0 && ch.Title != "" {
+			title := ch.Title
+			if len([]rune(title)) > titleW {
+				title = string([]rune(title)[:titleW-1]) + "…"
+			}
+			infoLine = indent + g.Render(infoBase) + "  " + dim.Render(title)
+		} else {
+			infoLine = indent + g.Render(infoBase)
+		}
 	}
 	chanW := n * archPillarW
 
@@ -780,12 +791,26 @@ func (m dashboardTUIModel) tuiFlowGraphRow(ch CataractaeInfo) (graphLine, infoLi
 	graphLine = g.String()
 	if activeVisualCol >= 0 {
 		bar := progressBar(ch.CataractaeIndex, ch.TotalCataractae, 8)
+		elapsed := formatElapsed(ch.Elapsed)
 		infoLine = strings.Repeat(" ", activeVisualCol) +
 			tuiStyleDim.Render("↑ ") +
 			tuiStyleGreen.Render(ch.Name) +
 			tuiStyleDim.Render(" · "+ch.DropletID) +
-			"  " + formatElapsed(ch.Elapsed) +
+			"  " + elapsed +
 			"  " + tuiStyleGreen.Render(bar)
+		if ch.Title != "" {
+			// Visual width of the non-ANSI content before the title.
+			usedW := activeVisualCol + 2 + len([]rune(ch.Name)) + 3 + len([]rune(ch.DropletID)) +
+				2 + len([]rune(elapsed)) + 2 + 8
+			titleW := m.width - usedW - 2
+			if titleW > 0 {
+				title := ch.Title
+				if len([]rune(title)) > titleW {
+					title = string([]rune(title)[:titleW-1]) + "…"
+				}
+				infoLine += "  " + tuiStyleDim.Render(title)
+			}
+		}
 	}
 	return
 }

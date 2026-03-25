@@ -348,3 +348,111 @@ func TestDashboardTUIModel_ExitsIdleModeWhenStateChanges(t *testing.T) {
 		t.Error("idleMode should be false after a state change (new droplet queued)")
 	}
 }
+
+// --- Title display tests ---
+
+// TestTuiAqueductRow_InfoLine_IncludesTitle verifies that the info line in an
+// active aqueduct arch row includes the droplet title styled dim after the
+// elapsed time.
+//
+// Given: a CataractaeInfo with DropletID, Title, and Elapsed set
+// When:  tuiAqueductRow is called on a model with sufficient terminal width
+// Then:  rows[1] (the info line) contains the title text
+func TestTuiAqueductRow_InfoLine_IncludesTitle(t *testing.T) {
+	ch := CataractaeInfo{
+		Name:      "virgo",
+		RepoName:  "myrepo",
+		DropletID: "ci-abc123",
+		Title:     "Add retry logic to export pipeline",
+		Step:      "implement",
+		Steps:     []string{"implement", "review"},
+		Elapsed:   5 * time.Minute,
+	}
+	m := dashboardTUIModel{width: 120}
+	rows := m.tuiAqueductRow(ch, 0)
+
+	if len(rows) < 2 {
+		t.Fatalf("tuiAqueductRow returned %d rows, want at least 2", len(rows))
+	}
+	if !strings.Contains(rows[1], "Add retry logic to export pipeline") {
+		t.Errorf("info line should include title, got: %q", rows[1])
+	}
+}
+
+// TestTuiAqueductRow_InfoLine_TruncatesLongTitle verifies that a title longer
+// than the available terminal width is truncated with "…".
+//
+// Given: a CataractaeInfo with a 200-char title and a narrow terminal (80 cols)
+// When:  tuiAqueductRow is called
+// Then:  rows[1] contains "…" and does not contain the full title string
+func TestTuiAqueductRow_InfoLine_TruncatesLongTitle(t *testing.T) {
+	longTitle := strings.Repeat("x", 200)
+	ch := CataractaeInfo{
+		Name:      "virgo",
+		RepoName:  "myrepo",
+		DropletID: "ci-abc123",
+		Title:     longTitle,
+		Step:      "implement",
+		Steps:     []string{"implement"},
+		Elapsed:   2 * time.Minute,
+	}
+	m := dashboardTUIModel{width: 80}
+	rows := m.tuiAqueductRow(ch, 0)
+
+	if len(rows) < 2 {
+		t.Fatalf("tuiAqueductRow returned %d rows, want at least 2", len(rows))
+	}
+	if !strings.Contains(rows[1], "…") {
+		t.Errorf("info line should truncate long title with '…', got: %q", rows[1])
+	}
+	if strings.Contains(rows[1], longTitle) {
+		t.Error("info line should not contain the full long title")
+	}
+}
+
+// TestTuiAqueductRow_InfoLine_EmptyWhenInactive verifies that the info line is
+// empty for an idle (no droplet) aqueduct.
+//
+// Given: a CataractaeInfo with no DropletID
+// When:  tuiAqueductRow is called
+// Then:  rows[1] is empty
+func TestTuiAqueductRow_InfoLine_EmptyWhenInactive(t *testing.T) {
+	ch := CataractaeInfo{
+		Name:     "virgo",
+		RepoName: "myrepo",
+		Steps:    []string{"implement", "review"},
+	}
+	m := dashboardTUIModel{width: 120}
+	rows := m.tuiAqueductRow(ch, 0)
+
+	if len(rows) < 2 {
+		t.Fatalf("tuiAqueductRow returned %d rows, want at least 2", len(rows))
+	}
+	if rows[1] != "" {
+		t.Errorf("info line should be empty for idle aqueduct, got: %q", rows[1])
+	}
+}
+
+// TestTuiFlowGraphRow_InfoLine_IncludesTitle verifies that the info line
+// returned by tuiFlowGraphRow contains the droplet title when one is set.
+//
+// Given: a CataractaeInfo with DropletID, active Step, and Title
+// When:  tuiFlowGraphRow is called on a model with sufficient width
+// Then:  the returned infoLine contains the title text
+func TestTuiFlowGraphRow_InfoLine_IncludesTitle(t *testing.T) {
+	ch := CataractaeInfo{
+		Name:      "virgo",
+		RepoName:  "myrepo",
+		DropletID: "ci-abc123",
+		Title:     "Add retry logic to export pipeline",
+		Step:      "implement",
+		Steps:     []string{"implement", "review"},
+		Elapsed:   3 * time.Minute,
+	}
+	m := dashboardTUIModel{width: 120}
+	_, infoLine := m.tuiFlowGraphRow(ch)
+
+	if !strings.Contains(infoLine, "Add retry logic to export pipeline") {
+		t.Errorf("flow graph info line should include title, got: %q", infoLine)
+	}
+}

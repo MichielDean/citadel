@@ -40,6 +40,7 @@ type CataractaeInfo struct {
 	Name            string        `json:"name"`
 	RepoName        string        `json:"repo_name"`   // repository this aqueduct belongs to
 	DropletID       string        `json:"droplet_id"`
+	Title           string        `json:"title"`       // human-readable title of the flowing droplet
 	Step            string        `json:"step"`
 	Steps           []string      `json:"steps"`       // workflow step names in order
 	Elapsed         time.Duration `json:"elapsed"`     // nanoseconds; use elapsed/1e9 for seconds
@@ -162,6 +163,7 @@ func fetchDashboardData(cfgPath, dbPath string) *DashboardData {
 		}
 		if item, ok := assigneeMap[ch.name]; ok {
 			ci.DropletID = item.ID
+			ci.Title = item.Title
 			ci.Step = item.CurrentCataractae
 			ci.Elapsed = time.Since(item.UpdatedAt)
 			wfCataractae := allSteps[ch.repo]
