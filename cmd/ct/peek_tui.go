@@ -10,7 +10,9 @@ import (
 
 // Capturer abstracts tmux pane capture so it can be replaced in tests.
 type Capturer interface {
-	// Capture fetches the last `lines` lines of the named tmux pane.
+	// Capture fetches pane output from the named tmux session.
+	// When lines is 0 the full scrollback buffer is returned.
+	// When lines > 0 only the last N lines of history are returned.
 	Capture(session string, lines int) (string, error)
 	// HasSession reports whether the named tmux session exists.
 	HasSession(session string) bool
@@ -38,8 +40,9 @@ type peekContentMsg string
 // peekInterval is the polling rate for live pane updates.
 const peekInterval = 500 * time.Millisecond
 
-// defaultPeekLines is the number of pane lines shown when not configured.
-const defaultPeekLines = 100
+// defaultPeekLines is the default line limit passed to capturePane.
+// 0 means capture the full scrollback buffer from the start of history.
+const defaultPeekLines = 0
 
 // --- Model ---
 
@@ -58,8 +61,9 @@ type peekModel struct {
 }
 
 // newPeekModel constructs a peekModel ready for use.
+// lines=0 captures the full scrollback buffer; lines>0 caps history to N lines.
 func newPeekModel(capturer Capturer, session, header string, lines int) peekModel {
-	if lines <= 0 {
+	if lines < 0 {
 		lines = defaultPeekLines
 	}
 	return peekModel{

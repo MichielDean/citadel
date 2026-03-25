@@ -1151,9 +1151,19 @@ func stripANSI(s string) string {
 }
 
 // capturePane runs tmux capture-pane and returns the output.
+// It always targets window 0, pane 0 of the session so that the correct agent
+// pane is captured regardless of which window is currently active.
+// When lines <= 0 the full scrollback buffer is captured (-S -).
+// When lines > 0 only the last N lines of history are captured (-S -N).
 func capturePane(session string, lines int) (string, error) {
-	out, err := exec.Command("tmux", "capture-pane", "-t", session, "-p",
-		"-S", fmt.Sprintf("-%d", lines)).Output()
+	var startFlag string
+	if lines <= 0 {
+		startFlag = "-" // start of scrollback buffer
+	} else {
+		startFlag = fmt.Sprintf("-%d", lines)
+	}
+	out, err := exec.Command("tmux", "capture-pane", "-t", session+":0.0", "-p",
+		"-S", startFlag).Output()
 	if err != nil {
 		return "", err
 	}
@@ -1366,7 +1376,7 @@ func init() {
 	dropletBlockCmd.Flags().StringVar(&blockNotes, "notes", "", "add a note before signaling block")
 	dropletCancelCmd.Flags().StringVar(&cancelNotes, "notes", "", "reason for cancellation")
 
-	dropletPeekCmd.Flags().IntVar(&peekLines, "lines", 50, "number of lines to capture")
+	dropletPeekCmd.Flags().IntVar(&peekLines, "lines", 0, "number of scrollback lines to capture; 0 means full scrollback")
 	dropletPeekCmd.Flags().BoolVar(&peekRaw, "raw", false, "do not strip ANSI codes")
 	dropletPeekCmd.Flags().BoolVar(&peekFollow, "follow", false, "re-capture every 3 seconds (Ctrl-C to stop); use with --snapshot")
 	dropletPeekCmd.Flags().BoolVar(&peekSnapshot, "snapshot", false, "capture a static snapshot instead of attaching read-only to the live session")
