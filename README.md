@@ -484,7 +484,7 @@ ct droplet approve <id>                                           Approve a crit
 # Peek — observe live agent output
 ct droplet peek <id>                                              Attach read-only to the live tmux session (or show last notes if session ended)
 ct droplet peek <id> --snapshot                                   Capture a static snapshot instead of live attach
-ct droplet peek <id> --snapshot --lines 100                       With --snapshot: show more lines (default: 50)
+ct droplet peek <id> --snapshot --lines 100                       With --snapshot: show only last 100 lines (default: full scrollback)
 ct droplet peek <id> --snapshot --follow                          With --snapshot: re-capture every 3 seconds (Ctrl-C to stop)
 ct droplet peek <id> --snapshot --raw                             With --snapshot: include ANSI color codes
 

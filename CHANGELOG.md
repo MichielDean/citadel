@@ -18,6 +18,14 @@
 - Interim fix: Once ci-amg37 (prompt templating) lands, recirculate will not appear in the agent's context at all, making this edge case unreachable
 - Tests added: `TestTick_RecirculateAutoPromotesToPass` verifies routing to the on_pass target with warning note; `TestTick_RecirculateNoPassRoute_StillEscalates` verifies escalation still occurs when neither on_recirculate nor on_pass routes exist; `TestTick_RecirculateNoRouteAddsDescriptiveNote` verifies the diagnostic note is attached before escalation
 
+### Peek: capture full scrollback buffer instead of last 100 lines (ci-tw6gb)
+- The `capturePane()` function now uses the `-S` flag with `-` (start of scrollback) to capture the entire tmux pane scrollback buffer, not just the last 100 visible lines
+- Previously `defaultPeekLines` was 100, forcing peek to discard early history when an agent produced verbose output; now defaults to 0, meaning "capture everything"
+- Updated `newPeekModel()` to accept lines=0 as valid (changed guard from `<= 0` to `< 0`), distinguishing "full scrollback" (0) from "use default" (negative)
+- Web dashboard peek overlay and TUI inline peek now show full agent output history instead of truncating to the last screenfull
+- Integration test `TestCapturePane_FullScrollback_ReturnsHistoryBeyondVisible` spawns a real tmux session, writes 200 lines of output (far more than the 24-row visible area), and asserts peek returns all lines including early history
+- Tests added: full scrollback sentinel polling, first-line and last-line assertions, cleanup on test exit
+
 ### Peek: attach read-only to live tmux session instead of polling snapshots (ci-61hbi)
 - `ct droplet peek <id>` now attaches read-only to the live agent tmux session by default (`tmux attach-session -r`), providing real-time scrolling output instead of static snapshots
 - Session fallback: if the session doesn't exist (agent completed), shows the last 10 lines of the most recent note
