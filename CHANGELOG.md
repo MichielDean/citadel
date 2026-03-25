@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Castellarius: detect dead tmux server and auto-recover session spawn (ci-whqq9)
+- When Castellarius attempts to spawn a session and the tmux server is not running (socket missing), it now auto-detects the failure mode and attempts recovery instead of failing immediately
+- Recovery process: logs INFO `session: dead tmux server detected — attempting restart`, calls `tmux kill-server` to clear stale state, and retries the spawn — all transparent to the droplet
+- If recovery succeeds: logs INFO `session: recovered from dead tmux server — retried spawn successfully` and the droplet continues flowing normally
+- If recovery fails (e.g., tmux binary not available): logs ERROR with clear diagnostic and the spawn fails as before
+- Concurrent recovery safety: recovery is serialized with a package-level mutex (`tmuxRecoveryMu`) so when two goroutines both detect a dead server simultaneously, only one performs recovery, preventing one goroutine from killing another's just-recovered session
+- Double-checked locking prevents sequential destruction: after acquiring the mutex, spawn retries before killing the server — if another goroutine already recovered it, the retry succeeds and kill is skipped
+- This fixes the issue where droplets would get stuck indefinitely if the tmux server died while Castellarius was running; now the droplet auto-recovers and continues flowing
+- Tests added: `TestSpawn_TmuxServerDead_Recovers`, `TestSpawn_TmuxServerDead_ConcurrentRecoveryIsSerializedByMutex`, `TestSpawn_TmuxServerDead_DoubleCheckPreventsKillingRecoveredServer`, plus five more comprehensive recovery scenarios
+
 ### Web dashboard: add ESC back hint button to exit peek mode (ci-2ejep)
 - The web dashboard now displays an "ESC = back" button in the bottom-right corner of the terminal display, providing visual indication that pressing Escape or clicking the button will close the peek overlay
 - Button is always visible and clickable: clicking sends an Esc keystroke to the terminal to exit peek mode and return to the main dashboard view, useful for users unfamiliar with the Escape keyboard shortcut or who prefer mouse navigation
