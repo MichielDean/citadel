@@ -96,6 +96,11 @@ type Castellarius struct {
 	// Dispatch-loop detection — tracks per-droplet failure counts to detect and
 	// recover from tight loops where no agent session ever starts.
 	dispatchLoop *dispatchLoopTracker
+
+	// quickExitBackoff tracks per-droplet exponential backoff after sessions
+	// that exit too quickly (likely provider auth or binary failures) and detects
+	// provider-wide degradation across multiple aqueducts.
+	quickExitBackoff *quickExitTracker
 }
 
 // isSupervisedProcess returns true when the Castellarius is being managed by
@@ -158,6 +163,10 @@ func New(config aqueduct.AqueductConfig, dbPath string, runner CataractaeRunner,
 		}
 	}
 
+	// Resolve quick-exit backoff configuration — fall back to defaults when zero.
+	quickExitThreshold := time.Duration(config.QuickExitThresholdSeconds) * time.Second
+	maxBackoff := time.Duration(config.MaxBackoffMinutes) * time.Minute
+
 	s := &Castellarius{
 		config:             config,
 		workflows:          make(map[string]*aqueduct.Workflow),
@@ -176,6 +185,7 @@ func New(config aqueduct.AqueductConfig, dbPath string, runner CataractaeRunner,
 		rebaseAndPushFn:    defaultRebaseAndPush,
 		ghMergeFn:          defaultGhMerge,
 		dispatchLoop:       newDispatchLoopTracker(),
+		quickExitBackoff:   newQuickExitTracker(quickExitThreshold, maxBackoff),
 	}
 	for _, o := range opts {
 		o(s)
@@ -249,6 +259,9 @@ func NewFromParts(
 	runner CataractaeRunner,
 	opts ...Option,
 ) *Castellarius {
+	quickExitThreshold := time.Duration(config.QuickExitThresholdSeconds) * time.Second
+	maxBackoff := time.Duration(config.MaxBackoffMinutes) * time.Minute
+
 	s := &Castellarius{
 		config:            config,
 		workflows:         workflows,
@@ -263,6 +276,7 @@ func NewFromParts(
 		rebaseAndPushFn:   defaultRebaseAndPush,
 		ghMergeFn:         defaultGhMerge,
 		dispatchLoop:      newDispatchLoopTracker(),
+		quickExitBackoff:  newQuickExitTracker(quickExitThreshold, maxBackoff),
 	}
 	for _, o := range opts {
 		o(s)
@@ -463,6 +477,16 @@ func (s *Castellarius) logStartupCredentials(ctx context.Context) {
 	}
 }
 
+// resolveProviderName returns the effective provider preset name for the given
+// repo. Falls back to "claude" when resolution fails or the preset name is empty.
+func (s *Castellarius) resolveProviderName(repoName string) string {
+	preset, err := s.config.ResolveProvider(repoName)
+	if err != nil || preset.Name == "" {
+		return "claude"
+	}
+	return preset.Name
+}
+
 // addNote writes a note via client.AddNote and logs a warning if the write fails.
 // Used throughout dispatch, recovery, and observe paths where AddNote failure
 // should not derail the primary operation.
@@ -599,6 +623,16 @@ func (s *Castellarius) observeRepo(_ context.Context, repo aqueduct.RepoConfig) 
 	for _, item := range items {
 		if item.Outcome == "" {
 			continue // still running
+		}
+
+		// Session completed — clear any quick-exit backoff. A successful outcome
+		// (regardless of pass/recirculate/block) means the provider is functional.
+		// If the provider was degraded, the first completion signals recovery.
+		providerName := s.resolveProviderName(repo.Name)
+		if recovered := s.quickExitBackoff.resetDroplet(item.ID, providerName); recovered {
+			s.logger.Info("provider recovered — resuming normal scheduling",
+				"provider", providerName,
+			)
 		}
 
 		step := currentCataracta(item, wf)
@@ -816,6 +850,47 @@ func (s *Castellarius) dispatchRepo(ctx context.Context, repo aqueduct.RepoConfi
 				}
 				pool.Release(w)
 				return
+			}
+
+			// Quick-exit backoff and global provider degradation check.
+			// Skip dispatch if this droplet is in a per-droplet backoff window or
+			// if its provider is currently considered degraded. In both cases the
+			// item is returned to open status and will be re-examined on the next
+			// tick. This deliberately runs after dispatch-loop detection so that
+			// infrastructure failures (worktree errors, spawn errors) continue to
+			// be tracked and recovered by the dispatch-loop path.
+			{
+				providerName := s.resolveProviderName(req.RepoConfig.Name)
+				if s.quickExitBackoff.isProviderDegraded(providerName) {
+					// Provider is currently degraded: fast-forward this droplet to
+					// max backoff so it skips the ramp-up, and hold dispatch.
+					s.quickExitBackoff.fastForwardToMaxBackoff(req.Item.ID)
+					if s.quickExitBackoff.shouldLogAndMarkProviderDegraded(providerName) {
+						s.logger.Warn("provider degraded — holding dispatch until recovery",
+							"provider", providerName,
+							"droplet", req.Item.ID,
+							"max_backoff", s.quickExitBackoff.maxBackoff.String(),
+						)
+					}
+					if err2 := client.Assign(req.Item.ID, "", req.Step.Name); err2 != nil {
+						s.logger.Error("backoff: reset failed", "droplet", req.Item.ID, "error", err2)
+					}
+					pool.Release(w)
+					return
+				}
+				if remaining := s.quickExitBackoff.currentBackoff(req.Item.ID); remaining > 0 {
+					n := s.quickExitBackoff.consecutiveExits(req.Item.ID)
+					s.logger.Debug("droplet in backoff — skipping dispatch",
+						"droplet", req.Item.ID,
+						"remaining", remaining.Round(time.Second).String(),
+						"consecutive_exits", n,
+					)
+					if err2 := client.Assign(req.Item.ID, "", req.Step.Name); err2 != nil {
+						s.logger.Error("backoff: reset failed", "droplet", req.Item.ID, "error", err2)
+					}
+					pool.Release(w)
+					return
+				}
 			}
 
 			// Prepare the per-droplet worktree before spawning the agent.
@@ -1135,6 +1210,31 @@ func (s *Castellarius) heartbeatRepo(_ context.Context, repo aqueduct.RepoConfig
 			"reason", stallReason,
 			"session_duration", sessionDuration.String(),
 		)
+
+		// Quick-exit backoff: when a session dies within the threshold without
+		// writing an outcome and the cause is tmux_dead (session was spawned but
+		// exited quickly — likely provider auth failure, rate limit, or binary
+		// not found), apply per-droplet exponential backoff and track global
+		// provider health. Infrastructure failures (tmux never started, spawn
+		// error) are tracked separately by the dispatch-loop detector.
+		if stallReason == "tmux_dead" && s.quickExitBackoff.isQuickExit(sessionDuration) {
+			providerName := s.resolveProviderName(repo.Name)
+			aqueductName := item.Assignee
+			backoffDelay, justDegraded := s.quickExitBackoff.recordQuickExit(item.ID, providerName, aqueductName)
+			n := s.quickExitBackoff.consecutiveExits(item.ID)
+			s.logger.Info("droplet backing off after quick exit",
+				"droplet", item.ID,
+				"backoff", backoffDelay.Round(time.Second).String(),
+				"consecutive_exits", n,
+				"provider", providerName,
+			)
+			if justDegraded {
+				s.logger.Warn("provider appears degraded — fast-forwarding to max backoff for all queued droplets",
+					"provider", providerName,
+					"max_backoff", s.quickExitBackoff.maxBackoff.String(),
+				)
+			}
+		}
 
 		if item.Assignee != "" {
 			if w := pool.FindByName(item.Assignee); w != nil {
