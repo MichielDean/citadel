@@ -189,11 +189,7 @@ func (t *quickExitTracker) consecutiveExits(dropletID string) int {
 func (t *quickExitTracker) currentBackoff(dropletID string) time.Duration {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	until, ok := t.dropletBackoffUntil[dropletID]
-	if !ok {
-		return 0
-	}
-	remaining := time.Until(until)
+	remaining := time.Until(t.dropletBackoffUntil[dropletID])
 	if remaining <= 0 {
 		return 0
 	}

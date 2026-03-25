@@ -858,38 +858,35 @@ func (s *Castellarius) dispatchRepo(ctx context.Context, repo aqueduct.RepoConfi
 			// tick. This deliberately runs after dispatch-loop detection so that
 			// infrastructure failures (worktree errors, spawn errors) continue to
 			// be tracked and recovered by the dispatch-loop path.
-			{
-				providerName := s.resolveProviderName(req.RepoConfig.Name)
-				if s.quickExitBackoff.isProviderDegraded(providerName) {
-					// Provider is currently degraded: fast-forward this droplet to
-					// max backoff so it skips the ramp-up, and hold dispatch.
-					s.quickExitBackoff.fastForwardToMaxBackoff(req.Item.ID)
-					if s.quickExitBackoff.shouldLogAndMarkProviderDegraded(providerName) {
-						s.logger.Warn("provider degraded — holding dispatch until recovery",
-							"provider", providerName,
-							"droplet", req.Item.ID,
-							"max_backoff", s.quickExitBackoff.maxBackoff.String(),
-						)
-					}
-					if err2 := client.Assign(req.Item.ID, "", req.Step.Name); err2 != nil {
-						s.logger.Error("backoff: reset failed", "droplet", req.Item.ID, "error", err2)
-					}
-					pool.Release(w)
-					return
-				}
-				if remaining := s.quickExitBackoff.currentBackoff(req.Item.ID); remaining > 0 {
-					n := s.quickExitBackoff.consecutiveExits(req.Item.ID)
-					s.logger.Debug("droplet in backoff — skipping dispatch",
+			providerName := s.resolveProviderName(req.RepoConfig.Name)
+			if s.quickExitBackoff.isProviderDegraded(providerName) {
+				// Provider is currently degraded: fast-forward this droplet to
+				// max backoff so it skips the ramp-up, and hold dispatch.
+				s.quickExitBackoff.fastForwardToMaxBackoff(req.Item.ID)
+				if s.quickExitBackoff.shouldLogAndMarkProviderDegraded(providerName) {
+					s.logger.Warn("provider degraded — holding dispatch until recovery",
+						"provider", providerName,
 						"droplet", req.Item.ID,
-						"remaining", remaining.Round(time.Second).String(),
-						"consecutive_exits", n,
+						"max_backoff", s.quickExitBackoff.maxBackoff.String(),
 					)
-					if err2 := client.Assign(req.Item.ID, "", req.Step.Name); err2 != nil {
-						s.logger.Error("backoff: reset failed", "droplet", req.Item.ID, "error", err2)
-					}
-					pool.Release(w)
-					return
 				}
+				if err2 := client.Assign(req.Item.ID, "", req.Step.Name); err2 != nil {
+					s.logger.Error("backoff: reset failed", "droplet", req.Item.ID, "error", err2)
+				}
+				pool.Release(w)
+				return
+			}
+			if remaining := s.quickExitBackoff.currentBackoff(req.Item.ID); remaining > 0 {
+				s.logger.Debug("droplet in backoff — skipping dispatch",
+					"droplet", req.Item.ID,
+					"remaining", remaining.Round(time.Second).String(),
+					"consecutive_exits", s.quickExitBackoff.consecutiveExits(req.Item.ID),
+				)
+				if err2 := client.Assign(req.Item.ID, "", req.Step.Name); err2 != nil {
+					s.logger.Error("backoff: reset failed", "droplet", req.Item.ID, "error", err2)
+				}
+				pool.Release(w)
+				return
 			}
 
 			// Prepare the per-droplet worktree before spawning the agent.
@@ -1218,13 +1215,11 @@ func (s *Castellarius) heartbeatRepo(_ context.Context, repo aqueduct.RepoConfig
 		// error) are tracked separately by the dispatch-loop detector.
 		if stallReason == "tmux_dead" && s.quickExitBackoff.isQuickExit(sessionDuration) {
 			providerName := s.resolveProviderName(repo.Name)
-			aqueductName := item.Assignee
-			backoffDelay, justDegraded := s.quickExitBackoff.recordQuickExit(item.ID, providerName, aqueductName)
-			n := s.quickExitBackoff.consecutiveExits(item.ID)
+			backoffDelay, justDegraded := s.quickExitBackoff.recordQuickExit(item.ID, providerName, item.Assignee)
 			s.logger.Info("droplet backing off after quick exit",
 				"droplet", item.ID,
 				"backoff", backoffDelay.Round(time.Second).String(),
-				"consecutive_exits", n,
+				"consecutive_exits", s.quickExitBackoff.consecutiveExits(item.ID),
 				"provider", providerName,
 			)
 			if justDegraded {
