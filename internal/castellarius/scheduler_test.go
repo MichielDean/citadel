@@ -37,6 +37,7 @@ type mockClient struct {
 	closed              map[string]bool
 	lastReviewedCommits map[string]string
 	addNoteErr          error // if set, AddNote returns this error
+	getReadyErr         error // if set, GetReady returns this error once then clears
 }
 
 type attachedNote struct {
@@ -55,6 +56,14 @@ func newMockClient() *mockClient {
 }
 
 func (m *mockClient) GetReady(repo string) (*cistern.Droplet, error) {
+	m.mu.Lock()
+	if m.getReadyErr != nil {
+		err := m.getReadyErr
+		m.getReadyErr = nil
+		m.mu.Unlock()
+		return nil, err
+	}
+	m.mu.Unlock()
 	return m.GetReadyForAqueduct(repo, "")
 }
 
