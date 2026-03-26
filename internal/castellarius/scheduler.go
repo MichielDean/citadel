@@ -1191,6 +1191,19 @@ func (s *Castellarius) heartbeatRepo(_ context.Context, repo aqueduct.RepoConfig
 			if isTmuxAlive(repo.Name + "-" + item.Assignee) {
 				continue
 			}
+			// Minimum age guard: don't reset a session that was dispatched
+			// within the last 2× poll intervals. This prevents the heartbeat
+			// from resetting a session that was just spawned (and whose tmux
+			// session may not yet be visible, or which the observe loop hasn't
+			// had a chance to process yet), which would cause spawn() to
+			// immediately kill the new session on the next dispatch.
+			// We use 2× pollInterval (default 20s) rather than the full
+			// heartbeatInterval so quick-exit backoff still fires correctly
+			// for genuinely short-lived sessions.
+			sessionAge := time.Since(item.UpdatedAt)
+			if sessionAge < 2*s.pollInterval {
+				continue
+			}
 			stallReason = "tmux_dead"
 		} else {
 			stallReason = "no_assignee"

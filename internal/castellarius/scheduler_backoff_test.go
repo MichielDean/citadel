@@ -26,7 +26,7 @@ func TestHeartbeatRepo_QuickExit_LogsBackoff(t *testing.T) {
 		CurrentCataractae: "implement",
 		Status:            "in_progress",
 		Assignee:          "alpha",
-		UpdatedAt:         time.Now().Add(-5 * time.Second),
+		UpdatedAt:         time.Now().Add(-25 * time.Second),
 	}
 	client.items[item.ID] = item
 
@@ -71,7 +71,7 @@ func TestHeartbeatRepo_QuickExit_RecordsInTracker(t *testing.T) {
 		CurrentCataractae: "implement",
 		Status:            "in_progress",
 		Assignee:          "alpha",
-		UpdatedAt:         time.Now().Add(-10 * time.Second),
+		UpdatedAt:         time.Now().Add(-25 * time.Second),
 	}
 	client.items[item.ID] = item
 
@@ -148,7 +148,7 @@ func TestHeartbeatRepo_NoAssignee_NoBackoff(t *testing.T) {
 		CurrentCataractae: "implement",
 		Status:            "in_progress",
 		Assignee:          "",
-		UpdatedAt:         time.Now().Add(-5 * time.Second),
+		UpdatedAt:         time.Now().Add(-25 * time.Second),
 	}
 	client.items[item.ID] = item
 
@@ -204,7 +204,7 @@ func TestHeartbeatRepo_ProviderDegradation_LogsWhenDetected(t *testing.T) {
 		CurrentCataractae: "implement",
 		Status:            "in_progress",
 		Assignee:          "beta",
-		UpdatedAt:         time.Now().Add(-3 * time.Second),
+		UpdatedAt:         time.Now().Add(-25 * time.Second),
 	}
 	client.items[item.ID] = item
 
