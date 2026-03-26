@@ -1,0 +1,177 @@
+package castellarius
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/MichielDean/cistern/internal/aqueduct"
+	"github.com/MichielDean/cistern/internal/cistern"
+)
+
+// newDrainScheduler creates a Castellarius configured for fast drain tests.
+func newDrainScheduler(client *mockClient, runner CataractaeRunner, drainTimeout time.Duration, buf *bytes.Buffer) *Castellarius {
+	config := testConfig()
+	workflows := map[string]*aqueduct.Workflow{"test-repo": testWorkflow()}
+	clients := map[string]CisternClient{"test-repo": client}
+	opts := []Option{
+		WithPollInterval(5 * time.Millisecond),
+		WithDrainTimeout(drainTimeout),
+	}
+	if buf != nil {
+		opts = append(opts, WithLogger(newTestLogger(buf)))
+	}
+	return NewFromParts(config, workflows, clients, runner, opts...)
+}
+
+// waitBlockingCall waits until the blockingRunner has been entered at least once
+// (meaning a session has been dispatched and is now in_progress).
+func waitBlockingCall(br *blockingRunner, timeout time.Duration) bool {
+	select {
+	case <-br.done:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
+}
+
+// signalOutcome sets the outcome on an in-progress droplet, simulating an agent
+// calling `ct droplet pass/recirculate/block`.
+func signalOutcome(client *mockClient, id, outcome string) {
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if item, ok := client.items[id]; ok {
+		item.Outcome = outcome
+	}
+}
+
+// TestGracefulShutdown_ZeroInFlight_ExitsImmediately verifies that when there
+// are no in-progress droplets at shutdown time, the Castellarius exits without
+// logging a drain message.
+func TestGracefulShutdown_ZeroInFlight_ExitsImmediately(t *testing.T) {
+	client := newMockClient()
+	runner := newMockRunner(client)
+	var buf bytes.Buffer
+	sched := newDrainScheduler(client, runner, 200*time.Millisecond, &buf)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan error, 1)
+	go func() { done <- sched.Run(ctx) }()
+
+	// Give Run a moment to start its ticker loop.
+	time.Sleep(15 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context.Canceled, got %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out — Run did not exit after context cancel with no in-flight sessions")
+	}
+
+	output := buf.String()
+	if strings.Contains(output, "draining") {
+		t.Errorf("unexpected drain log when there are no in-flight sessions: %q", output)
+	}
+}
+
+// TestGracefulShutdown_CleanDrain_CompletesBeforeTimeout verifies that when
+// in-flight sessions signal outcomes before the drain timeout, the drain
+// completes cleanly and logs the expected messages.
+func TestGracefulShutdown_CleanDrain_CompletesBeforeTimeout(t *testing.T) {
+	client := newMockClient()
+	// Use a blocking runner so the dispatch keeps the item in_progress.
+	br := newBlockingRunner()
+	var buf bytes.Buffer
+	sched := newDrainScheduler(client, br, 2*time.Second, &buf)
+
+	// Queue one item for dispatch.
+	client.readyItems = []*cistern.Droplet{{ID: "d1", Title: "drain-test"}}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- sched.Run(ctx) }()
+
+	// Wait until the blocking runner has Spawn called (item is now in_progress).
+	if !waitBlockingCall(br, time.Second) {
+		t.Fatal("timed out waiting for dispatch to pick up item")
+	}
+
+	cancel() // SIGTERM arrives — drain phase begins
+
+	// After a brief pause, the session signals its outcome (simulating `ct droplet pass`).
+	time.Sleep(30 * time.Millisecond)
+	signalOutcome(client, "d1", "pass")
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context.Canceled, got %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out — drain did not complete after session signaled outcome")
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "draining") {
+		t.Errorf("expected drain start log, got: %q", output)
+	}
+	if !strings.Contains(output, "drain complete") {
+		t.Errorf("expected 'drain complete' log, got: %q", output)
+	}
+	if strings.Contains(output, "drain timeout") {
+		t.Errorf("unexpected drain timeout log in clean drain path: %q", output)
+	}
+}
+
+// TestGracefulShutdown_Timeout_ForcesExit verifies that when sessions never
+// signal outcomes within the drain timeout, the Castellarius forces exit and
+// logs the IDs of stuck sessions.
+func TestGracefulShutdown_Timeout_ForcesExit(t *testing.T) {
+	client := newMockClient()
+	br := newBlockingRunner()
+	var buf bytes.Buffer
+	sched := newDrainScheduler(client, br, 60*time.Millisecond, &buf)
+
+	// Queue one item that will never signal an outcome.
+	client.readyItems = []*cistern.Droplet{{ID: "stuck-42", Title: "stuck-session"}}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- sched.Run(ctx) }()
+
+	// Wait until the item is dispatched (in_progress, no outcome).
+	if !waitBlockingCall(br, time.Second) {
+		t.Fatal("timed out waiting for dispatch")
+	}
+
+	cancel()
+
+	// Never signal outcome — drain timeout should fire.
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context.Canceled, got %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out — drain timeout did not force exit")
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "drain timeout") {
+		t.Errorf("expected drain timeout log, got: %q", output)
+	}
+	if !strings.Contains(output, "stuck-42") {
+		t.Errorf("expected stuck droplet ID 'stuck-42' in drain timeout log, got: %q", output)
+	}
+	if strings.Contains(output, "drain complete") {
+		t.Errorf("unexpected 'drain complete' log in timeout path: %q", output)
+	}
+}

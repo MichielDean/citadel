@@ -21,8 +21,9 @@ StartLimitBurst=10
 # On hitting the limit, send a journal notice so it's easy to diagnose.
 StartLimitAction=none
 
-# Graceful shutdown — let in-flight agents settle before killing.
-TimeoutStopSec=15
+# Graceful shutdown — drain in-flight sessions before killing.
+# Must be >= drain_timeout_minutes (default 5 min) + buffer.
+TimeoutStopSec=360
 KillMode=mixed
 KillSignal=SIGTERM
 

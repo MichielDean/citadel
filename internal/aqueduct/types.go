@@ -234,4 +234,10 @@ type AqueductConfig struct {
 	// exponential backoff after consecutive quick exits.
 	// Defaults to 30 when omitted or 0.
 	MaxBackoffMinutes int `yaml:"max_backoff_minutes,omitempty"`
+
+	// DrainTimeoutMinutes is the maximum time (in minutes) the Castellarius
+	// will wait for in-flight sessions to signal an outcome after receiving
+	// SIGTERM. If the timeout fires, exit is forced and stuck IDs are logged.
+	// Defaults to 5 when omitted or 0.
+	DrainTimeoutMinutes int `yaml:"drain_timeout_minutes,omitempty"`
 }
