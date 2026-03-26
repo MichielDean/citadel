@@ -163,6 +163,48 @@ func WriteAccessToken(home, accessToken string, expiresAt int64) error {
 	return os.WriteFile(credPath, updated, 0o600)
 }
 
+// ResolveAccessToken returns the best available Claude access token from
+// ~/.claude/.credentials.json, refreshing automatically if expired.
+//
+// Resolution order:
+//  1. If credentials absent or malformed, or accessToken is empty → return ("", nil).
+//     The caller should fall back to the ANTHROPIC_API_KEY environment variable.
+//  2. If token present and not expired (or ExpiresAt is zero) → return (token, nil).
+//  3. If token expired and refreshToken present → attempt refresh via tokenURL.
+//     On success, write the new token back to the credentials file and return (newToken, nil).
+//  4. If token expired and no refreshToken, or refresh fails → return ("", error).
+func ResolveAccessToken(home, tokenURL string, httpDo func(*http.Request) (*http.Response, error)) (string, error) {
+	creds := Read(home)
+	if creds == nil || creds.AccessToken == "" {
+		return "", nil // absent or malformed — caller falls back to env var
+	}
+
+	// No expiry info — treat token as valid.
+	if creds.ExpiresAt == 0 {
+		return creds.AccessToken, nil
+	}
+
+	// Token is fresh.
+	if time.Now().Before(time.UnixMilli(creds.ExpiresAt)) {
+		return creds.AccessToken, nil
+	}
+
+	// Token is expired — attempt refresh.
+	if creds.RefreshToken == "" {
+		return "", fmt.Errorf("OAuth token expired and no refresh token available — run 'claude' interactively to re-authenticate")
+	}
+
+	result, err := Refresh(creds.RefreshToken, tokenURL, httpDo)
+	if err != nil {
+		return "", fmt.Errorf("OAuth token expired and refresh failed: %w — run: ct doctor --fix", err)
+	}
+
+	// Write back the refreshed token (best-effort — session still proceeds even if write fails).
+	_ = WriteAccessToken(home, result.AccessToken, result.ExpiresAt)
+
+	return result.AccessToken, nil
+}
+
 // UpdateEnvConf replaces or sets ANTHROPIC_API_KEY in envConfPath.
 // If the file does not exist it is created with the standard [Service] header.
 // If ANTHROPIC_API_KEY already appears in the file its value is replaced in-place.

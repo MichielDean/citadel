@@ -2,6 +2,9 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -346,6 +349,13 @@ func TestCheckStartupCredentials_KeyPresent_ExpiredOAuth_ReturnsError(t *testing
 	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test-key")
 	writeOAuthCredentials(t, home, 1000) // expires 1970-01-01 — definitely expired
 
+	// Inject a failing HTTP do to avoid real network calls during the refresh attempt.
+	orig := startupOAuthHTTPDo
+	startupOAuthHTTPDo = func(r *http.Request) (*http.Response, error) {
+		return nil, fmt.Errorf("test: no network")
+	}
+	t.Cleanup(func() { startupOAuthHTTPDo = orig })
+
 	err := checkStartupCredentials(home, filepath.Join(home, "nonexistent.yaml"))
 	if err == nil {
 		t.Fatal("expected error for expired OAuth token, got nil")
@@ -440,6 +450,120 @@ func TestCheckStartupCredentials_CodexProvider_ExpiredOAuth_ReturnsNil(t *testin
 
 	if err := checkStartupCredentials(home, cfgPath); err != nil {
 		t.Errorf("expected nil: codex provider should skip OAuth check even when token is expired; got: %v", err)
+	}
+}
+
+// TestCheckStartupCredentials_OAuthFreshToken_NoEnvKey_ReturnsNil verifies that
+// when valid OAuth credentials exist, ANTHROPIC_API_KEY in ~/.cistern/env is not
+// required — the token is injected automatically from ~/.claude/.credentials.json.
+func TestCheckStartupCredentials_OAuthFreshToken_NoEnvKey_ReturnsNil(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	futureExpiry := time.Now().Add(24 * time.Hour).UnixMilli()
+	writeOAuthCredentials(t, home, futureExpiry)
+
+	if err := checkStartupCredentials(home, filepath.Join(home, "nonexistent.yaml")); err != nil {
+		t.Errorf("expected nil when OAuth credentials are fresh and no env key set, got: %v", err)
+	}
+	// Verify the OAuth token was injected into the process environment.
+	if got := os.Getenv("ANTHROPIC_API_KEY"); got == "" {
+		t.Error("expected ANTHROPIC_API_KEY to be injected from OAuth credentials, got empty")
+	}
+}
+
+// TestCheckStartupCredentials_OAuthExpired_RefreshSucceeds_NoEnvKey_ReturnsNil
+// verifies that an expired OAuth token is refreshed at startup and the new token
+// is injected, even when ANTHROPIC_API_KEY is absent from the environment.
+func TestCheckStartupCredentials_OAuthExpired_RefreshSucceeds_NoEnvKey_ReturnsNil(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	writeOAuthCredentials(t, home, 1000) // expired
+
+	orig := startupOAuthHTTPDo
+	startupOAuthHTTPDo = func(r *http.Request) (*http.Response, error) {
+		body := `{"access_token":"sk-ant-refreshed","expires_in":3600}`
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+		}, nil
+	}
+	t.Cleanup(func() { startupOAuthHTTPDo = orig })
+
+	if err := checkStartupCredentials(home, filepath.Join(home, "nonexistent.yaml")); err != nil {
+		t.Errorf("expected nil after successful OAuth refresh, got: %v", err)
+	}
+	if got := os.Getenv("ANTHROPIC_API_KEY"); got != "sk-ant-refreshed" {
+		t.Errorf("ANTHROPIC_API_KEY = %q, want sk-ant-refreshed (injected from refreshed token)", got)
+	}
+}
+
+// TestCheckStartupCredentials_OAuthExpired_RefreshFails_ReturnsError verifies
+// that when an OAuth token is expired and refresh fails, startup returns an
+// error even if ANTHROPIC_API_KEY is set in the environment. The OAuth credential
+// file signals intent to use OAuth auth; falling back to a potentially-stale env
+// var would mask the problem.
+func TestCheckStartupCredentials_OAuthExpired_RefreshFails_ReturnsError(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-env-key")
+	writeOAuthCredentials(t, home, 1000) // expired
+
+	orig := startupOAuthHTTPDo
+	startupOAuthHTTPDo = func(r *http.Request) (*http.Response, error) {
+		return nil, fmt.Errorf("test: simulated refresh failure")
+	}
+	t.Cleanup(func() { startupOAuthHTTPDo = orig })
+
+	err := checkStartupCredentials(home, filepath.Join(home, "nonexistent.yaml"))
+	if err == nil {
+		t.Fatal("expected error when OAuth refresh fails, got nil")
+	}
+	if !strings.Contains(err.Error(), "authentication failed") {
+		t.Errorf("error should contain 'authentication failed'; got: %v", err)
+	}
+}
+
+// TestCheckStartupCredentials_OAuthExpired_NoRefreshFails_ReturnsError verifies
+// that when an OAuth token is expired and has no refresh token, startup fails.
+func TestCheckStartupCredentials_OAuthExpired_NoRefreshToken_ReturnsError(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	// Write credentials with expired token and no refresh token.
+	claudeDir := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	content := `{"claudeAiOauth":{"accessToken":"tok-expired","refreshToken":"","expiresAt":1000}}`
+	if err := os.WriteFile(filepath.Join(claudeDir, ".credentials.json"), []byte(content), 0o600); err != nil {
+		t.Fatalf("write credentials: %v", err)
+	}
+
+	err := checkStartupCredentials(home, filepath.Join(home, "nonexistent.yaml"))
+	if err == nil {
+		t.Fatal("expected error when OAuth token is expired and no refresh token, got nil")
+	}
+	if !strings.Contains(err.Error(), "authentication failed") {
+		t.Errorf("error should contain 'authentication failed'; got: %v", err)
+	}
+}
+
+// TestCheckStartupCredentials_OAuthCodexProvider_FreshToken_NotInjected verifies
+// that OAuth credential injection only happens for the claude provider; a codex
+// setup with fresh OAuth credentials does not inject ANTHROPIC_API_KEY.
+func TestCheckStartupCredentials_OAuthCodexProvider_FreshToken_NotInjected(t *testing.T) {
+	home := t.TempDir()
+	cfgPath := writeMinimalConfig(t, home, "codex")
+	t.Setenv("OPENAI_API_KEY", "sk-openai-key")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	futureExpiry := time.Now().Add(24 * time.Hour).UnixMilli()
+	writeOAuthCredentials(t, home, futureExpiry)
+
+	if err := checkStartupCredentials(home, cfgPath); err != nil {
+		t.Errorf("expected nil for codex provider, got: %v", err)
+	}
+	// ANTHROPIC_API_KEY must remain unset — OAuth injection is claude-only.
+	if got := os.Getenv("ANTHROPIC_API_KEY"); got != "" {
+		t.Errorf("expected ANTHROPIC_API_KEY to remain unset for codex provider, got %q", got)
 	}
 }
 

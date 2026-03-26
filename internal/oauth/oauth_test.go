@@ -454,6 +454,133 @@ func TestUpdateEnvConf_UpdatedFile_Has0600Permissions(t *testing.T) {
 	}
 }
 
+// --- ResolveAccessToken tests ---
+
+func TestResolveAccessToken_NoCredentials_ReturnsEmpty(t *testing.T) {
+	home := t.TempDir()
+	token, err := ResolveAccessToken(home, "http://unused", http.DefaultClient.Do)
+	if err != nil {
+		t.Fatalf("expected nil error, got: %v", err)
+	}
+	if token != "" {
+		t.Errorf("expected empty token when credentials absent, got %q", token)
+	}
+}
+
+func TestResolveAccessToken_EmptyAccessToken_ReturnsEmpty(t *testing.T) {
+	home := t.TempDir()
+	claudeDir := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	// Credentials file exists but accessToken is empty.
+	content := `{"claudeAiOauth":{"accessToken":"","refreshToken":"rt","expiresAt":9999999999000}}`
+	if err := os.WriteFile(filepath.Join(claudeDir, ".credentials.json"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	token, err := ResolveAccessToken(home, "http://unused", http.DefaultClient.Do)
+	if err != nil {
+		t.Fatalf("expected nil error for empty accessToken, got: %v", err)
+	}
+	if token != "" {
+		t.Errorf("expected empty token for empty accessToken, got %q", token)
+	}
+}
+
+func TestResolveAccessToken_FreshToken_ReturnsToken(t *testing.T) {
+	home := t.TempDir()
+	futureExpiry := time.Now().Add(2 * time.Hour).UnixMilli()
+	writeCredentials(t, home, "tok-fresh", "tok-refresh", futureExpiry)
+
+	token, err := ResolveAccessToken(home, "http://unused", http.DefaultClient.Do)
+	if err != nil {
+		t.Fatalf("expected nil error for fresh token, got: %v", err)
+	}
+	if token != "tok-fresh" {
+		t.Errorf("token = %q, want tok-fresh", token)
+	}
+}
+
+func TestResolveAccessToken_ZeroExpiry_TreatedAsFresh(t *testing.T) {
+	home := t.TempDir()
+	writeCredentials(t, home, "tok-noexpiry", "tok-refresh", 0)
+
+	token, err := ResolveAccessToken(home, "http://unused", http.DefaultClient.Do)
+	if err != nil {
+		t.Fatalf("expected nil error for zero-expiry token, got: %v", err)
+	}
+	if token != "tok-noexpiry" {
+		t.Errorf("token = %q, want tok-noexpiry", token)
+	}
+}
+
+func TestResolveAccessToken_ExpiredNoRefreshToken_ReturnsError(t *testing.T) {
+	home := t.TempDir()
+	// Write credentials with expired token and no refresh token.
+	pastExpiry := time.Now().Add(-1 * time.Hour).UnixMilli()
+	writeCredentials(t, home, "tok-expired", "", pastExpiry)
+
+	_, err := ResolveAccessToken(home, "http://unused", http.DefaultClient.Do)
+	if err == nil {
+		t.Fatal("expected error for expired token with no refresh token, got nil")
+	}
+	if !strings.Contains(err.Error(), "expired") {
+		t.Errorf("error should mention 'expired'; got: %v", err)
+	}
+}
+
+func TestResolveAccessToken_ExpiredRefreshSucceeds_ReturnsNewToken(t *testing.T) {
+	home := t.TempDir()
+	pastExpiry := time.Now().Add(-1 * time.Hour).UnixMilli()
+	writeCredentials(t, home, "tok-old", "tok-refresh", pastExpiry)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"access_token":"tok-refreshed","expires_in":3600}`)
+	}))
+	defer srv.Close()
+
+	token, err := ResolveAccessToken(home, srv.URL, srv.Client().Do)
+	if err != nil {
+		t.Fatalf("expected nil error after successful refresh, got: %v", err)
+	}
+	if token != "tok-refreshed" {
+		t.Errorf("token = %q, want tok-refreshed", token)
+	}
+	// Verify the refreshed token was written back to the credentials file.
+	creds := Read(home)
+	if creds == nil {
+		t.Fatal("expected credentials after write-back")
+	}
+	if creds.AccessToken != "tok-refreshed" {
+		t.Errorf("written AccessToken = %q, want tok-refreshed", creds.AccessToken)
+	}
+	// Refresh token must be preserved.
+	if creds.RefreshToken != "tok-refresh" {
+		t.Errorf("RefreshToken = %q, want tok-refresh (must be preserved)", creds.RefreshToken)
+	}
+}
+
+func TestResolveAccessToken_ExpiredRefreshFails_ReturnsError(t *testing.T) {
+	home := t.TempDir()
+	pastExpiry := time.Now().Add(-1 * time.Hour).UnixMilli()
+	writeCredentials(t, home, "tok-old", "tok-refresh", pastExpiry)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		fmt.Fprint(w, `{"error":"invalid_grant"}`)
+	}))
+	defer srv.Close()
+
+	_, err := ResolveAccessToken(home, srv.URL, srv.Client().Do)
+	if err == nil {
+		t.Fatal("expected error when refresh returns HTTP 401, got nil")
+	}
+	if !strings.Contains(err.Error(), "expired") {
+		t.Errorf("error should mention 'expired'; got: %v", err)
+	}
+}
+
 // --- Refresh timeout test ---
 
 func TestRefresh_Timeout_ReturnsError(t *testing.T) {

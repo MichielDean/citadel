@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -509,24 +510,43 @@ func resolveConfigPath() string {
 	return filepath.Join(home, ".cistern", "cistern.yaml")
 }
 
+// startupOAuthHTTPDo is the HTTP transport used by checkStartupCredentials for
+// OAuth token refresh. Replaced in tests to avoid real network calls.
+var startupOAuthHTTPDo = http.DefaultClient.Do
+
 // checkStartupCredentials returns an actionable error if the required provider
-// credentials are unset or (for claude) the OAuth token is expired, preventing
-// silent startup failures.
+// credentials are unavailable, preventing silent startup failures.
+//
+// For the claude provider it first attempts to resolve credentials from
+// ~/.claude/.credentials.json (refreshing the token if expired). When a valid
+// token is found it is injected as ANTHROPIC_API_KEY so that ~/.cistern/env is
+// not required to contain the key. If the credential file is absent or
+// malformed the function falls back to checking the ANTHROPIC_API_KEY
+// environment variable set by ~/.cistern/env.
 //
 // It parses cfgPath to determine which provider(s) are configured across all
 // repos. If cfgPath is empty or cannot be parsed, it falls back to checking
 // ANTHROPIC_API_KEY as the default (claude provider).
 func checkStartupCredentials(home, cfgPath string) error {
 	requiredVars, usesClaude := startupRequiredEnvVars(cfgPath)
+
+	if usesClaude {
+		token, err := oauth.ResolveAccessToken(home, oauth.DefaultTokenURL, startupOAuthHTTPDo)
+		if err != nil {
+			return fmt.Errorf("authentication failed: %w", err)
+		}
+		if token != "" {
+			// Inject the OAuth access token so the env var check below passes
+			// without requiring ANTHROPIC_API_KEY in ~/.cistern/env.
+			if setErr := os.Setenv("ANTHROPIC_API_KEY", token); setErr != nil {
+				return fmt.Errorf("inject OAuth token: %w", setErr)
+			}
+		}
+	}
+
 	for _, key := range requiredVars {
 		if os.Getenv(key) == "" {
 			return fmt.Errorf("%s not set — add it to ~/.cistern/env and source it before starting", key)
-		}
-	}
-	if usesClaude {
-		creds := oauth.Read(home)
-		if creds != nil && creds.ExpiresAt > 0 && time.Now().After(time.UnixMilli(creds.ExpiresAt)) {
-			return fmt.Errorf("authentication failed: Claude OAuth token is expired — run: ct doctor --fix")
 		}
 	}
 	return nil

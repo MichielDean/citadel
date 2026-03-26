@@ -2,15 +2,19 @@
 # start-castellarius.sh — Cistern Castellarius startup wrapper.
 #
 # Validates credentials, sources ~/.cistern/env to load them, then launches ct.
-# Update ~/.cistern/env with new credentials; the Castellarius picks them up
-# on each restart without needing to edit the systemd service drop-in.
 #
-# Pre-flight: checks that ~/.cistern/env exists and ANTHROPIC_API_KEY is set
-# to a non-empty value. Exits 1 with an actionable error message so that
-# systemd captures a useful log entry rather than a silent process exit.
+# Pre-flight: checks that ~/.cistern/env exists and that at least one Claude
+# credential source is available. Exits 1 with an actionable error message so
+# that systemd captures a useful log entry rather than a silent process exit.
+#
+# Credential resolution order (performed by ct itself at startup):
+#   1. ~/.claude/.credentials.json — OAuth token managed by the Claude CLI.
+#      Automatically refreshed when the token rotates; no manual sync needed.
+#   2. ANTHROPIC_API_KEY in ~/.cistern/env — fallback for API-key auth setups.
 set -euo pipefail
 
 CISTERN_ENV="${HOME}/.cistern/env"
+CLAUDE_CREDS="${HOME}/.claude/.credentials.json"
 
 # Check 1: credential file must exist.
 if [[ ! -f "${CISTERN_ENV}" ]]; then
@@ -18,13 +22,17 @@ if [[ ! -f "${CISTERN_ENV}" ]]; then
     exit 1
 fi
 
-# Check 2: ANTHROPIC_API_KEY must be set to a non-empty value (not commented out).
-if ! grep -qE '^ANTHROPIC_API_KEY=[^[:space:]]+' "${CISTERN_ENV}"; then
-    echo "cistern: ANTHROPIC_API_KEY not set in ${CISTERN_ENV} — add your key: echo 'ANTHROPIC_API_KEY=sk-ant-...' >> ${CISTERN_ENV}" >&2
+# Check 2: at least one Claude credential source must be present.
+# Either an OAuth credentials file written by the Claude CLI, or an explicit
+# ANTHROPIC_API_KEY entry in the env file.
+if [[ ! -f "${CLAUDE_CREDS}" ]] && ! grep -qE '^ANTHROPIC_API_KEY=[^[:space:]]+' "${CISTERN_ENV}"; then
+    echo "cistern: no Claude credentials found — run 'claude' interactively to authenticate, or add ANTHROPIC_API_KEY to ${CISTERN_ENV}" >&2
     exit 1
 fi
 
-# Export all KEY=VALUE pairs from the env file into the process environment.
+# Source the env file to load any additional credentials (e.g. GH_TOKEN) into
+# the process environment. ANTHROPIC_API_KEY is injected by ct from the OAuth
+# credentials file when present, so it need not appear here.
 set -a
 # shellcheck source=/dev/null
 . "${CISTERN_ENV}"
