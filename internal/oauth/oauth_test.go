@@ -469,15 +469,8 @@ func TestResolveAccessToken_NoCredentials_ReturnsEmpty(t *testing.T) {
 
 func TestResolveAccessToken_EmptyAccessToken_ReturnsEmpty(t *testing.T) {
 	home := t.TempDir()
-	claudeDir := filepath.Join(home, ".claude")
-	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	// Credentials file exists but accessToken is empty.
-	content := `{"claudeAiOauth":{"accessToken":"","refreshToken":"rt","expiresAt":9999999999000}}`
-	if err := os.WriteFile(filepath.Join(claudeDir, ".credentials.json"), []byte(content), 0o644); err != nil {
-		t.Fatalf("write: %v", err)
-	}
+	writeCredentials(t, home, "", "rt", 9999999999000)
+
 	token, err := ResolveAccessToken(home, "http://unused", http.DefaultClient.Do)
 	if err != nil {
 		t.Fatalf("expected nil error for empty accessToken, got: %v", err)

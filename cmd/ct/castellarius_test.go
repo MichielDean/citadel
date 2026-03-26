@@ -287,6 +287,15 @@ func TestValidateWorkflowSkills_ErrorMentionsInstallCommand(t *testing.T) {
 
 // --- checkStartupCredentials tests ---
 
+// setStartupHTTPDo overrides startupOAuthHTTPDo for the duration of a test and
+// restores the original value when the test completes.
+func setStartupHTTPDo(t *testing.T, do func(*http.Request) (*http.Response, error)) {
+	t.Helper()
+	orig := startupOAuthHTTPDo
+	startupOAuthHTTPDo = do
+	t.Cleanup(func() { startupOAuthHTTPDo = orig })
+}
+
 // writeOAuthCredentials writes a credentials file with the given OAuth expiry.
 func writeOAuthCredentials(t *testing.T, home string, expiresAt int64) {
 	t.Helper()
@@ -350,11 +359,9 @@ func TestCheckStartupCredentials_KeyPresent_ExpiredOAuth_ReturnsError(t *testing
 	writeOAuthCredentials(t, home, 1000) // expires 1970-01-01 — definitely expired
 
 	// Inject a failing HTTP do to avoid real network calls during the refresh attempt.
-	orig := startupOAuthHTTPDo
-	startupOAuthHTTPDo = func(r *http.Request) (*http.Response, error) {
+	setStartupHTTPDo(t, func(r *http.Request) (*http.Response, error) {
 		return nil, fmt.Errorf("test: no network")
-	}
-	t.Cleanup(func() { startupOAuthHTTPDo = orig })
+	})
 
 	err := checkStartupCredentials(home, filepath.Join(home, "nonexistent.yaml"))
 	if err == nil {
@@ -479,16 +486,14 @@ func TestCheckStartupCredentials_OAuthExpired_RefreshSucceeds_NoEnvKey_ReturnsNi
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	writeOAuthCredentials(t, home, 1000) // expired
 
-	orig := startupOAuthHTTPDo
-	startupOAuthHTTPDo = func(r *http.Request) (*http.Response, error) {
+	setStartupHTTPDo(t, func(r *http.Request) (*http.Response, error) {
 		body := `{"access_token":"sk-ant-refreshed","expires_in":3600}`
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Body:       io.NopCloser(strings.NewReader(body)),
 			Header:     http.Header{"Content-Type": []string{"application/json"}},
 		}, nil
-	}
-	t.Cleanup(func() { startupOAuthHTTPDo = orig })
+	})
 
 	if err := checkStartupCredentials(home, filepath.Join(home, "nonexistent.yaml")); err != nil {
 		t.Errorf("expected nil after successful OAuth refresh, got: %v", err)
@@ -508,11 +513,9 @@ func TestCheckStartupCredentials_OAuthExpired_RefreshFails_ReturnsError(t *testi
 	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-env-key")
 	writeOAuthCredentials(t, home, 1000) // expired
 
-	orig := startupOAuthHTTPDo
-	startupOAuthHTTPDo = func(r *http.Request) (*http.Response, error) {
+	setStartupHTTPDo(t, func(r *http.Request) (*http.Response, error) {
 		return nil, fmt.Errorf("test: simulated refresh failure")
-	}
-	t.Cleanup(func() { startupOAuthHTTPDo = orig })
+	})
 
 	err := checkStartupCredentials(home, filepath.Join(home, "nonexistent.yaml"))
 	if err == nil {
