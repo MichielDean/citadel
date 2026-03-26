@@ -431,7 +431,7 @@ The `/root/.cistern` volume persists config, skills, the SQLite database, and gh
 ```
 # Castellarius — the overseer that watches the cistern and routes droplets
 ct castellarius start          Wake the Castellarius (start processing)
-ct castellarius status         Show aqueduct flow — which are flowing, which are idle
+ct castellarius status         Show aqueduct flow — which are flowing, which are idle; includes per-repo queue depth and active session counts
 
 # Dashboard
 ct dashboard                   Live TUI aqueduct arch diagram with cistern and recent flow

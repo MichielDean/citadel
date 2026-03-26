@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Castellarius status: expose queue depth and active session count per repo (ci-x0ss6)
+- `ct castellarius status` now displays per-repo queue summaries showing queue depth (count of "open" droplets) and active session count (count of "in_progress" droplets)
+- Output format: each repo shows a summary line like `cistern: 2 queued, 1 flowing (julia: sc-abc123/implement)` with assignee details for active droplets
+- When no droplets are flowing for a repo, the summary shows just the counts: `ScaledTest: 0 queued, 0 flowing`
+- Queue summaries are printed after the existing worker table and aqueduct flow status line, providing an at-a-glance view of cistern load per repo
+- Helps operators monitor queue buildup and identify bottlenecks at the repo level without needing to run separate `ct droplet list` commands
+
 ### Castellarius: read Claude OAuth credentials from ~/.claude/.credentials.json directly (ci-i5ft0)
 - Castellarius startup now reads Claude OAuth credentials directly from `~/.claude/.credentials.json` (managed by the Claude CLI) instead of requiring a manual copy in `~/.cistern/env`
 - Credential resolution order: (1) OAuth token from `~/.claude/.credentials.json` if present and fresh; (2) `ANTHROPIC_API_KEY` from `~/.cistern/env` as fallback for API-key auth
