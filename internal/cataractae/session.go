@@ -487,6 +487,13 @@ func (s *Session) resolveIdentityPath() string {
 // kill terminates the tmux session if it exists. Errors are silently ignored
 // since the session may already be dead.
 func (s *Session) kill() {
+	// Only log if we're actually killing something that was alive — this makes
+	// stale-session kills visible in the log without noise on every spawn.
+	if isSessionAlive(s.ID) {
+		slog.Default().Warn("session: killing existing session before respawn",
+			"session", s.ID,
+			"note", "session was still alive at spawn time — prior session may have been killed by us")
+	}
 	exec.Command("tmux", "kill-session", "-t", s.ID).Run() //nolint:errcheck
 }
 
