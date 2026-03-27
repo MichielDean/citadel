@@ -1208,8 +1208,9 @@ func (s *Castellarius) heartbeatInProgress(ctx context.Context) {
 	}
 }
 
-func (s *Castellarius) heartbeatRepo(_ context.Context, repo aqueduct.RepoConfig) {
+func (s *Castellarius) heartbeatRepo(ctx context.Context, repo aqueduct.RepoConfig) {
 	client := s.clients[repo.Name]
+	wf := s.workflows[repo.Name]
 
 	items, err := client.List(repo.Name, "in_progress")
 	if err != nil {
@@ -1235,6 +1236,50 @@ func (s *Castellarius) heartbeatRepo(_ context.Context, repo aqueduct.RepoConfig
 		// Items with outcomes are handled by the observe phase — skip them.
 		if item.Outcome != "" {
 			continue
+		}
+
+		// Fast liveness check: if the tmux session is dead, re-spawn immediately
+		// using --continue so the agent resumes where it left off. This runs on
+		// every heartbeat tick (~30s) — no threshold, no waiting.
+		if item.Assignee != "" {
+			sessionID := repo.Name + "-" + item.Assignee
+			if !isTmuxAlive(sessionID) {
+				// Minimum age guard: ignore sessions dispatched < 2× pollInterval ago
+				// (tmux may not yet be visible immediately after spawn).
+				if time.Since(item.UpdatedAt) < 2*s.pollInterval {
+					continue
+				}
+				step := currentCataracta(item, wf)
+				if step == nil {
+					s.logger.Error("heartbeat: no step for dead session — skipping",
+						"repo", repo.Name, "droplet", item.ID)
+					continue
+				}
+				notes, _ := client.GetNotes(item.ID)
+				req := CataractaeRequest{
+					Item:         item,
+					Step:         *step,
+					Workflow:     wf,
+					RepoConfig:   repo,
+					AqueductName: item.Assignee,
+					Notes:        notes,
+				}
+				if s.sandboxRoot != "" && step.Type == aqueduct.CataractaeTypeAgent && step.Context != aqueduct.ContextSpecOnly {
+					req.SandboxDir = filepath.Join(s.sandboxRoot, repo.Name, item.ID)
+				}
+				s.logger.Info("heartbeat: dead session — re-spawning with --continue",
+					"repo", repo.Name,
+					"droplet", item.ID,
+					"assignee", item.Assignee,
+					"cataractae", step.Name,
+					"session_age", time.Since(item.UpdatedAt).Round(time.Second).String(),
+				)
+				if err := s.runner.Spawn(ctx, req); err != nil {
+					s.logger.Error("heartbeat: re-spawn failed",
+						"repo", repo.Name, "droplet", item.ID, "error", err)
+				}
+				continue // handled — skip progress check for this item
+			}
 		}
 
 		// Evaluate three activity signals.
@@ -1380,9 +1425,15 @@ func (s *Castellarius) resolveSessionLogRoot() string {
 	return filepath.Join(home, ".cistern", "session-logs")
 }
 
+// isTmuxAliveFn is a variable so tests can substitute a fake implementation
+// without requiring a real tmux server.
+var isTmuxAliveFn = func(sessionID string) bool {
+	return exec.Command("tmux", "has-session", "-t", sessionID).Run() == nil
+}
+
 // isTmuxAlive returns true if a tmux session with the given name is running.
 func isTmuxAlive(sessionID string) bool {
-	return exec.Command("tmux", "has-session", "-t", sessionID).Run() == nil
+	return isTmuxAliveFn(sessionID)
 }
 
 // sandboxHead returns the current HEAD commit hash in the given directory.

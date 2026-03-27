@@ -25,6 +25,11 @@ import (
 // a stall and logs "stall detected" when all three progress signals are absent
 // (no notes, no worktree files, no session log).
 func TestHeartbeat_StallDetected_WhenNoSignals(t *testing.T) {
+	// Mock tmux as alive so liveness check passes through to stall detector.
+	orig := isTmuxAliveFn
+	isTmuxAliveFn = func(_ string) bool { return true }
+	t.Cleanup(func() { isTmuxAliveFn = orig })
+
 	buf := &bytes.Buffer{}
 	client := newMockClient()
 	sched := newTestScheduler(buf, client)

@@ -312,7 +312,12 @@ func TestHeartbeatRepo(t *testing.T) {
 
 func TestHeartbeatRepo_StallDetected_ForAssignedDroplet(t *testing.T) {
 	// A droplet assigned to a worker with no recent signals should receive a
-	// stall note. The heartbeat no longer checks tmux or resets the item.
+	// stall note. Mock tmux as alive so the liveness check passes through to
+	// the stall detector.
+	orig := isTmuxAliveFn
+	isTmuxAliveFn = func(_ string) bool { return true }
+	t.Cleanup(func() { isTmuxAliveFn = orig })
+
 	client := newMockClient()
 	item := &cistern.Droplet{
 		ID:                "hb-assigned-stall",
@@ -362,7 +367,11 @@ func TestHeartbeatRepo_ActiveDroplet_NotStalled(t *testing.T) {
 
 func TestHeartbeatRepo_UnknownAssignee_WritesStallNote(t *testing.T) {
 	// A droplet with an unknown assignee and no recent signals should receive
-	// a stall note. The heartbeat monitors progress, not session liveness.
+	// a stall note. Mock tmux as alive so liveness check passes through.
+	orig := isTmuxAliveFn
+	isTmuxAliveFn = func(_ string) bool { return true }
+	t.Cleanup(func() { isTmuxAliveFn = orig })
+
 	client := newMockClient()
 	item := &cistern.Droplet{
 		ID:                "hb-unknown",

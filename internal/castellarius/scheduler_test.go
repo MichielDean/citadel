@@ -2152,6 +2152,11 @@ func TestHeartbeatRepo_Debounce_WorktreeSignalAdvances_ClearsDebounce(t *testing
 // TestHeartbeatRepo_Debounce_SessionLogSignalAdvances_ClearsDebounce verifies
 // that a newer session log mtime clears the debounce and allows a new stall note.
 func TestHeartbeatRepo_Debounce_SessionLogSignalAdvances_ClearsDebounce(t *testing.T) {
+	// Mock tmux as alive so liveness check passes through to stall detector.
+	orig := isTmuxAliveFn
+	isTmuxAliveFn = func(_ string) bool { return true }
+	t.Cleanup(func() { isTmuxAliveFn = orig })
+
 	logDir := t.TempDir()
 	client := newMockClient()
 
