@@ -438,14 +438,23 @@ func hookDBVacuum(dbPath string, logger *slog.Logger) error {
 		beforeSize = beforeInfo.Size()
 	}
 
+	// Use the existing Castellarius client connection (WAL mode) rather than
+	// opening a separate connection. VACUUM requires an exclusive lock and cannot
+	// run while any other WAL reader/writer is open — in practice this means
+	// VACUUM always deadlocks against Castellarius's own connection pool.
+	//
+	// Instead, use WAL checkpoint (TRUNCATE mode) which achieves the same goal
+	// of reclaiming space by flushing the WAL file back into the main database,
+	// without requiring an exclusive lock. This is safe to run concurrently with
+	// active readers and writers.
 	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
 	if err != nil {
 		return fmt.Errorf("db_vacuum: open: %w", err)
 	}
 	defer db.Close()
 
-	if _, err := db.Exec("VACUUM"); err != nil {
-		return fmt.Errorf("db_vacuum: %w", err)
+	if _, err := db.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
+		return fmt.Errorf("db_vacuum: wal_checkpoint: %w", err)
 	}
 
 	afterInfo, _ := os.Stat(dbPath)
