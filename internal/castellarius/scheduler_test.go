@@ -2391,6 +2391,11 @@ func TestHeartbeatRepo_StaleDebounce_PrunedWhenDropletNoLongerInProgress(t *test
 //   - prior session → session.Spawn selects --continue
 //   - no prior session → session.Spawn spawns fresh
 func TestHeartbeatRepo_StallWithAssignee_SpawnsSession(t *testing.T) {
+	// Mock tmux as alive so liveness check passes through to stall detector.
+	orig := isTmuxAliveFn
+	isTmuxAliveFn = func(_ string) bool { return true }
+	t.Cleanup(func() { isTmuxAliveFn = orig })
+
 	client := newMockClient()
 	runner := newMockRunner(client)
 
@@ -2487,6 +2492,11 @@ func TestHeartbeatRepo_StallWithNoAssignee_NoteOnlyNoSpawn(t *testing.T) {
 // returns an error (Spawn fails), the debounce entry is deleted so the next heartbeat
 // re-detects the stall and retries the spawn.
 func TestHeartbeatRepo_SpawnFailure_ClearsDebounce(t *testing.T) {
+	// Mock tmux as alive so liveness check passes through to stall detector.
+	orig := isTmuxAliveFn
+	isTmuxAliveFn = func(_ string) bool { return true }
+	t.Cleanup(func() { isTmuxAliveFn = orig })
+
 	client := newMockClient()
 	runner := newMockRunner(client)
 	runner.err = fmt.Errorf("tmux spawn failed")
