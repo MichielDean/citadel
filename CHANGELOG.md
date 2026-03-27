@@ -638,6 +638,32 @@
 - Skills must be installed before running an aqueduct (`ct skills install <name> <url>`); the runner logs a warning and continues if a referenced skill is not installed.
 - `ct doctor` verifies that all skills referenced in aqueduct YAML are present in `~/.cistern/skills/`.
 
+## 2026-03-27 — Stability improvements
+
+### Remove Claude token injection — let Claude CLI manage its own auth (PR #218)
+- Removed the `ANTHROPIC_API_KEY` token injection from the aqueduct runner; Claude CLI now manages its own authentication
+- Eliminates a class of auth-related failures caused by stale or misconfigured tokens being injected into agent sessions
+
+### Remove quick-exit backoff and provider degradation logic (PR #219)
+- Removed quick-exit detection, exponential backoff on fast exits, and provider degradation/blacklisting logic from the Castellarius
+- These mechanisms were causing healthy aqueducts to be incorrectly penalised and delayed; stability is now handled by the heartbeat progress monitor instead
+
+### Heartbeat: re-spawn dead sessions instead of resetting to open + SQLite MaxOpenConns(1) fix (PR #221)
+- Heartbeat now detects dead tmux sessions for in-progress droplets and re-spawns the agent session directly, rather than resetting the droplet status back to `open` and waiting for the next dispatch cycle
+- Fixed a SQLite concurrency bug: `MaxOpenConns(1)` is now set on the database connection pool, preventing `SQLITE_BUSY` errors under concurrent Castellarius and CLI access
+
+### Fix TUI dashboard arch positioning — center over active step slot (PR #222)
+- The aqueduct arch overlay in `ct dashboard` now centres horizontally over the active step slot instead of the full terminal width
+- Fixes visual misalignment when the terminal is wide relative to the step list
+
+### Fix drought arch — use 36x12 mipmap instead of hand-drawn pixel map (PR #225)
+- The drought/idle state arch now uses the proper 36×12 chafa mipmap asset instead of the legacy hand-drawn pixel map
+- Brings the drought arch rendering in line with the active arch quality and sizing
+
+### Drought arch — render mipmap without dim styling (PR #226)
+- Removed the dim ANSI styling applied to the drought arch mipmap render
+- The arch now renders at full brightness in both active and idle states, improving readability on dark terminals
+
 ## v1.0.0 — 2026-03-18
 
 First stable release of Cistern — a Mad Max–themed agentic workflow orchestrator for software development.
