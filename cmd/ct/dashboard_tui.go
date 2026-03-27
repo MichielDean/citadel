@@ -32,6 +32,18 @@ var archMipmap60x22 string
 // manages cursor visibility independently.
 var archMipmapStripper = strings.NewReplacer("\x1b[?25l", "", "\x1b[?25h", "")
 
+// archMipmapWidth returns the pixel column width of the mipmap level chosen for
+// the given terminal width, matching the thresholds in selectArchMipmap.
+func archMipmapWidth(availableWidth int) int {
+	if availableWidth >= 90 {
+		return 100
+	}
+	if availableWidth >= 70 {
+		return 80
+	}
+	return 60
+}
+
 // selectArchMipmap returns the ANSI arch mipmap whose width best fits availableWidth,
 // with cursor-control sequences stripped.
 //   - width >= 90  → 100x38 mipmap (37 visual lines)
@@ -39,11 +51,12 @@ var archMipmapStripper = strings.NewReplacer("\x1b[?25l", "", "\x1b[?25h", "")
 //   - width < 70   → 60x22 mipmap  (22 visual lines)
 func selectArchMipmap(availableWidth int) string {
 	var raw string
-	if availableWidth >= 90 {
+	switch archMipmapWidth(availableWidth) {
+	case 100:
 		raw = archMipmap100x38
-	} else if availableWidth >= 70 {
+	case 80:
 		raw = archMipmap80x30
-	} else {
+	default:
 		raw = archMipmap60x22
 	}
 	return archMipmapStripper.Replace(raw)
@@ -729,15 +742,7 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string
 	// center it in the terminal, and use its lines in place of the ASCII pillar rows.
 	mipmap := selectArchMipmap(m.width)
 	mipmapLines := strings.Split(strings.TrimRight(mipmap, "\n"), "\n")
-	var mipmapDisplayW int
-	if m.width >= 90 {
-		mipmapDisplayW = 100
-	} else if m.width >= 70 {
-		mipmapDisplayW = 80
-	} else {
-		mipmapDisplayW = 60
-	}
-	leftPad := (m.width - mipmapDisplayW) / 2
+	leftPad := (m.width - archMipmapWidth(m.width)) / 2
 	if leftPad < 0 {
 		leftPad = 0
 	}
