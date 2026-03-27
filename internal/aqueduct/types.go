@@ -223,18 +223,6 @@ type AqueductConfig struct {
 	// ct droplet add --filter. When omitted, the default anthropic preset is used.
 	LLM                   *LLMConfig       `yaml:"llm,omitempty"`
 
-	// QuickExitThresholdSeconds is the session duration (in seconds) below which
-	// a session death without an outcome is treated as a quick exit — likely a
-	// provider-side failure such as auth rejection or binary not found. Sessions
-	// that die within this window trigger per-droplet exponential backoff.
-	// Defaults to 30 when omitted or 0.
-	QuickExitThresholdSeconds int `yaml:"quick_exit_threshold_seconds,omitempty"`
-
-	// MaxBackoffMinutes is the upper bound (in minutes) for per-droplet
-	// exponential backoff after consecutive quick exits.
-	// Defaults to 30 when omitted or 0.
-	MaxBackoffMinutes int `yaml:"max_backoff_minutes,omitempty"`
-
 	// DrainTimeoutMinutes is the maximum time (in minutes) the Castellarius
 	// will wait for in-flight sessions to signal an outcome after receiving
 	// SIGTERM. If the timeout fires, exit is forced and stuck IDs are logged.
