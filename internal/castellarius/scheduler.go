@@ -172,6 +172,12 @@ func WithDrainTimeout(d time.Duration) Option {
 	return func(s *Castellarius) { s.drainTimeout = d }
 }
 
+// WithHeartbeatInterval overrides how often the heartbeat scans for stalled
+// in-progress droplets. Defaults to 30s; pass a shorter duration in tests.
+func WithHeartbeatInterval(d time.Duration) Option {
+	return func(s *Castellarius) { s.heartbeatInterval = d }
+}
+
 // New creates a Castellarius from an AqueductConfig.
 // Workflows are loaded from each RepoConfig.WorkflowPath.
 // Each repo gets its own cistern.Client scoped by prefix.
