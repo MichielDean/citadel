@@ -1306,6 +1306,9 @@ func latestNoteSignal(client CisternClient, dropletID string) (time.Time, string
 			latest = n.CreatedAt
 		}
 	}
+	if latest.IsZero() {
+		return time.Time{}, "none"
+	}
 	return latest, latest.Format(time.RFC3339)
 }
 
@@ -1380,28 +1383,6 @@ func (s *Castellarius) resolveSessionLogRoot() string {
 // isTmuxAlive returns true if a tmux session with the given name is running.
 func isTmuxAlive(sessionID string) bool {
 	return exec.Command("tmux", "has-session", "-t", sessionID).Run() == nil
-}
-
-// readSessionLogTail reads the last maxLines lines from the session output log
-// at ~/.cistern/session-logs/<sessionID>.log and removes the file. Returns an
-// empty string if the file does not exist or cannot be read.
-// Called by the heartbeat when a stalled session is detected.
-func readSessionLogTail(sessionID string, maxLines int) string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	logPath := filepath.Join(home, ".cistern", "session-logs", sessionID+".log")
-	data, err := os.ReadFile(logPath)
-	if err != nil || len(data) == 0 {
-		return ""
-	}
-	text := strings.TrimRight(string(data), "\n")
-	lines := strings.Split(text, "\n")
-	if len(lines) > maxLines {
-		lines = lines[len(lines)-maxLines:]
-	}
-	return strings.Join(lines, "\n")
 }
 
 // sandboxHead returns the current HEAD commit hash in the given directory.
