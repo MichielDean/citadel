@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Simplify ANTHROPIC_API_KEY checks: remove redundant env validation (ci-wwmtc)
+- `start-castellarius.sh` now simply execs `ct castellarius start` without credential validation — all checks moved into the binary for clarity and single point of maintenance
+- Credential resolution is simplified: (1) OAuth token from `~/.claude/.credentials.json` if present and fresh (automatic refresh on expiry), (2) `ANTHROPIC_API_KEY` from `~/.cistern/env` as fallback for API-key auth
+- `ct init` updated to guide new users toward OAuth authentication (`claude` interactive) instead of requiring manual `ANTHROPIC_API_KEY` setup — reduces friction for Claude users
+- `ct doctor` and startup checks now prefer OAuth credentials: check `~/.claude/.credentials.json` first, fallback to `ANTHROPIC_API_KEY` in `~/.cistern/env` — new users can authenticate once with `claude` and skip `~/.cistern/env` entirely
+- Systemd service template now includes `EnvironmentFile=-~/.cistern/env` directive (with `-` for non-fatal missing), ensuring `GH_TOKEN` and other env vars from `~/.cistern/env` are available to the Castellarius process
+- Removed stale comment: `startupRequiredEnvVars` no longer mentions "OAuth token check at startup" (the check moved to initialization time, not startup)
+- User-visible change: simpler setup path for Claude users (run `claude`, done); existing API-key setups continue to work unchanged; `ct init` next-steps message now mentions OAuth flow first
+
 ### Heartbeat: replace stall-recovery with progress monitoring using activity signals (ci-v8rgq)
 - Castellarius heartbeat now monitors three independent activity signals to detect stalled droplets: (1) newest note timestamp on the droplet, (2) most recent file modification time under the droplet's worktree directory, (3) modification time of the droplet's session log file
 - A droplet is considered stalled when the most recent signal across all three is older than `stall_threshold_minutes` (configurable in `cistern.yaml`, defaults to 45 minutes)
