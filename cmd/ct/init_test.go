@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -433,5 +434,50 @@ func TestAddLineToGitignore_AppendsToExistingFile(t *testing.T) {
 	}
 	if !strings.Contains(content, "env") {
 		t.Error("new line was not added to .gitignore")
+	}
+}
+
+// --- ct init next-steps message tests ---
+
+// captureInitOutput runs initCmd.RunE with a fresh temp HOME and returns stdout.
+func captureInitOutput(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	initForce = false
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	origStdout := os.Stdout
+	os.Stdout = w
+
+	runErr := initCmd.RunE(initCmd, nil)
+
+	w.Close()
+	os.Stdout = origStdout
+
+	if runErr != nil {
+		t.Fatalf("initCmd.RunE: %v", runErr)
+	}
+
+	var buf bytes.Buffer
+	buf.ReadFrom(r)
+	return buf.String()
+}
+
+func TestInit_NextStepsMessage_DoesNotMentionAnthropicAPIKey(t *testing.T) {
+	output := captureInitOutput(t)
+	if strings.Contains(output, "ANTHROPIC_API_KEY") {
+		t.Errorf("ct init next-steps message must not mention ANTHROPIC_API_KEY — claude uses OAuth, not an API key; output:\n%s", output)
+	}
+}
+
+func TestInit_NextStepsMessage_MentionsClaudeAuth(t *testing.T) {
+	output := captureInitOutput(t)
+	if !strings.Contains(output, "claude") {
+		t.Errorf("ct init next-steps message should mention running 'claude' for OAuth authentication; output:\n%s", output)
 	}
 }

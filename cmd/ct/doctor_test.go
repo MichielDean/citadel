@@ -1819,6 +1819,28 @@ func TestInstallSystemdService_ServiceFileHasNoAnthropicAPIKey(t *testing.T) {
 	}
 }
 
+// TestInstallSystemdService_ServiceFileHasEnvironmentFile verifies that the
+// generated service file contains an EnvironmentFile directive pointing to
+// ~/.cistern/env so that GH_TOKEN and other vars from that file are available
+// to the castellarius process without being sourced by the wrapper script.
+func TestInstallSystemdService_ServiceFileHasEnvironmentFile(t *testing.T) {
+	home := setupInstallSystemdServiceTest(t)
+
+	if err := installSystemdService(); err != nil {
+		t.Fatalf("installSystemdService: %v", err)
+	}
+
+	svcPath := filepath.Join(home, ".config", "systemd", "user", "cistern-castellarius.service")
+	data, err := os.ReadFile(svcPath)
+	if err != nil {
+		t.Fatalf("read service file: %v", err)
+	}
+	want := "EnvironmentFile=-" + filepath.Join(home, ".cistern", "env")
+	if !strings.Contains(string(data), want) {
+		t.Errorf("service file missing EnvironmentFile directive; want %q in:\n%s", want, data)
+	}
+}
+
 // TestInstallSystemdService_WrapperStatError_ReturnsError verifies that when
 // os.Stat on the wrapper path returns a non-IsNotExist error (e.g. EACCES),
 // installSystemdService propagates the error instead of silently continuing.

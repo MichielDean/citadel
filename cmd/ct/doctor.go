@@ -647,6 +647,7 @@ StartLimitAction=none
 TimeoutStopSec=15
 KillMode=mixed
 KillSignal=SIGTERM
+EnvironmentFile=-%s/env
 StandardOutput=append:%s
 StandardError=append:%s
 Environment=HOME=%s
@@ -654,7 +655,7 @@ Environment=PATH=%s:/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin
 
 [Install]
 WantedBy=default.target
-`, wrapperPath, logPath, logPath, home, gobin)
+`, wrapperPath, cisternDir, logPath, logPath, home, gobin)
 
 	svcPath := filepath.Join(serviceDir, "cistern-castellarius.service")
 	if err := os.WriteFile(svcPath, []byte(content), 0o644); err != nil {

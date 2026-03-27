@@ -102,9 +102,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 Next:
   1. Edit ~/.cistern/cistern.yaml — add your repos
-  2. Add your credentials to ~/.cistern/env:
-       echo 'ANTHROPIC_API_KEY=sk-ant-...' >> ~/.cistern/env
-       chmod 600 ~/.cistern/env
+  2. Authenticate with Claude (OAuth — no API key needed):
+       claude
+     For other providers (Codex, Gemini, etc.) add keys to ~/.cistern/env
   3. ct droplet add --title "Your first droplet" --repo yourrepo
   4. ct castellarius start
 `)
