@@ -771,7 +771,7 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string
 
 	// Return order: name → info → label → channel top → channel water → arch pillars.
 	result := []string{nameLine, infoLine, lblLine.String(), l1, l2}
-	result   = append(result, archLines...)
+	result = append(result, archLines...)
 	return result
 }
 

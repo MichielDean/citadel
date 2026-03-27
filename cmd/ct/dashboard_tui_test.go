@@ -496,9 +496,9 @@ func TestSelectArchMipmap_ReturnsCorrectLevelForWidth(t *testing.T) {
 // When:  selectArchMipmap is called for each
 // Then:  all three returned strings are non-empty and pairwise distinct
 func TestSelectArchMipmap_EachLevelReturnsDistinctContent(t *testing.T) {
-	large  := selectArchMipmap(90)  // 100x38
-	medium := selectArchMipmap(70)  // 80x30
-	small  := selectArchMipmap(0)   // 60x22
+	large := selectArchMipmap(90)  // 100x38
+	medium := selectArchMipmap(70) // 80x30
+	small := selectArchMipmap(0)   // 60x22
 
 	for _, s := range []string{large, medium, small} {
 		if s == "" {
