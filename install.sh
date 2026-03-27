@@ -107,23 +107,6 @@ check_deps() {
   fi
 }
 
-# --- check_api_key: verify ANTHROPIC_API_KEY is set ---
-check_api_key() {
-  if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
-    printf "\n"
-    warn "ANTHROPIC_API_KEY is not set."
-    warn "Cistern needs this to run AI agent steps."
-    printf "\n"
-    printf "  Add to your shell profile (~/.bashrc, ~/.zshrc, etc.):\n"
-    printf "    export ANTHROPIC_API_KEY='sk-ant-...'\n"
-    printf "\n"
-    printf "  Then reload your shell and re-run this installer.\n"
-    printf "\n"
-    fatal "ANTHROPIC_API_KEY must be set before installing."
-  fi
-  info "ANTHROPIC_API_KEY ✓"
-}
-
 # --- configure_git: ensure go module fetching works for private repos ---
 configure_git() {
   # Rewrite HTTPS GitHub URLs to SSH so `go install` works with SSH key auth.
@@ -357,8 +340,6 @@ main() {
   check_go
   step "Checking dependencies"
   check_deps
-  step "Checking API key"
-  check_api_key
   step "Configuring git"
   configure_git
   step "Installing ct"

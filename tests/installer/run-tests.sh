@@ -201,11 +201,8 @@ else
     # Install skill stubs so ct castellarius start and ct doctor pass validation.
     _install_skill_stubs
 
-    # Write valid credentials into the env file loaded by the service unit.
-    echo "ANTHROPIC_API_KEY=sk-ant-test-fresh-install" > "${HOME}/.cistern/env"
-
-    # Start the service (it loads ~/.cistern/env via EnvironmentFile and validates
-    # credentials in start-castellarius.sh before launching ct castellarius start).
+    # start-castellarius.sh no longer requires credentials — it just execs ct.
+    # No ANTHROPIC_API_KEY needed; Claude CLI manages its own OAuth credentials.
     systemctl daemon-reload
     systemctl start cistern-castellarius.service 2>/dev/null || true
 
@@ -215,9 +212,9 @@ else
         sleep 1
         pass "fresh_install_service_active"
 
-        # Then: ct doctor exits 0 with all checks satisfied.
-        _doctor_out=$(ANTHROPIC_API_KEY=sk-ant-test-fresh-install \
-                      CT_NO_ASCII_LOGO=1 ct doctor 2>&1) && _doctor_exit=0 || _doctor_exit=$?
+        # Then: ct doctor exits 0 — no ANTHROPIC_API_KEY required for claude provider.
+        # OAuth token check skips silently when no credentials file is present.
+        _doctor_out=$(CT_NO_ASCII_LOGO=1 ct doctor 2>&1) && _doctor_exit=0 || _doctor_exit=$?
         if [ "${_doctor_exit}" -eq 0 ]; then
             pass "fresh_install_ct_doctor_passes"
         else
@@ -230,82 +227,63 @@ else
     fi
 fi
 
-# ── Scenario 2: Missing credentials ──────────────────────────────────────────
-# Given: ct init has succeeded; ~/.cistern/env is absent
+# ── Scenario 2: No OAuth credentials — service starts cleanly ─────────────────
+# Given: ct init has succeeded; no OAuth credentials file; no ANTHROPIC_API_KEY
 # When:  the castellarius service is started; ct doctor is run
-# Then:  service fails and logs a "missing credentials" error (not silent crash);
-#        ct doctor exits non-zero with a message referencing missing credentials
+# Then:  service starts successfully — start-castellarius.sh no longer checks
+#        credentials at startup; ct doctor passes because the OAuth token check
+#        skips silently when no credentials file is present
 echo ""
-echo "=== Scenario: Missing credentials ==="
+echo "=== Scenario: No credentials — service starts cleanly ==="
 
 _reset_scenario_state
 
 if ! CT_NO_ASCII_LOGO=1 ct init >/dev/null; then
-    fail "missing_creds_ct_init" "ct init failed"
+    fail "no_creds_ct_init" "ct init failed"
 else
     _install_skill_stubs
 
-    # Given: ~/.cistern/env is absent — no credentials file.
-    # (already absent after _reset_scenario_state; not written here)
+    # Given: no ~/.cistern/env credentials and no OAuth file (already absent).
 
-    # Record time so we can filter journal to this scenario's run.
-    _since=$(date --iso-8601=seconds 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%S+00:00")
-
-    # When: start service (EnvironmentFile absent → ANTHROPIC_API_KEY unset →
-    # start-castellarius.sh exits 1 with "missing credentials" message).
+    systemctl daemon-reload
     systemctl start cistern-castellarius.service 2>/dev/null || true
 
-    # Then: service fails (hits StartLimitBurst after repeated credential errors).
-    if _wait_service_state cistern-castellarius.service failed 25; then
-        _log=$(journalctl -u cistern-castellarius.service --since "${_since}" \
-               -n 20 --no-pager 2>/dev/null || true)
-        if echo "${_log}" | grep -qi "missing credentials\|ANTHROPIC_API_KEY"; then
-            pass "missing_creds_service_logged_error"
-        else
-            fail "missing_creds_service_logged_error" \
-                "service failed but log does not mention missing credentials: ${_log}"
-        fi
+    # Then: service reaches active state — no credential pre-check at startup.
+    if _wait_service_state cistern-castellarius.service active 20; then
+        pass "no_creds_service_active"
     else
         _svc_state=$(systemctl is-active cistern-castellarius.service 2>/dev/null || true)
-        fail "missing_creds_service_logged_error" \
-            "service did not enter failed state (state=${_svc_state})"
+        _log=$(journalctl -u cistern-castellarius.service -n 10 --no-pager 2>/dev/null || true)
+        fail "no_creds_service_active" \
+            "service did not reach active state (state=${_svc_state}): ${_log}"
     fi
 
-    # Then: ct doctor exits non-zero with a credential-related error.
-    # Run without ANTHROPIC_API_KEY in the environment so the env-var check fires.
-    _doctor_out=$(env -u ANTHROPIC_API_KEY CT_NO_ASCII_LOGO=1 ct doctor 2>&1) && _doctor_exit=0 || _doctor_exit=$?
-    if echo "${_doctor_out}" | grep -qi "ANTHROPIC_API_KEY\|missing credentials"; then
-        pass "missing_creds_ct_doctor_message"
+    # Then: ct doctor exits 0 — OAuth check skips silently when no credentials file.
+    _doctor_out=$(CT_NO_ASCII_LOGO=1 ct doctor 2>&1) && _doctor_exit=0 || _doctor_exit=$?
+    if [ "${_doctor_exit}" -eq 0 ]; then
+        pass "no_creds_ct_doctor_passes"
     else
-        fail "missing_creds_ct_doctor_message" \
-            "ct doctor output does not reference missing credentials: ${_doctor_out}"
-    fi
-    if [ "${_doctor_exit}" -ne 0 ]; then
-        pass "missing_creds_ct_doctor_exits_nonzero"
-    else
-        fail "missing_creds_ct_doctor_exits_nonzero" \
-            "ct doctor should have exited non-zero with missing credentials"
+        fail "no_creds_ct_doctor_passes" \
+            "ct doctor should pass when no OAuth credentials file is present: ${_doctor_out}"
     fi
 fi
 
-# ── Scenario 3: Wrong / expired token ────────────────────────────────────────
-# Given: ~/.cistern/env has a syntactically valid but expired API key;
-#        ~/.claude/.credentials.json has an expired OAuth token (expiresAt in the past)
+# ── Scenario 3: Expired OAuth token ──────────────────────────────────────────
+# Given: ~/.claude/.credentials.json has an expired OAuth token (expiresAt in the past)
 # When:  the service starts; ct doctor runs
-# Then:  service startup fails with an "invalid or expired token" message;
-#        ct doctor exits non-zero surfacing the same expired-token error
+# Then:  service starts successfully — start-castellarius.sh no longer checks
+#        credential validity at startup;
+#        ct doctor exits non-zero, surfacing the expired-token error via the
+#        OAuth expiry check (Check 13)
 echo ""
-echo "=== Scenario: Wrong/expired token ==="
+echo "=== Scenario: Expired OAuth token ==="
 
 _reset_scenario_state
 
 if ! CT_NO_ASCII_LOGO=1 ct init >/dev/null; then
-    fail "wrong_token_ct_init" "ct init failed"
+    fail "expired_token_ct_init" "ct init failed"
 else
     _install_skill_stubs
-
-    # Given: valid-format (but rejected) API key in the env file.
-    echo "ANTHROPIC_API_KEY=sk-ant-api03-AAABBBCCC" > "${HOME}/.cistern/env"
 
     # Given: expired OAuth credentials (expiresAt=1000ms — 1970-01-01, well in the past).
     mkdir -p "${HOME}/.claude"
@@ -313,43 +291,31 @@ else
 {"claudeAiOauth":{"accessToken":"expired-token","refreshToken":"refresh-token","expiresAt":1000}}
 CREDS_EOF
 
-    _since=$(date --iso-8601=seconds 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%S+00:00")
-
-    # When: start the service (start-castellarius.sh detects expired OAuth token
-    # and exits 1 with "invalid or expired token").
+    systemctl daemon-reload
     systemctl start cistern-castellarius.service 2>/dev/null || true
 
-    # Then: service fails with an actionable token error in the log.
-    if _wait_service_state cistern-castellarius.service failed 25; then
-        _log=$(journalctl -u cistern-castellarius.service --since "${_since}" \
-               -n 20 --no-pager 2>/dev/null || true)
-        if echo "${_log}" | grep -qi "invalid.*expired\|expired.*token\|invalid.*token\|authentication failed"; then
-            pass "wrong_token_service_startup_error"
-        else
-            fail "wrong_token_service_startup_error" \
-                "service failed but log does not mention invalid/expired token: ${_log}"
-        fi
+    # Then: service reaches active state — no credential pre-check at startup.
+    if _wait_service_state cistern-castellarius.service active 20; then
+        pass "expired_token_service_active"
     else
         _svc_state=$(systemctl is-active cistern-castellarius.service 2>/dev/null || true)
-        fail "wrong_token_service_startup_error" \
-            "service did not enter failed state (state=${_svc_state})"
+        _log=$(journalctl -u cistern-castellarius.service -n 10 --no-pager 2>/dev/null || true)
+        fail "expired_token_service_active" \
+            "service did not reach active state (state=${_svc_state}): ${_log}"
     fi
 
-    # Then: ct doctor exits non-zero with an expired-token error.
-    # Pass ANTHROPIC_API_KEY so the env-var check passes; the OAuth expiry check
-    # (which reads ~/.claude/.credentials.json) should cause the failure.
-    _doctor_out=$(ANTHROPIC_API_KEY=sk-ant-api03-AAABBBCCC \
-                  CT_NO_ASCII_LOGO=1 ct doctor 2>&1) && _doctor_exit=0 || _doctor_exit=$?
+    # Then: ct doctor exits non-zero, surfacing the expired OAuth token.
+    _doctor_out=$(CT_NO_ASCII_LOGO=1 ct doctor 2>&1) && _doctor_exit=0 || _doctor_exit=$?
     if echo "${_doctor_out}" | grep -qi "expired\|invalid.*token"; then
-        pass "wrong_token_ct_doctor_surfaces_error"
+        pass "expired_token_ct_doctor_surfaces_error"
     else
-        fail "wrong_token_ct_doctor_surfaces_error" \
+        fail "expired_token_ct_doctor_surfaces_error" \
             "ct doctor did not surface expired token error: ${_doctor_out}"
     fi
     if [ "${_doctor_exit}" -ne 0 ]; then
-        pass "wrong_token_ct_doctor_exits_nonzero"
+        pass "expired_token_ct_doctor_exits_nonzero"
     else
-        fail "wrong_token_ct_doctor_exits_nonzero" \
+        fail "expired_token_ct_doctor_exits_nonzero" \
             "ct doctor should have exited non-zero with expired token"
     fi
 fi
@@ -419,9 +385,8 @@ else
         sleep 1
         pass "upgrade_service_active"
 
-        # Then: ct doctor passes with full credential environment.
-        _doctor_out=$(ANTHROPIC_API_KEY=sk-ant-test-upgrade-preserved \
-                      CT_NO_ASCII_LOGO=1 ct doctor 2>&1) && _doctor_exit=0 || _doctor_exit=$?
+        # Then: ct doctor passes — no ANTHROPIC_API_KEY required for claude provider.
+        _doctor_out=$(CT_NO_ASCII_LOGO=1 ct doctor 2>&1) && _doctor_exit=0 || _doctor_exit=$?
         if [ "${_doctor_exit}" -eq 0 ]; then
             pass "upgrade_ct_doctor_passes"
         else

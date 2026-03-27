@@ -122,11 +122,10 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		checkCisternEnvPermissions(envPath)
 
 		// Check that each env var required by the configured provider(s) is
-		// present in the env file. Falls back to ANTHROPIC_API_KEY when no
-		// config exists yet (new-install path).
-		// Exception: ANTHROPIC_API_KEY is optional when ~/.claude/.credentials.json
-		// is present — ct injects the OAuth token at startup, so the env file is
-		// not required to contain the key. Token validity is checked in Check 13.
+		// present in the env file. For the claude provider (the default), no env
+		// vars are required — claude uses its own OAuth credentials file and needs
+		// no ANTHROPIC_API_KEY. Non-claude providers (codex → OPENAI_API_KEY, etc.)
+		// still require their keys in the env file.
 		requiredEnvVars, _ := startupRequiredEnvVars(cfgPath)
 		for _, key := range requiredEnvVars {
 			var envKeyFix func() error
@@ -134,9 +133,6 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 				envKeyFix = func() error { return fixCisternEnvAddKey(envPath, key) }
 			}
 			ok = checkWithFix("~/.cistern/env: "+key, func() error {
-				if key == "ANTHROPIC_API_KEY" && oauth.Read(home) != nil {
-					return nil // OAuth credentials present — key not required in env file
-				}
 				return checkCisternEnvHasKey(envPath, key)
 			}, envKeyFix) && ok
 		}

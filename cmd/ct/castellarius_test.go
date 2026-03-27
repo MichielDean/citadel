@@ -1,12 +1,10 @@
 package main
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/MichielDean/cistern/internal/aqueduct"
 	"github.com/MichielDean/cistern/internal/cistern"
@@ -283,92 +281,6 @@ func TestValidateWorkflowSkills_ErrorMentionsInstallCommand(t *testing.T) {
 	}
 }
 
-// --- checkStartupCredentials tests ---
-
-// writeOAuthCredentials writes a credentials file with the given OAuth expiry.
-func writeOAuthCredentials(t *testing.T, home string, expiresAt int64) {
-	t.Helper()
-	claudeDir := filepath.Join(home, ".claude")
-	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
-		t.Fatalf("mkdir .claude: %v", err)
-	}
-	raw := map[string]any{
-		"claudeAiOauth": map[string]any{
-			"accessToken":  "sk-ant-test-invalid",
-			"refreshToken": "invalid-refresh-token",
-			"expiresAt":    expiresAt,
-		},
-	}
-	data, _ := json.Marshal(raw)
-	if err := os.WriteFile(filepath.Join(claudeDir, ".credentials.json"), data, 0o600); err != nil {
-		t.Fatalf("write credentials: %v", err)
-	}
-}
-
-func TestCheckStartupCredentials_KeyMissing_ReturnsError(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("ANTHROPIC_API_KEY", "")
-
-	// No config file — falls back to checking ANTHROPIC_API_KEY.
-	err := checkStartupCredentials(home, filepath.Join(home, "nonexistent.yaml"))
-	if err == nil {
-		t.Fatal("expected error when ANTHROPIC_API_KEY is not set, got nil")
-	}
-	if !strings.Contains(err.Error(), "ANTHROPIC_API_KEY not set") {
-		t.Errorf("error should mention ANTHROPIC_API_KEY not set; got: %v", err)
-	}
-	if !strings.Contains(err.Error(), "~/.cistern/env") {
-		t.Errorf("error should name ~/.cistern/env; got: %v", err)
-	}
-}
-
-func TestCheckStartupCredentials_KeyPresent_NoCredentialsFile_ReturnsNil(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test-key")
-
-	if err := checkStartupCredentials(home, filepath.Join(home, "nonexistent.yaml")); err != nil {
-		t.Errorf("expected nil when key set and no credentials file, got: %v", err)
-	}
-}
-
-func TestCheckStartupCredentials_KeyPresent_FreshOAuth_ReturnsNil(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test-key")
-	futureExpiry := time.Now().Add(24 * time.Hour).UnixMilli()
-	writeOAuthCredentials(t, home, futureExpiry)
-
-	if err := checkStartupCredentials(home, filepath.Join(home, "nonexistent.yaml")); err != nil {
-		t.Errorf("expected nil for fresh OAuth token, got: %v", err)
-	}
-}
-
-func TestCheckStartupCredentials_KeyPresent_ExpiredOAuth_InjectsTokenAnyway(t *testing.T) {
-	// We no longer fail on expired tokens — we inject the token and let the agent
-	// try it. The session log capture will tell us if auth fails. The Claude CLI
-	// manages its own refresh; if the token is expired, running claude interactively
-	// will refresh it and we pick it up on the next spawn.
-	home := t.TempDir()
-	t.Setenv("ANTHROPIC_API_KEY", "")
-	writeOAuthCredentials(t, home, 1000) // expires 1970-01-01 — definitely expired
-
-	err := checkStartupCredentials(home, filepath.Join(home, "nonexistent.yaml"))
-	if err != nil {
-		t.Errorf("expected nil even for expired token (inject and try), got: %v", err)
-	}
-	if got := os.Getenv("ANTHROPIC_API_KEY"); got != "sk-ant-test-invalid" {
-		t.Errorf("ANTHROPIC_API_KEY = %q, want sk-ant-test-invalid", got)
-	}
-}
-
-func TestCheckStartupCredentials_KeyPresent_ZeroExpiry_ReturnsNil(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test-key")
-	writeOAuthCredentials(t, home, 0) // zero ExpiresAt = no expiry info → skip silently
-
-	if err := checkStartupCredentials(home, filepath.Join(home, "nonexistent.yaml")); err != nil {
-		t.Errorf("expected nil when ExpiresAt is zero (no expiry info), got: %v", err)
-	}
-}
 
 // writeMinimalConfig writes a minimal cistern.yaml with the given provider name
 // to a temp dir and returns the path to the config file.
@@ -395,168 +307,27 @@ max_cataractae: 1
 	return cfgPath
 }
 
-// TestCheckStartupCredentials_CodexProvider_OpenAIKeySet_ReturnsNil verifies
-// that checkStartupCredentials passes when the configured provider is codex and
-// OPENAI_API_KEY is set, even when ANTHROPIC_API_KEY is unset.
-func TestCheckStartupCredentials_CodexProvider_OpenAIKeySet_ReturnsNil(t *testing.T) {
-	home := t.TempDir()
-	cfgPath := writeMinimalConfig(t, home, "codex")
-
-	t.Setenv("OPENAI_API_KEY", "sk-openai-test-key")
-	t.Setenv("ANTHROPIC_API_KEY", "")
-
-	if err := checkStartupCredentials(home, cfgPath); err != nil {
-		t.Errorf("expected nil for codex provider with OPENAI_API_KEY set, got: %v", err)
-	}
-}
-
-// TestCheckStartupCredentials_CodexProvider_OpenAIKeyMissing_ReturnsError
-// verifies that checkStartupCredentials fails for a codex setup when OPENAI_API_KEY is unset.
-func TestCheckStartupCredentials_CodexProvider_OpenAIKeyMissing_ReturnsError(t *testing.T) {
-	home := t.TempDir()
-	cfgPath := writeMinimalConfig(t, home, "codex")
-
-	t.Setenv("OPENAI_API_KEY", "")
-
-	err := checkStartupCredentials(home, cfgPath)
-	if err == nil {
-		t.Fatal("expected error when OPENAI_API_KEY is not set for codex provider, got nil")
-	}
-	if !strings.Contains(err.Error(), "OPENAI_API_KEY not set") {
-		t.Errorf("error should mention OPENAI_API_KEY not set; got: %v", err)
-	}
-}
-
-// TestCheckStartupCredentials_CodexProvider_ExpiredOAuth_ReturnsNil verifies
-// that an expired Claude OAuth token does NOT block startup when the codex
-// provider is configured (the OAuth check should be skipped entirely).
-func TestCheckStartupCredentials_CodexProvider_ExpiredOAuth_ReturnsNil(t *testing.T) {
-	home := t.TempDir()
-	cfgPath := writeMinimalConfig(t, home, "codex")
-
-	t.Setenv("OPENAI_API_KEY", "sk-openai-test-key")
-	t.Setenv("ANTHROPIC_API_KEY", "")
-
-	// Write an expired Claude OAuth credential — should be ignored for codex.
-	writeOAuthCredentials(t, home, 1000)
-
-	if err := checkStartupCredentials(home, cfgPath); err != nil {
-		t.Errorf("expected nil: codex provider should skip OAuth check even when token is expired; got: %v", err)
-	}
-}
-
-// TestCheckStartupCredentials_OAuthFreshToken_NoEnvKey_ReturnsNil verifies that
-// when valid OAuth credentials exist, ANTHROPIC_API_KEY in ~/.cistern/env is not
-// required — the token is injected automatically from ~/.claude/.credentials.json.
-func TestCheckStartupCredentials_OAuthFreshToken_NoEnvKey_ReturnsNil(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("ANTHROPIC_API_KEY", "")
-	futureExpiry := time.Now().Add(24 * time.Hour).UnixMilli()
-	writeOAuthCredentials(t, home, futureExpiry)
-
-	if err := checkStartupCredentials(home, filepath.Join(home, "nonexistent.yaml")); err != nil {
-		t.Errorf("expected nil when OAuth credentials are fresh and no env key set, got: %v", err)
-	}
-	// Verify the OAuth token was injected into the process environment.
-	if got := os.Getenv("ANTHROPIC_API_KEY"); got == "" {
-		t.Error("expected ANTHROPIC_API_KEY to be injected from OAuth credentials, got empty")
-	}
-}
-
-// TestCheckStartupCredentials_OAuthExpired_RefreshSucceeds_NoEnvKey_ReturnsNil
-// verifies that an expired OAuth token is still injected (not refreshed) —
-// we read it as-is and let the agent try it. Claude CLI handles its own refresh.
-func TestCheckStartupCredentials_OAuthExpired_StillInjectsToken_ReturnsNil(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("ANTHROPIC_API_KEY", "")
-	writeOAuthCredentials(t, home, 1000) // expired
-
-	if err := checkStartupCredentials(home, filepath.Join(home, "nonexistent.yaml")); err != nil {
-		t.Errorf("expected nil even for expired token, got: %v", err)
-	}
-	if got := os.Getenv("ANTHROPIC_API_KEY"); got != "sk-ant-test-invalid" {
-		t.Errorf("ANTHROPIC_API_KEY = %q, want sk-ant-test-invalid (injected from credentials)", got)
-	}
-}
-
-// TestCheckStartupCredentials_OAuthExpired_InjectsFromFile_NotFromEnv verifies
-// that when credentials file has a (possibly expired) token, it takes precedence
-// over whatever is in ANTHROPIC_API_KEY env — ensuring we always use the latest
-// token the Claude CLI has written.
-func TestCheckStartupCredentials_OAuthExpired_InjectsFromFile_NotFromEnv(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-stale-env-key")
-	writeOAuthCredentials(t, home, 1000) // expired token in credentials file
-
-	if err := checkStartupCredentials(home, filepath.Join(home, "nonexistent.yaml")); err != nil {
-		t.Errorf("expected nil, got: %v", err)
-	}
-	// Token from credentials file should win over stale env var.
-	if got := os.Getenv("ANTHROPIC_API_KEY"); got != "sk-ant-test-invalid" {
-		t.Errorf("ANTHROPIC_API_KEY = %q, want token from credentials file", got)
-	}
-}
-
-// TestCheckStartupCredentials_OAuthExpired_NoRefreshToken_StillInjects verifies
-// that an expired token with no refresh token is still injected. We don't refresh
-// tokens — we just read and inject whatever Claude CLI last wrote.
-func TestCheckStartupCredentials_OAuthExpired_NoRefreshToken_StillInjects(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("ANTHROPIC_API_KEY", "")
-	// Write credentials with expired token and no refresh token.
-	claudeDir := filepath.Join(home, ".claude")
-	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	creds := `{"claudeAiOauth":{"accessToken":"tok-expired","refreshToken":"","expiresAt":1000}}`
-	if err := os.WriteFile(filepath.Join(claudeDir, ".credentials.json"), []byte(creds), 0o600); err != nil {
-		t.Fatalf("write credentials: %v", err)
-	}
-
-	if err := checkStartupCredentials(home, filepath.Join(home, "nonexistent.yaml")); err != nil {
-		t.Errorf("expected nil — expired token still injected, got: %v", err)
-	}
-	if got := os.Getenv("ANTHROPIC_API_KEY"); got != "tok-expired" {
-		t.Errorf("ANTHROPIC_API_KEY = %q, want tok-expired", got)
-	}
-}
-
-// TestCheckStartupCredentials_OAuthCodexProvider_FreshToken_NotInjected verifies
-// that OAuth credential injection only happens for the claude provider; a codex
-// setup with fresh OAuth credentials does not inject ANTHROPIC_API_KEY.
-func TestCheckStartupCredentials_OAuthCodexProvider_FreshToken_NotInjected(t *testing.T) {
-	home := t.TempDir()
-	cfgPath := writeMinimalConfig(t, home, "codex")
-	t.Setenv("OPENAI_API_KEY", "sk-openai-key")
-	t.Setenv("ANTHROPIC_API_KEY", "")
-	futureExpiry := time.Now().Add(24 * time.Hour).UnixMilli()
-	writeOAuthCredentials(t, home, futureExpiry)
-
-	if err := checkStartupCredentials(home, cfgPath); err != nil {
-		t.Errorf("expected nil for codex provider, got: %v", err)
-	}
-	// ANTHROPIC_API_KEY must remain unset — OAuth injection is claude-only.
-	if got := os.Getenv("ANTHROPIC_API_KEY"); got != "" {
-		t.Errorf("expected ANTHROPIC_API_KEY to remain unset for codex provider, got %q", got)
-	}
-}
-
 // --- startupRequiredEnvVars tests ---
 
-func TestStartupRequiredEnvVars_NoConfig_DefaultsToAnthropicKey(t *testing.T) {
+// TestStartupRequiredEnvVars_NoConfig_DefaultsToClaudeNoVars verifies that when
+// no config path is given, the function defaults to claude (usesClaude=true) with
+// no required env vars — claude uses OAuth credentials, not an API key env var.
+func TestStartupRequiredEnvVars_NoConfig_DefaultsToClaudeNoVars(t *testing.T) {
 	vars, usesClaude := startupRequiredEnvVars("")
-	if len(vars) != 1 || vars[0] != "ANTHROPIC_API_KEY" {
-		t.Errorf("expected [ANTHROPIC_API_KEY], got %v", vars)
+	if len(vars) != 0 {
+		t.Errorf("expected no required vars for claude default, got %v", vars)
 	}
 	if !usesClaude {
 		t.Error("expected usesClaude=true for default fallback")
 	}
 }
 
-func TestStartupRequiredEnvVars_NonexistentConfig_DefaultsToAnthropicKey(t *testing.T) {
+// TestStartupRequiredEnvVars_NonexistentConfig_DefaultsToClaudeNoVars verifies
+// that a missing config file also defaults to claude with no required env vars.
+func TestStartupRequiredEnvVars_NonexistentConfig_DefaultsToClaudeNoVars(t *testing.T) {
 	vars, usesClaude := startupRequiredEnvVars(filepath.Join(t.TempDir(), "missing.yaml"))
-	if len(vars) != 1 || vars[0] != "ANTHROPIC_API_KEY" {
-		t.Errorf("expected [ANTHROPIC_API_KEY], got %v", vars)
+	if len(vars) != 0 {
+		t.Errorf("expected no required vars for claude default, got %v", vars)
 	}
 	if !usesClaude {
 		t.Error("expected usesClaude=true for default fallback")

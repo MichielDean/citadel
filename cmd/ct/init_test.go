@@ -307,11 +307,8 @@ func TestInit_WritesStartCastellariusScript(t *testing.T) {
 	if len(data) == 0 {
 		t.Fatal("start-castellarius.sh is empty")
 	}
-	// Script must source ~/.cistern/env and exec ct.
+	// Script must exec ct castellarius start directly (no credential sourcing needed).
 	content := string(data)
-	if !strings.Contains(content, ".cistern/env") {
-		t.Error("start-castellarius.sh does not reference ~/.cistern/env")
-	}
 	if !strings.Contains(content, "ct castellarius start") {
 		t.Error("start-castellarius.sh does not exec ct castellarius start")
 	}

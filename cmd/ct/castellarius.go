@@ -18,7 +18,6 @@ import (
 	"github.com/MichielDean/cistern/internal/cataractae"
 	"github.com/MichielDean/cistern/internal/castellarius"
 	"github.com/MichielDean/cistern/internal/cistern"
-	"github.com/MichielDean/cistern/internal/oauth"
 	"github.com/MichielDean/cistern/internal/skills"
 	"github.com/spf13/cobra"
 )
@@ -48,14 +47,7 @@ its cataractae (implement → review → qa → merge) until delivered.
 The Castellarius runs until Ctrl-C. As long as work is in the cistern it will
 keep dispatching droplets into aqueducts automatically.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return fmt.Errorf("startup: home dir: %w", err)
-		}
 		cfgPath := resolveConfigPath()
-		if err := checkStartupCredentials(home, cfgPath); err != nil {
-			return err
-		}
 		cfg, err := aqueduct.ParseAqueductConfig(cfgPath)
 		if err != nil {
 			return fmt.Errorf("loading config: %w", err)
@@ -547,58 +539,21 @@ func resolveConfigPath() string {
 	return filepath.Join(home, ".cistern", "cistern.yaml")
 }
 
-// checkStartupCredentials returns an actionable error if the required provider
-// credentials are unavailable, preventing silent startup failures.
-//
-// For the claude provider it reads the access token directly from
-// ~/.claude/.credentials.json (the file the Claude CLI maintains). When a token
-// is found it is injected as ANTHROPIC_API_KEY so that ~/.cistern/env is not
-// required to contain the key. If the credentials file is absent or unreadable,
-// the function falls back to checking the ANTHROPIC_API_KEY environment variable.
-//
-// We deliberately do not attempt to refresh the token here. The Anthropic OAuth
-// refresh endpoint returns HTTP 400 for our request format, and the Claude CLI
-// manages token refresh automatically when run interactively. Every agent spawn
-// also re-reads the credentials file, so the token is always current.
-func checkStartupCredentials(home, cfgPath string) error {
-	requiredVars, usesClaude := startupRequiredEnvVars(cfgPath)
-
-	if usesClaude {
-		creds := oauth.Read(home)
-		if creds != nil && creds.AccessToken != "" {
-			// Inject the token so the env var check below passes without requiring
-			// ANTHROPIC_API_KEY in ~/.cistern/env.
-			if setErr := os.Setenv("ANTHROPIC_API_KEY", creds.AccessToken); setErr != nil {
-				return fmt.Errorf("inject OAuth token: %w", setErr)
-			}
-		}
-		// If no credentials file, fall through to the env var check below.
-		// The agent spawns will also try to read credentials and warn if absent.
-	}
-
-	for _, key := range requiredVars {
-		if os.Getenv(key) == "" {
-			return fmt.Errorf("%s not set — add it to ~/.cistern/env and source it before starting", key)
-		}
-	}
-	return nil
-}
-
 // startupRequiredEnvVars parses the aqueduct config at cfgPath and returns the
 // deduplicated list of env vars required by the configured provider preset(s),
 // along with whether any repo uses the claude provider (which requires an OAuth
 // token check at startup).
 //
-// If cfgPath is empty or the config cannot be parsed, it returns
-// ["ANTHROPIC_API_KEY"] and usesClaude=true as a safe default so that existing
-// setups without a config continue to work.
+// If cfgPath is empty or the config cannot be parsed, it returns nil env vars
+// and usesClaude=true — claude authenticates via its own OAuth credentials file
+// and requires no ANTHROPIC_API_KEY env var.
 func startupRequiredEnvVars(cfgPath string) (requiredVars []string, usesClaude bool) {
 	if cfgPath == "" {
-		return []string{"ANTHROPIC_API_KEY"}, true
+		return nil, true
 	}
 	cfg, err := aqueduct.ParseAqueductConfig(cfgPath)
 	if err != nil {
-		return []string{"ANTHROPIC_API_KEY"}, true
+		return nil, true
 	}
 	seen := map[string]bool{}
 	resolved := false
@@ -620,7 +575,7 @@ func startupRequiredEnvVars(cfgPath string) (requiredVars []string, usesClaude b
 	}
 	if !resolved {
 		// No repos resolved (empty list or all failed) — default to claude.
-		return []string{"ANTHROPIC_API_KEY"}, true
+		return nil, true
 	}
 	return requiredVars, usesClaude
 }
