@@ -55,6 +55,29 @@ tmux send-keys -t filtration "ANTHROPIC_API_KEY=\$(cat ~/.cistern/env | grep ANT
 
 Or write the command to a script and run it in tmux to avoid shell quoting issues with multiline descriptions.
 
+### `ct filter` — Non-Persistent Refinement
+
+If you want to **iterate and refine an idea without immediately filing a droplet**, use `ct filter` instead:
+
+```bash
+# Start a refinement session
+ct filter --title "Rough idea" --description "Some context"
+
+# Continue refining (copy the session-id from output)
+ct filter --resume <session-id> "Here's my feedback..."
+
+# When ready, persist the final result
+ct filter --resume <session-id> --file --repo <repo>
+```
+
+This lets you **converge on a good idea iteratively** before committing anything to the pipeline. When you use `--file`, the refined title and description become a real droplet.
+
+For scripting, use `--output-format json` to get structured output (session_id + proposals).
+
+**When to use `ct filter` vs `ct droplet add --filter`:**
+- Use `ct filter` when you want to **iterate safely** without filing a droplet yet
+- Use `ct droplet add --filter` when you're ready to **file immediately after refinement**
+
 **When to use filtration:**
 - The idea is exploratory or spans multiple concerns
 - You're not sure of the right complexity or decomposition

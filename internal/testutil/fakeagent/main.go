@@ -8,11 +8,19 @@
 //	--model <model>                (ignored)
 //	--print                        (triggers non-interactive mode)
 //	-p <prompt>                    (interactive prompt, also used with --print)
+//	--output-format <format>       (when "json", wraps output in a JSON envelope)
+//	--resume <session-id>          (ignored; accepted for flag compatibility)
 //
 // Non-interactive mode (when --print is present in os.Args):
 //
-//	Prints a hardcoded valid JSON proposal array to stdout and exits 0.
-//	This is the behaviour expected by runNonInteractive() in refine.go.
+//	When --output-format is also present, prints a JSON envelope containing a
+//	hardcoded proposal array and a test session_id. This is the behaviour
+//	expected by callFilterAgent() in filter.go.
+//
+//	When only --print is present (without --output-format), prints the hardcoded
+//	proposal array directly. This preserves backward compatibility with
+//	runNonInteractive() in refine.go.
+//
 //	We scan os.Args directly because flag.Parse stops at the first positional
 //	arg (e.g. a subcommand like "exec"), which would otherwise prevent --print
 //	from being parsed when it appears after the subcommand.
@@ -43,16 +51,45 @@ import (
 // verify the full round-trip without importing the mockllm package.
 const hardcodedProposals = `[{"title":"mock proposal","description":"test description","complexity":"standard","depends_on":[]}]`
 
+// hardcodedJSONEnvelope is returned when both --print and --output-format are
+// present. The result field contains the proposal array (with escaped quotes)
+// and session_id is a stable test value used to verify session_id extraction.
+const hardcodedJSONEnvelope = `{"type":"result","subtype":"success","is_error":false,"result":"[{\"title\":\"mock proposal\",\"description\":\"test description\",\"complexity\":\"standard\",\"depends_on\":[]}]","session_id":"test-session-id-abc123"}`
+
+// hardcodedErrorEnvelope is returned in FAKEAGENT_MODE=error_envelope.
+// is_error is true so callFilterAgent returns an error for the envelope.IsError path.
+const hardcodedErrorEnvelope = `{"type":"result","subtype":"error","is_error":true,"result":"agent encountered an error","session_id":"error-session-id"}`
+
 func main() {
-	// Pre-scan os.Args for --print before calling flag.Parse.
+	// Pre-scan os.Args for --print and --output-format before calling flag.Parse.
 	// flag.Parse stops at the first positional arg (e.g. a subcommand such as
-	// "exec" or "run"), so --print could appear later in the arg list without
+	// "exec" or "run"), so these flags could appear later in the arg list without
 	// being registered by the flag package.
+	hasPrint := false
+	hasOutputFormat := false
 	for _, arg := range os.Args[1:] {
-		if arg == "--print" {
-			fmt.Println(hardcodedProposals)
-			return
+		switch arg {
+		case "--print":
+			hasPrint = true
+		case "--output-format":
+			hasOutputFormat = true
 		}
+	}
+
+	if hasPrint {
+		mode := os.Getenv("FAKEAGENT_MODE")
+		switch {
+		case mode == "error_envelope":
+			// Return a JSON envelope with is_error:true to test the error path.
+			fmt.Println(hardcodedErrorEnvelope)
+		case hasOutputFormat && mode != "raw_fallback":
+			// Normal JSON envelope (default when --output-format is present).
+			fmt.Println(hardcodedJSONEnvelope)
+		default:
+			// Raw proposals: either no --output-format, or raw_fallback mode.
+			fmt.Println(hardcodedProposals)
+		}
+		return
 	}
 
 	// Accept the same flags as claude so the command string built by
@@ -64,6 +101,8 @@ func main() {
 	flag.String("model", "", "")
 	flag.Bool("print", false, "")
 	flag.String("p", "", "")
+	flag.String("output-format", "", "")
+	flag.String("resume", "", "")
 	flag.Parse()
 
 	// Interactive mode: read CONTEXT.md from the working directory to find the droplet ID.

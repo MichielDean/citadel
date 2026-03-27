@@ -103,6 +103,7 @@ var builtins = []ProviderPreset{
 		AddDirFlag:       "--add-dir",
 		PromptFlag:       "-p",
 		ContinueFlag:     "--continue",
+		ResumeFlag:       "--resume",
 		InstructionsFile: "CLAUDE.md",
 		SupportsAddDir:   true,
 		NonInteractive:   NonInteractiveConfig{PrintFlag: "--print", PromptFlag: "-p"},

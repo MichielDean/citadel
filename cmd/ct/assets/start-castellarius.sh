@@ -25,7 +25,7 @@ fi
 # Check 2: at least one Claude credential source must be present.
 # Either an OAuth credentials file written by the Claude CLI, or an explicit
 # ANTHROPIC_API_KEY entry in the env file.
-if ! grep -q '"accessToken"' "${CLAUDE_CREDS}" 2>/dev/null && ! grep -qE '^ANTHROPIC_API_KEY=[^[:space:]]+' "${CISTERN_ENV}"; then
+if ! grep -q '"accessToken"' "${CLAUDE_CREDS}" 2>/dev/null && ! grep -q '^ANTHROPIC_API_KEY=[^ ]' "${CISTERN_ENV}"; then
     echo "cistern: no Claude credentials found — run 'claude' interactively to authenticate, or add ANTHROPIC_API_KEY to ${CISTERN_ENV}" >&2
     exit 1
 fi

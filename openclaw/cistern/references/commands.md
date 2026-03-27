@@ -1,5 +1,16 @@
 # Cistern Command Reference
 
+## Filtration (Interactive Refinement)
+
+```bash
+ct filter --title "..." [--description "..."]              # New refinement session
+ct filter --resume <session-id> '<feedback>'              # Continue refinement
+ct filter --resume <session-id> --file --repo <repo>      # Persist final result
+ct filter --output-format json                            # Scriptable JSON output
+```
+
+Interactive LLM-powered refinement **without persisting** until you're ready. Same model and prompt as `ct droplet add --filter`, but non-destructive and resumable.
+
 ## Droplet Management
 
 ```bash

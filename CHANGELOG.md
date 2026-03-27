@@ -34,6 +34,17 @@
 - Useful for monitoring overall cistern load without needing to list all droplets
 - Command exists and is fully tested with both empty database and multi-droplet scenarios
 
+### Add ct filter command: non-persistent interactive droplet refinement (ci-kjtjv)
+- New `ct filter` command runs the same LLM filtration pass as `ct droplet add --filter`, but without persisting anything to the database until ready
+- Three modes of operation:
+  - `ct filter --title '...' [--description '...']` — Start a new refinement session, prints result to stdout and session_id to stderr for scripting
+  - `ct filter --resume <session-id> '<feedback>'` — Continue the same conversation with user feedback, refines iteratively
+  - `ct filter --resume <session-id> --file --repo <repo>` — Finalize the refined proposal and persist it as a new droplet
+- Uses the same filtration model and system prompt as `ct droplet add --filter`, ensuring consistent LLM behavior across both commands
+- Output formats: human-readable by default; `--output-format json` emits `{session_id, proposals}` for scripting
+- Enables safe, non-destructive iteration: converge on a good idea before filing a droplet, or save proposals mid-conversation for later finalization
+- Command is fully tested with fakeagent modes covering JSON fallback and error envelope paths; all edge cases exercise cleanup and error handling
+
 ### Castellarius status: expose queue depth and active session count per repo (ci-x0ss6)
 - `ct castellarius status` now displays per-repo queue summaries showing queue depth (count of "open" droplets) and active session count (count of "in_progress" droplets)
 - Output format: each repo shows a summary line like `cistern: 2 queued, 1 flowing (julia: sc-abc123/implement)` with assignee details for active droplets
