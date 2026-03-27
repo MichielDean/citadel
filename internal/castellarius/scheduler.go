@@ -1329,7 +1329,11 @@ func (s *Castellarius) heartbeatRepo(ctx context.Context, repo aqueduct.RepoConf
 		// when they exist, or spawns fresh when priorSessionCount == 0.
 		// Status and assignee are intentionally left unchanged.
 		if item.Assignee != "" {
-			s.respawnStalledDroplet(ctx, client, repo, item)
+			if err := s.respawnStalledDroplet(ctx, client, repo, item); err != nil {
+				// Clear the debounce so the next heartbeat re-detects the stall
+				// and retries — spawn failures are often transient.
+				delete(s.lastStallNoted, item.ID)
+			}
 		}
 	}
 }
@@ -1338,19 +1342,19 @@ func (s *Castellarius) heartbeatRepo(ctx context.Context, repo aqueduct.RepoConf
 // whose session has gone quiet. It reuses the existing worktree and assignee;
 // session.Spawn() selects --continue or a fresh spawn based on prior session
 // files under ~/.claude/projects/<worktree>/.
-func (s *Castellarius) respawnStalledDroplet(ctx context.Context, client CisternClient, repo aqueduct.RepoConfig, item *cistern.Droplet) {
+func (s *Castellarius) respawnStalledDroplet(ctx context.Context, client CisternClient, repo aqueduct.RepoConfig, item *cistern.Droplet) error {
 	wf, ok := s.workflows[repo.Name]
 	if !ok {
 		s.logger.Warn("heartbeat: no workflow for repo — cannot respawn stalled session",
 			"repo", repo.Name, "droplet", item.ID)
-		return
+		return nil
 	}
 
 	step := currentCataracta(item, wf)
 	if step == nil {
 		s.logger.Warn("heartbeat: no step found — cannot respawn stalled session",
 			"repo", repo.Name, "droplet", item.ID, "cataractae", item.CurrentCataractae)
-		return
+		return nil
 	}
 
 	notes, err := client.GetNotes(item.ID)
@@ -1384,7 +1388,9 @@ func (s *Castellarius) respawnStalledDroplet(ctx context.Context, client Cistern
 	if err := s.runner.Spawn(ctx, req); err != nil {
 		s.logger.Error("heartbeat: respawn failed",
 			"repo", repo.Name, "droplet", item.ID, "error", err)
+		return err
 	}
+	return nil
 }
 
 // stallThresholdDuration returns the configured stall threshold, defaulting to 45 minutes.

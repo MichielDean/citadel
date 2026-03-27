@@ -2483,6 +2483,47 @@ func TestHeartbeatRepo_StallWithNoAssignee_NoteOnlyNoSpawn(t *testing.T) {
 	}
 }
 
+// TestHeartbeatRepo_SpawnFailure_ClearsDebounce verifies that when respawnStalledDroplet
+// returns an error (Spawn fails), the debounce entry is deleted so the next heartbeat
+// re-detects the stall and retries the spawn.
+func TestHeartbeatRepo_SpawnFailure_ClearsDebounce(t *testing.T) {
+	client := newMockClient()
+	runner := newMockRunner(client)
+	runner.err = fmt.Errorf("tmux spawn failed")
+
+	item := &cistern.Droplet{
+		ID:                "stall-spawn-fail",
+		CurrentCataractae: "implement",
+		Status:            "in_progress",
+		Assignee:          "alpha",
+	}
+	client.items[item.ID] = item
+
+	config := testConfig()
+	config.StallThresholdMinutes = 1
+
+	workflows := map[string]*aqueduct.Workflow{"test-repo": testWorkflow()}
+	clients := map[string]CisternClient{"test-repo": client}
+	sched := NewFromParts(config, workflows, clients, runner)
+
+	// First tick: stalled → note written → Spawn fails → debounce must be cleared.
+	sched.heartbeatRepo(context.Background(), config.Repos[0])
+
+	if len(client.attached) != 1 {
+		t.Fatalf("expected 1 stall note, got %d", len(client.attached))
+	}
+	if _, armed := sched.lastStallNoted[item.ID]; armed {
+		t.Error("expected debounce cleared after Spawn failure, but lastStallNoted is still set")
+	}
+
+	// Second tick: stall re-detected → second note written → Spawn called again.
+	sched.heartbeatRepo(context.Background(), config.Repos[0])
+
+	if len(client.attached) != 2 {
+		t.Errorf("expected 2 stall notes after retry tick, got %d", len(client.attached))
+	}
+}
+
 // --- worktree lifecycle logging tests ---
 
 // TestPrepareDropletWorktree_LogsWorktreeCreated verifies that prepareDropletWorktree
