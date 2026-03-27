@@ -542,7 +542,7 @@ func (m dashboardTUIModel) viewDroughtArch() []string {
 	lines := make([]string, 0, len(mipmapLines)+1)
 	lines = append(lines, droughtLabel)
 	for _, line := range mipmapLines {
-		lines = append(lines, tuiStyleDim.Render(indent+line))
+		lines = append(lines, indent+line)
 	}
 	return lines
 }
