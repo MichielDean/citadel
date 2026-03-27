@@ -228,4 +228,9 @@ type AqueductConfig struct {
 	// SIGTERM. If the timeout fires, exit is forced and stuck IDs are logged.
 	// Defaults to 5 when omitted or 0.
 	DrainTimeoutMinutes int `yaml:"drain_timeout_minutes,omitempty"`
+
+	// StallThresholdMinutes is the number of minutes of inactivity across all
+	// three progress signals (newest note, worktree mtime, session log mtime)
+	// before a droplet is considered stalled. Defaults to 45 when absent or 0.
+	StallThresholdMinutes int `yaml:"stall_threshold_minutes,omitempty"`
 }

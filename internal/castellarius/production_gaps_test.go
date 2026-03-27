@@ -19,64 +19,15 @@ import (
 	"github.com/MichielDean/cistern/internal/cistern"
 )
 
-// --- Heartbeat minimum-age guard ---
+// --- Heartbeat progress-monitoring tests ---
 
-// TestHeartbeat_DoesNotResetFreshlyDispatchedSession is the direct regression
-// test for the self-kill bug. The heartbeat must not reset a session that was
-// just dispatched — the minimum-age guard (2× pollInterval = 20s) prevents it.
-//
-// Without the guard:
-//   1. Dispatch runs, sets UpdatedAt = now
-//   2. Heartbeat fires ~20s later, sees tmux dead (session still starting),
-//      resets droplet to open
-//   3. Dispatch picks it up again, spawn() kills the running session
-//   4. Killed session recorded at exactly 20s — the precise crash timing seen in prod.
-func TestHeartbeat_DoesNotResetFreshlyDispatchedSession(t *testing.T) {
+// TestHeartbeat_StallDetected_WhenNoSignals verifies that the heartbeat detects
+// a stall and logs "stall detected" when all three progress signals are absent
+// (no notes, no worktree files, no session log).
+func TestHeartbeat_StallDetected_WhenNoSignals(t *testing.T) {
 	buf := &bytes.Buffer{}
 	client := newMockClient()
 	sched := newTestScheduler(buf, client)
-
-	// Mark "alpha" as flowing so the heartbeat reaches the tmux+age check.
-	pool := sched.pools["repo"]
-	w := pool.FindByName("alpha")
-	if w == nil {
-		t.Fatal("pool has no 'alpha' worker — test setup incorrect")
-	}
-	pool.Assign(w, "fresh-dispatch", "implement")
-
-	// Droplet dispatched 5s ago — well within the 20s minimum-age guard.
-	item := &cistern.Droplet{
-		ID:                "fresh-dispatch",
-		Repo:              "repo",
-		Status:            "in_progress",
-		Assignee:          "alpha",
-		CurrentCataractae: "implement",
-		UpdatedAt:         time.Now().Add(-5 * time.Second),
-	}
-	client.items["fresh-dispatch"] = item
-
-	sched.heartbeatRepo(context.Background(), aqueduct.RepoConfig{Name: "repo"})
-
-	log := buf.String()
-	if strings.Contains(log, "resetting stalled droplet") {
-		t.Errorf("heartbeat reset a freshly dispatched session (5s old < 20s guard); log:\n%s", log)
-	}
-}
-
-// TestHeartbeat_ResetsStaleSession verifies the heartbeat DOES act on genuinely
-// stale sessions that are old enough (beyond the minimum-age guard).
-func TestHeartbeat_ResetsStaleSession(t *testing.T) {
-	buf := &bytes.Buffer{}
-	client := newMockClient()
-	sched := newTestScheduler(buf, client)
-
-	// Mark "alpha" as flowing — the heartbeat only checks tmux for flowing workers.
-	pool := sched.pools["repo"]
-	w := pool.FindByName("alpha")
-	if w == nil {
-		t.Fatal("pool has no 'alpha' worker — test setup incorrect")
-	}
-	pool.Assign(w, "stale-session", "implement")
 
 	item := &cistern.Droplet{
 		ID:                "stale-session",
@@ -84,21 +35,49 @@ func TestHeartbeat_ResetsStaleSession(t *testing.T) {
 		Status:            "in_progress",
 		Assignee:          "alpha",
 		CurrentCataractae: "implement",
-		UpdatedAt:         time.Now().Add(-45 * time.Second), // clearly stale
 	}
 	client.items["stale-session"] = item
 
 	sched.heartbeatRepo(context.Background(), aqueduct.RepoConfig{Name: "repo"})
 
 	log := buf.String()
-	if !strings.Contains(log, "resetting stalled droplet") {
-		t.Errorf("heartbeat should reset a 45s-old stale session (flowing + tmux dead); log:\n%s", log)
+	if !strings.Contains(log, "stall detected") {
+		t.Errorf("heartbeat should log 'stall detected' when no signals present; log:\n%s", log)
 	}
 }
 
-// TestHeartbeat_SkipsItemsWithOutcome verifies that the heartbeat never resets
-// a droplet that has an outcome — even if tmux is dead and the session is old.
-// This prevents the observe loop from losing work before it has a chance to run.
+// TestHeartbeat_NoStallNote_WhenRecentNoteSignal verifies that the heartbeat
+// does not write a stall note when the newest-note signal is within the
+// 45-minute default threshold.
+func TestHeartbeat_NoStallNote_WhenRecentNoteSignal(t *testing.T) {
+	buf := &bytes.Buffer{}
+	client := newMockClient()
+	sched := newTestScheduler(buf, client)
+
+	item := &cistern.Droplet{
+		ID:                "fresh-dispatch",
+		Repo:              "repo",
+		Status:            "in_progress",
+		Assignee:          "alpha",
+		CurrentCataractae: "implement",
+	}
+	client.items["fresh-dispatch"] = item
+	// Recent note signal: 5 seconds ago — well within the 45-minute default threshold.
+	client.notes["fresh-dispatch"] = []cistern.CataractaeNote{
+		{CreatedAt: time.Now().Add(-5 * time.Second)},
+	}
+
+	sched.heartbeatRepo(context.Background(), aqueduct.RepoConfig{Name: "repo"})
+
+	log := buf.String()
+	if strings.Contains(log, "stall detected") {
+		t.Errorf("heartbeat flagged a recently-active droplet as stalled; log:\n%s", log)
+	}
+}
+
+// TestHeartbeat_SkipsItemsWithOutcome verifies that the heartbeat never writes
+// a stall note for a droplet that already has an outcome — the observe loop
+// handles those and must not be interfered with.
 func TestHeartbeat_SkipsItemsWithOutcome(t *testing.T) {
 	buf := &bytes.Buffer{}
 	client := newMockClient()
@@ -111,15 +90,14 @@ func TestHeartbeat_SkipsItemsWithOutcome(t *testing.T) {
 		Assignee:          "alpha",
 		CurrentCataractae: "implement",
 		Outcome:           "pass",
-		UpdatedAt:         time.Now().Add(-60 * time.Second),
 	}
 	client.items["has-outcome"] = item
 
 	sched.heartbeatRepo(context.Background(), aqueduct.RepoConfig{Name: "repo"})
 
 	log := buf.String()
-	if strings.Contains(log, "resetting stalled droplet") {
-		t.Errorf("heartbeat reset a droplet whose outcome was already written; log:\n%s", log)
+	if strings.Contains(log, "stall detected") {
+		t.Errorf("heartbeat flagged a droplet with an existing outcome; log:\n%s", log)
 	}
 }
 

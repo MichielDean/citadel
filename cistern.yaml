@@ -36,10 +36,18 @@ handoff_token_threshold: 100000
 #   window: 1m                # sliding window duration (Go duration string)
 
 # heartbeat_interval controls how often the Castellarius scans for orphaned or
-# stalled in-progress sessions and resets / re-adopts them. Accepts Go duration
-# strings. Shorter values make recovery faster; longer values reduce overhead.
-# Default: 30s
+# stalled in-progress sessions and evaluates three activity signals to detect
+# stalls. Accepts Go duration strings. Shorter values make recovery faster;
+# longer values reduce overhead. Default: 30s
 heartbeat_interval: 30s
+
+# stall_threshold_minutes configures how many minutes of inactivity across all
+# three progress signals (newest note timestamp, worktree file mtime, session log
+# mtime) must elapse before a droplet is considered stalled. When a droplet is
+# detected as stalled for the first time, a diagnostic note is appended and a
+# warning is logged. Further notes are suppressed until one of the signals
+# advances. Default: 45
+# stall_threshold_minutes: 45
 
 # drain_timeout_minutes configures the graceful shutdown drain timeout. When
 # Castellarius receives SIGTERM, it stops accepting new work but continues

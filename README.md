@@ -339,6 +339,14 @@ Config lives at `~/.cistern/cistern.yaml`. Key options:
 # Heartbeat: how often the Castellarius scans for stalled sessions
 heartbeat_interval: 30s
 
+# Stall detection: threshold for inactivity before marking a droplet as stalled
+# Monitors three progress signals: newest note timestamp, worktree file mtime,
+# and session log mtime. Droplet is stalled if all three are older than this threshold.
+# When detected, a diagnostic note is appended and further notes are suppressed
+# until one of the signals advances.
+# Default: 45 minutes
+stall_threshold_minutes: 45
+
 # Exponential backoff for quick session exits and provider degradation detection
 # When a session exits quickly (within this threshold) without an outcome,
 # trigger per-droplet exponential backoff. When 3+ sessions fail across 2+ aqueducts

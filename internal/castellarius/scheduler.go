@@ -101,6 +101,15 @@ type Castellarius struct {
 	// recover from tight loops where no agent session ever starts.
 	dispatchLoop *dispatchLoopTracker
 
+	// lastStallNoted tracks the most recent signal time at which a stall note
+	// was appended for each droplet (keyed by droplet ID). Used to debounce
+	// repeated stall notes: no new note is written until at least one progress
+	// signal advances past the stored time.
+	lastStallNoted map[string]time.Time
+
+	// sessionLogRoot is the directory containing per-session output logs.
+	// Defaults to ~/.cistern/session-logs when empty.
+	sessionLogRoot string
 }
 
 // isSupervisedProcess returns true when the Castellarius is being managed by
@@ -142,6 +151,12 @@ func WithPollInterval(d time.Duration) Option {
 // WithSandboxRoot sets the root directory for worker sandboxes.
 func WithSandboxRoot(root string) Option {
 	return func(s *Castellarius) { s.sandboxRoot = root }
+}
+
+// WithSessionLogRoot overrides the directory used to locate per-session output
+// logs. Primarily for testing; production code uses ~/.cistern/session-logs.
+func WithSessionLogRoot(dir string) Option {
+	return func(s *Castellarius) { s.sessionLogRoot = dir }
 }
 
 // WithConfigPath records the path to cistern.yaml so the scheduler can detect
@@ -188,6 +203,7 @@ func New(config aqueduct.AqueductConfig, dbPath string, runner CataractaeRunner,
 		rebaseAndPushFn:    defaultRebaseAndPush,
 		ghMergeFn:          defaultGhMerge,
 		dispatchLoop:       newDispatchLoopTracker(),
+		lastStallNoted:     make(map[string]time.Time),
 	}
 	for _, o := range opts {
 		o(s)
@@ -280,6 +296,7 @@ func NewFromParts(
 		rebaseAndPushFn:   defaultRebaseAndPush,
 		ghMergeFn:         defaultGhMerge,
 		dispatchLoop:      newDispatchLoopTracker(),
+		lastStallNoted:    make(map[string]time.Time),
 	}
 	for _, o := range opts {
 		o(s)
@@ -1193,12 +1210,25 @@ func (s *Castellarius) heartbeatInProgress(ctx context.Context) {
 
 func (s *Castellarius) heartbeatRepo(_ context.Context, repo aqueduct.RepoConfig) {
 	client := s.clients[repo.Name]
-	pool := s.pools[repo.Name]
 
 	items, err := client.List(repo.Name, "in_progress")
 	if err != nil {
 		s.logger.Error("heartbeat: list in_progress failed", "repo", repo.Name, "error", err)
 		return
+	}
+
+	threshold := stallThresholdDuration(s.config)
+	logDir := s.resolveSessionLogRoot()
+
+	// Prune lastStallNoted entries for droplets that are no longer in_progress.
+	activeIDs := make(map[string]struct{}, len(items))
+	for _, it := range items {
+		activeIDs[it.ID] = struct{}{}
+	}
+	for id := range s.lastStallNoted {
+		if _, ok := activeIDs[id]; !ok {
+			delete(s.lastStallNoted, id)
+		}
 	}
 
 	for _, item := range items {
@@ -1207,107 +1237,152 @@ func (s *Castellarius) heartbeatRepo(_ context.Context, repo aqueduct.RepoConfig
 			continue
 		}
 
-		var stallReason string
-		if item.Assignee != "" {
-			// Pool alone is not a reliable crash signal — tmux crash never
-			// clears the flowing bit. Use both signals:
-			//   known + idle    → skip (observe released, or not yet assigned)
-			//   known + flowing → fall through to tmux check
-			//   unknown         → fall through to tmux check (stale recovery)
-			if pool.FindByName(item.Assignee) != nil && !pool.IsFlowing(item.Assignee) {
-				continue
-			}
-			if isTmuxAlive(repo.Name + "-" + item.Assignee) {
-				continue
-			}
-			// Minimum age guard: don't reset a session that was dispatched
-			// within the last 2× poll intervals. This prevents the heartbeat
-			// from resetting a session that was just spawned (and whose tmux
-			// session may not yet be visible, or which the observe loop hasn't
-			// had a chance to process yet), which would cause spawn() to
-			// immediately kill the new session on the next dispatch.
-			// We use 2× pollInterval (default 20s) rather than the full
-			// heartbeatInterval so quick-exit backoff still fires correctly
-			// for genuinely short-lived sessions.
-			sessionAge := time.Since(item.UpdatedAt)
-			if sessionAge < 2*s.pollInterval {
-				continue
-			}
-			stallReason = "tmux_dead"
-		} else {
-			stallReason = "no_assignee"
+		// Evaluate three activity signals.
+		noteSig, noteLabel := latestNoteSignal(client, item.ID)
+		worktreeSig, worktreeLabel := latestWorktreeSignal(s.sandboxRoot, repo.Name, item.ID)
+		logSig, logLabel := sessionLogSignal(logDir, repo.Name, item.Assignee)
+
+		maxSig := latestTime(noteSig, worktreeSig, logSig)
+
+		// Clear debounce if any signal has advanced past the recorded stall time.
+		if prev, ok := s.lastStallNoted[item.ID]; ok && maxSig.After(prev) {
+			delete(s.lastStallNoted, item.ID)
 		}
 
-		// No assignee, pool=flowing + tmux=dead, or unknown aqueduct +
-		// tmux=dead. Reset to open for re-dispatch.
-		sessionDuration := time.Since(item.UpdatedAt).Round(time.Second)
-
-		// Diagnostic: read the session output log if one exists. The session
-		// tees its stdout+stderr to ~/.cistern/session-logs/<sessionID>.log so
-		// we can capture the actual error on quick-exit (auth failure, rate
-		// limit, binary not found, etc.) without requiring manual tmux inspection.
-		sessionID := repo.Name + "-" + item.Assignee
-		logTail := readSessionLogTail(sessionID, 20)
-
-		if logTail != "" {
-			s.logger.Info("heartbeat: resetting stalled droplet",
-				"repo", repo.Name,
-				"droplet", item.ID,
-				"cataractae", item.CurrentCataractae,
-				"reason", stallReason,
-				"session_duration", sessionDuration.String(),
-				"updated_at", item.UpdatedAt.Format(time.RFC3339),
-				"last_output", logTail,
-			)
-		} else {
-			s.logger.Info("heartbeat: resetting stalled droplet",
-				"repo", repo.Name,
-				"droplet", item.ID,
-				"cataractae", item.CurrentCataractae,
-				"reason", stallReason,
-				"session_duration", sessionDuration.String(),
-				"updated_at", item.UpdatedAt.Format(time.RFC3339),
-			)
+		// Not stalled — nothing to do.
+		if time.Since(maxSig) <= threshold {
+			continue
 		}
 
-		if item.Assignee != "" {
-			if w := pool.FindByName(item.Assignee); w != nil {
-				pool.Release(w)
-			}
+		// Stalled. Suppress if we already noted this stall and no signal has advanced.
+		if _, ok := s.lastStallNoted[item.ID]; ok {
+			continue
 		}
 
-		if err := client.Assign(item.ID, "", item.CurrentCataractae); err != nil {
-			s.logger.Error("heartbeat: reset failed", "droplet", item.ID, "error", err)
+		// First detection — append a stall note and emit a warning.
+		note := fmt.Sprintf(
+			"Droplet appears stalled (no activity for %v, threshold %v).\n  note signal:        %s\n  worktree signal:    %s\n  session log signal: %s",
+			time.Since(maxSig).Round(time.Second),
+			threshold,
+			noteLabel, worktreeLabel, logLabel,
+		)
+		if err := client.AddNote(item.ID, "scheduler", note); err != nil {
+			s.logger.Warn("heartbeat: AddNote failed", "droplet", item.ID, "error", err)
+			continue // do not arm debounce — note was never written
+		}
+		s.logger.Warn("heartbeat: stall detected",
+			"repo", repo.Name,
+			"droplet", item.ID,
+			"cataractae", item.CurrentCataractae,
+			"stall_duration", time.Since(maxSig).Round(time.Second).String(),
+			"threshold", threshold.String(),
+		)
+		s.lastStallNoted[item.ID] = maxSig
+	}
+}
+
+// stallThresholdDuration returns the configured stall threshold, defaulting to 45 minutes.
+func stallThresholdDuration(cfg aqueduct.AqueductConfig) time.Duration {
+	if cfg.StallThresholdMinutes > 0 {
+		return time.Duration(cfg.StallThresholdMinutes) * time.Minute
+	}
+	return 45 * time.Minute
+}
+
+// latestNoteSignal returns the most recent note timestamp for a droplet, along
+// with a human-readable label. Returns a zero time if the droplet has no notes
+// or the lookup fails.
+func latestNoteSignal(client CisternClient, dropletID string) (time.Time, string) {
+	notes, err := client.GetNotes(dropletID)
+	if err != nil || len(notes) == 0 {
+		return time.Time{}, "none"
+	}
+	var latest time.Time
+	for _, n := range notes {
+		if n.CataractaeName == "scheduler" {
+			continue // exclude scheduler-generated notes to prevent self-clearing debounce loop
+		}
+		if n.CreatedAt.After(latest) {
+			latest = n.CreatedAt
 		}
 	}
+	if latest.IsZero() {
+		return time.Time{}, "none"
+	}
+	return latest, latest.Format(time.RFC3339)
+}
+
+// latestWorktreeSignal returns the most recent file mtime under the droplet's
+// worktree directory, along with a human-readable label. Returns a zero time if
+// the directory does not exist, cannot be read, or sandboxRoot is empty.
+func latestWorktreeSignal(sandboxRoot, repoName, dropletID string) (time.Time, string) {
+	if sandboxRoot == "" {
+		return time.Time{}, "none (no sandbox root)"
+	}
+	dir := filepath.Join(sandboxRoot, repoName, dropletID)
+	var latest time.Time
+	_ = filepath.Walk(dir, func(_ string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if info.IsDir() {
+			return nil // directories change on every commit — only count files
+		}
+		if info.ModTime().After(latest) {
+			latest = info.ModTime()
+		}
+		return nil
+	})
+	if latest.IsZero() {
+		return time.Time{}, "none (no files)"
+	}
+	return latest, latest.Format(time.RFC3339)
+}
+
+// sessionLogSignal returns the mtime of the session output log for the given
+// assignee, along with a human-readable label. Returns a zero time if the
+// assignee is empty, logDir is empty, or the log file does not exist.
+func sessionLogSignal(logDir, repoName, assignee string) (time.Time, string) {
+	if logDir == "" || assignee == "" {
+		return time.Time{}, "none (no assignee)"
+	}
+	logPath := filepath.Join(logDir, repoName+"-"+assignee+".log")
+	info, err := os.Stat(logPath)
+	if err != nil {
+		return time.Time{}, "none (log not found)"
+	}
+	t := info.ModTime()
+	return t, t.Format(time.RFC3339)
+}
+
+// latestTime returns the most recent non-zero time among the provided values.
+// Returns a zero time if all inputs are zero.
+func latestTime(times ...time.Time) time.Time {
+	var latest time.Time
+	for _, t := range times {
+		if t.After(latest) {
+			latest = t
+		}
+	}
+	return latest
+}
+
+// resolveSessionLogRoot returns the effective session log directory.
+// Uses s.sessionLogRoot if set; otherwise derives ~/.cistern/session-logs.
+func (s *Castellarius) resolveSessionLogRoot() string {
+	if s.sessionLogRoot != "" {
+		return s.sessionLogRoot
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".cistern", "session-logs")
 }
 
 // isTmuxAlive returns true if a tmux session with the given name is running.
 func isTmuxAlive(sessionID string) bool {
 	return exec.Command("tmux", "has-session", "-t", sessionID).Run() == nil
-}
-
-// readSessionLogTail reads the last maxLines lines from the session output log
-// at ~/.cistern/session-logs/<sessionID>.log and removes the file. Returns an
-// empty string if the file does not exist or cannot be read.
-// Called by the heartbeat when a stalled session is detected.
-func readSessionLogTail(sessionID string, maxLines int) string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	logPath := filepath.Join(home, ".cistern", "session-logs", sessionID+".log")
-	data, err := os.ReadFile(logPath)
-	os.Remove(logPath) //nolint:errcheck
-	if err != nil || len(data) == 0 {
-		return ""
-	}
-	text := strings.TrimRight(string(data), "\n")
-	lines := strings.Split(text, "\n")
-	if len(lines) > maxLines {
-		lines = lines[len(lines)-maxLines:]
-	}
-	return strings.Join(lines, "\n")
 }
 
 // sandboxHead returns the current HEAD commit hash in the given directory.

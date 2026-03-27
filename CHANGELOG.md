@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Heartbeat: replace stall-recovery with progress monitoring using activity signals (ci-v8rgq)
+- Castellarius heartbeat now monitors three independent activity signals to detect stalled droplets: (1) newest note timestamp on the droplet, (2) most recent file modification time under the droplet's worktree directory, (3) modification time of the droplet's session log file
+- A droplet is considered stalled when the most recent signal across all three is older than `stall_threshold_minutes` (configurable in `cistern.yaml`, defaults to 45 minutes)
+- On first detection of a stall event, a diagnostic note is appended to the droplet listing all three signals, their observed timestamps, and why the droplet appears stalled; a warning is logged to the Castellarius output
+- Stall note debouncing prevents note spam: after a stall note is written, subsequent notes are suppressed until at least one progress signal advances past its timestamp at the time of the original note, then the debounce is cleared and a new stall event can re-trigger
+- Stale debounce entries are pruned each heartbeat tick for droplets that are no longer in-progress (completed, escalated, delivered, blocked, human), eliminating unbounded memory growth over long uptime
+- Removed obsolete stall-recovery mechanisms: tmux liveness check, pool state inspection, minimum age guard, session re-spawn logic, and `no_assignee` reset path — these are fully replaced by the new activity-signal approach
+- Configuration in `~/.cistern/cistern.yaml`:
+  ```yaml
+  stall_threshold_minutes: 45  # default: how many minutes of inactivity before stall detection triggers
+  ```
+- Tests added: debounce boundary conditions, signal independence, threshold configuration, and memory cleanup validation
+
 ### Dashboard TUI: replace ASCII arch with chafa-rendered pixel art mipmaps (ci-9lzhh, resized in ci-bv1ol)
 - The aqueduct arch diagram in `ct dashboard` now renders high-quality pixel art instead of hand-drawn ASCII
 - Four mipmap levels automatically selected based on terminal width for pixel-perfect rendering at any size:

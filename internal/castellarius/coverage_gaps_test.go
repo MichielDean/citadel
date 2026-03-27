@@ -272,17 +272,19 @@ func TestRecoverInProgress(t *testing.T) {
 
 func TestHeartbeatRepo(t *testing.T) {
 	tests := []struct {
-		name     string
-		item     *cistern.Droplet
-		wantStep string
+		name      string
+		item      *cistern.Droplet
+		wantNotes int // number of stall notes appended
 	}{
 		{
-			name: "resets stalled item with no assignee",
+			name: "writes stall note for droplet with no recent signals",
 			item: &cistern.Droplet{
 				ID: "hb-1", CurrentCataractae: "implement", Status: "in_progress",
 				Assignee: "", Outcome: "",
+				// No notes, no worktree, no session log — zero signals → stalled
+				// (default 45-min threshold; zero time is far older than 45 min).
 			},
-			wantStep: "implement",
+			wantNotes: 1,
 		},
 		{
 			name: "skips item with outcome",
@@ -290,7 +292,7 @@ func TestHeartbeatRepo(t *testing.T) {
 				ID: "hb-2", CurrentCataractae: "review", Status: "in_progress",
 				Assignee: "", Outcome: "pass",
 			},
-			wantStep: "", // not reset — outcome means observe phase handles it
+			wantNotes: 0, // observe phase handles items with outcomes
 		},
 	}
 	for _, tc := range tests {
@@ -301,76 +303,66 @@ func TestHeartbeatRepo(t *testing.T) {
 			sched.heartbeatRepo(context.Background(), sched.config.Repos[0])
 			client.mu.Lock()
 			defer client.mu.Unlock()
-			if client.steps[tc.item.ID] != tc.wantStep {
-				t.Errorf("step = %q, want %q", client.steps[tc.item.ID], tc.wantStep)
+			if len(client.attached) != tc.wantNotes {
+				t.Errorf("stall notes = %d, want %d", len(client.attached), tc.wantNotes)
 			}
 		})
 	}
 }
 
-func TestHeartbeatRepo_DeadTmuxSession_ResetsItem(t *testing.T) {
-	client := newMockClient()
-	// Item with an assignee whose tmux session does not exist (no tmux in test env).
-	item := &cistern.Droplet{
-		ID:                "hb-3",
-		CurrentCataractae: "implement",
-		Status:            "in_progress",
-		Assignee:          "alpha", // tmux session test-repo-alpha won't be alive
-		Outcome:           "",
-	}
-	client.items["hb-3"] = item
-
-	sched := testScheduler(client, newMockRunner(client))
-	// Mark the pool worker as flowing so Release() can find it.
-	pool := sched.pools["test-repo"]
-	w := pool.AvailableAqueduct()
-	if w != nil {
-		pool.Assign(w, "hb-3", "implement")
-	}
-
-	sched.heartbeatRepo(context.Background(), sched.config.Repos[0])
-
-	client.mu.Lock()
-	defer client.mu.Unlock()
-	// Dead session → item reset to open.
-	if client.steps["hb-3"] != "implement" {
-		t.Errorf("item with dead tmux session should be reset, got %q", client.steps["hb-3"])
-	}
-}
-
-func TestHeartbeatRepo_PoolIdleSkipsReset(t *testing.T) {
-	// When pool says idle (aqueduct known but not flowing), heartbeat should
-	// skip the item even though tmux is dead. This covers the window where the
-	// observe goroutine has called pool.Release but the DB status has not yet
-	// been updated from in_progress — a premature reset here would race with
-	// the observe phase.
+func TestHeartbeatRepo_StallDetected_ForAssignedDroplet(t *testing.T) {
+	// A droplet assigned to a worker with no recent signals should receive a
+	// stall note. The heartbeat no longer checks tmux or resets the item.
 	client := newMockClient()
 	item := &cistern.Droplet{
-		ID:                "hb-idle-skip",
+		ID:                "hb-assigned-stall",
 		CurrentCataractae: "implement",
 		Status:            "in_progress",
 		Assignee:          "alpha",
 		Outcome:           "",
 	}
-	client.items["hb-idle-skip"] = item
+	client.items[item.ID] = item
 
 	sched := testScheduler(client, newMockRunner(client))
-	// Do NOT mark the pool aqueduct as flowing — it stays idle.
-
 	sched.heartbeatRepo(context.Background(), sched.config.Repos[0])
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	// Pool=idle → heartbeat should skip, so no reset occurs.
-	if client.steps["hb-idle-skip"] != "" {
-		t.Errorf("pool-idle item should not be reset, got step=%q", client.steps["hb-idle-skip"])
+	if len(client.attached) != 1 {
+		t.Errorf("expected 1 stall note for assigned droplet with no signals, got %d", len(client.attached))
 	}
 }
 
-func TestHeartbeatRepo_UnknownAssigneeStillResets(t *testing.T) {
-	// If an aqueduct is removed from config while an item is in_progress,
-	// pool.FindByName returns nil. The heartbeat must NOT skip these items —
-	// they should fall through to the tmux check and get reset.
+func TestHeartbeatRepo_ActiveDroplet_NotStalled(t *testing.T) {
+	// A droplet whose newest note signal is within the stall threshold should
+	// not receive a stall note.
+	client := newMockClient()
+	item := &cistern.Droplet{
+		ID:                "hb-active",
+		CurrentCataractae: "implement",
+		Status:            "in_progress",
+		Assignee:          "alpha",
+		Outcome:           "",
+	}
+	client.items[item.ID] = item
+	// Recent note signal: 1 minute ago, well within the 45-minute default threshold.
+	client.notes[item.ID] = []cistern.CataractaeNote{
+		{CreatedAt: time.Now().Add(-1 * time.Minute)},
+	}
+
+	sched := testScheduler(client, newMockRunner(client))
+	sched.heartbeatRepo(context.Background(), sched.config.Repos[0])
+
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if len(client.attached) != 0 {
+		t.Errorf("expected 0 stall notes for active droplet, got %d", len(client.attached))
+	}
+}
+
+func TestHeartbeatRepo_UnknownAssignee_WritesStallNote(t *testing.T) {
+	// A droplet with an unknown assignee and no recent signals should receive
+	// a stall note. The heartbeat monitors progress, not session liveness.
 	client := newMockClient()
 	item := &cistern.Droplet{
 		ID:                "hb-unknown",
@@ -379,22 +371,21 @@ func TestHeartbeatRepo_UnknownAssigneeStillResets(t *testing.T) {
 		Assignee:          "removed-aqueduct", // not in pool
 		Outcome:           "",
 	}
-	client.items["hb-unknown"] = item
+	client.items[item.ID] = item
 
 	sched := testScheduler(client, newMockRunner(client))
-	// Pool only knows "alpha" — "removed-aqueduct" is unknown.
-
 	sched.heartbeatRepo(context.Background(), sched.config.Repos[0])
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	if client.steps["hb-unknown"] != "implement" {
-		t.Errorf("unknown-assignee item should be reset, got step=%q", client.steps["hb-unknown"])
+	if len(client.attached) != 1 {
+		t.Errorf("expected 1 stall note for unknown-assignee droplet with no signals, got %d", len(client.attached))
 	}
 }
 
 func TestHeartbeatInProgress_CallsHeartbeatForAllRepos(t *testing.T) {
-	// Basic smoke test: heartbeatInProgress should iterate all repos without panic.
+	// Basic smoke test: heartbeatInProgress should iterate all repos without
+	// panic and write a stall note for a droplet with no recent signals.
 	client := newMockClient()
 	item := &cistern.Droplet{
 		ID:                "hb-all-1",
@@ -410,8 +401,8 @@ func TestHeartbeatInProgress_CallsHeartbeatForAllRepos(t *testing.T) {
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	if client.steps["hb-all-1"] != "implement" {
-		t.Errorf("heartbeatInProgress: stalled item should be reset, got %q", client.steps["hb-all-1"])
+	if len(client.attached) != 1 {
+		t.Errorf("heartbeatInProgress: expected 1 stall note for stalled item, got %d", len(client.attached))
 	}
 }
 
