@@ -607,11 +607,11 @@ func (m dashboardTUIModel) viewPeekSelectOverlay() string {
 }
 
 // tuiAqueductRow renders a single aqueduct as a pixel art arch diagram.
-// Layout (top to bottom): name → info → step labels → channel top (▀) → channel water → mipmap arch.
-// Total lines: 5 header rows + mipmap height (12/22/30/37 depending on terminal width).
+// Layout (top to bottom): name → info → step labels → mipmap arch.
+// Total lines: 3 header rows + mipmap height (12/22/30/37 depending on terminal width).
 //
-// Water flows only to the active step — columns beyond it show a dry channel.
-// Idle aqueducts (no active droplet) show no water at all.
+// Water is animated inside the mipmap trough (top 2 mipmap rows) for active aqueducts.
+// Idle aqueducts (no active droplet) show a static mipmap with no water animation.
 func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string {
 	const (
 		nameW = 10
@@ -653,8 +653,6 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string
 			infoLine = indent + g.Render(infoBase)
 		}
 	}
-	chanW := n * archPillarW
-
 	isActive := func(step string) bool {
 		return step == ch.Step && ch.DropletID != ""
 	}
@@ -676,8 +674,6 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string
 	wfMid    := archRoleWaterMid
 	wfDim    := archRoleWaterDim
 
-	l1 := indent + archRoleChannelWall.Render(strings.Repeat("▀", chanW))
-
 	// Wave pattern: 6-char repeating unit animated each frame — water flows right.
 	type waveCell struct {
 		ch  string
@@ -698,51 +694,9 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string
 		return wb.String()
 	}
 
-	// Compute wet/dry widths for partial-water rendering.
-	// innerW is the channel content width (excluding the two █ walls).
-	innerW := chanW - 2
-	wetInnerW := 0
-	if activeIdx >= 0 {
-		// Subtract 1 to account for the left wall occupying the first column of
-		// the pillar grid; without the correction the wet region extends one
-		// character past the active pillar's visual right boundary.
-		wetInnerW = (activeIdx+1)*archPillarW - 1
-		if wetInnerW > innerW {
-			wetInnerW = innerW
-		}
-	}
-	dryInnerW := innerW - wetInnerW
-
-	// Build water: pure wave up to the active step, dry (empty) beyond.
-	// Droplet info is displayed on the info line above — not embedded here.
-	var water string
-	if wetInnerW > 0 {
-		water = renderWave(wetInnerW)
-		if dryInnerW > 0 {
-			water += archRoleBackground.Render(strings.Repeat(" ", dryInnerW))
-		}
-	} else {
-		// No active step: fully dry channel.
-		water = archRoleBackground.Render(strings.Repeat(" ", innerW))
-	}
-
 	// Waterfall brightness rotates with frame so ▓ appears to fall.
-	wfA := func(sub int) lipgloss.Style {
-		switch (sub + frame) % 3 {
-		case 0:
-			return wfBright
-		case 1:
-			return wfMid
-		default:
-			return wfDim
-		}
-	}
-
-	wfExit := wfDim.Render("░") + wfMid.Render("▒") + wfA(0).Render("▓▓")
-	l2 := indent + archRoleChannelWall.Render("█") + water + archRoleChannelWall.Render("█")
-	if isLastStep {
-		l2 += wfExit
-	}
+	wfAccent := []lipgloss.Style{wfBright, wfMid, wfDim}[frame%3]
+	wfExit := wfDim.Render("░") + wfMid.Render("▒") + wfAccent.Render("▓▓")
 
 	// Mipmap arch: select the mipmap that fits within one pillar slot (archPillarW),
 	// and center it under the active step's slot. If no step is active, center
@@ -769,8 +723,20 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string
 		archLines = append(archLines, padStr+line)
 	}
 
+	// For active aqueducts, animate the trough: overlay the top 2 mipmap rows
+	// with cycling wave characters (░▒▓≈▒░) per frame.
+	if activeIdx >= 0 && len(archLines) >= 2 {
+		waterRow := padStr + renderWave(mipmapW)
+		archLines[0] = waterRow
+		archLines[1] = waterRow
+	}
+
+	// Waterfall exit: append wfExit to the last mipmap row when on the final step.
+	if isLastStep && len(archLines) > 0 {
+		archLines[len(archLines)-1] += wfExit
+	}
+
 	// Label line: step names centered within pillarW, active step bold+green.
-	// Built first so it appears above the channel rows in the result.
 	var lblLine strings.Builder
 	lblLine.WriteString(indent)
 	for _, step := range steps {
@@ -786,8 +752,8 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string
 		}
 	}
 
-	// Return order: name → info → label → channel top → channel water → arch pillars.
-	result := []string{nameLine, infoLine, lblLine.String(), l1, l2}
+	// Return order: name → info → label → mipmap arch rows (with animated water trough for active).
+	result := []string{nameLine, infoLine, lblLine.String()}
 	result = append(result, archLines...)
 	return result
 }

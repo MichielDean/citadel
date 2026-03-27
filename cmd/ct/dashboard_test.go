@@ -843,8 +843,7 @@ func TestStripANSITest_CSISequences(t *testing.T) {
 
 // TestTuiAqueductRow_LabelRowAboveArch verifies that:
 // - lines[2] is the label row (contains all step names)
-// - lines[3] is the channel top row (▀ characters)
-// - lines[4] is the channel water row (█ walls)
+// - lines[3] is the first mipmap row (animated wave for active aqueducts)
 func TestTuiAqueductRow_LabelRowAboveArch(t *testing.T) {
 	m := newDashboardTUIModel("", "")
 	steps := []string{"implement", "review", "merge"}
@@ -856,8 +855,8 @@ func TestTuiAqueductRow_LabelRowAboveArch(t *testing.T) {
 	}
 	lines := m.tuiAqueductRow(ch, 0)
 
-	if len(lines) < 5 {
-		t.Fatalf("expected at least 5 lines, got %d", len(lines))
+	if len(lines) < 4 {
+		t.Fatalf("expected at least 4 lines, got %d", len(lines))
 	}
 
 	// lines[2] is the label row — must contain all step names.
@@ -868,164 +867,18 @@ func TestTuiAqueductRow_LabelRowAboveArch(t *testing.T) {
 		}
 	}
 
-	// lines[3] is the channel top row (▀ characters).
-	chanTop := stripANSITest(lines[3])
-	if !strings.Contains(chanTop, "▀") {
-		t.Errorf("lines[3] should be the channel top row (▀), got %q", chanTop)
-	}
-
-	// lines[4] is the channel water row (█ walls).
-	chanWater := stripANSITest(lines[4])
-	if !strings.Contains(chanWater, "█") {
-		t.Errorf("lines[4] should be the channel water row (█ walls), got %q", chanWater)
-	}
-
-	// lines[4] must NOT contain ▀ (that belongs to the channel top, not water row).
-	if strings.Contains(chanWater, "▀") {
-		t.Errorf("channel water row (lines[4]) should not contain ▀: %q", chanWater)
+	// lines[3] is the first mipmap row; for an active aqueduct it shows animated wave chars.
+	firstMipmap := stripANSITest(lines[3])
+	if !strings.ContainsAny(firstMipmap, "░▒▓≈") {
+		t.Errorf("lines[3] for active aqueduct should contain wave chars (░▒▓≈), got %q", firstMipmap)
 	}
 }
 
-// TestTuiAqueductRow_WaterFillsOnlyToActiveStep verifies that the channel water row
-// contains wave characters only up to and including the active step's column,
-// and the remaining columns are empty (dry channel).
-// It also verifies that the row never overflows its expected visual width even
-// when the info string is longer than the wet section (edge case: first step active).
-func TestTuiAqueductRow_WaterFillsOnlyToActiveStep(t *testing.T) {
-	m := newDashboardTUIModel("", "")
-	steps := []string{"implement", "review", "merge"}
-
-	const (
-		prefixLen = 14
-		pillarW   = 36
-		nSteps    = 3
-		chanW     = nSteps * pillarW
-		innerW    = chanW - 2
-	)
-	// Both cases are mid-pipeline (not the last step), so wfExit is absent.
-	const expectedRowLen = prefixLen + 1 + innerW + 1 // 122
-
-	cases := []struct {
-		name            string
-		step            string
-		activeIdx       int
-		cataractaeIndex int
-		elapsed         time.Duration
-	}{
-		{
-			// activeIdx=0: wetInnerW=(1*36-1)=35, infoStr with "1m 0s" is 29 chars —
-			// exercises the truncation path in buildChanWater.
-			name:            "first step active (activeIdx=0)",
-			step:            "implement",
-			activeIdx:       0,
-			cataractaeIndex: 1,
-			elapsed:         60 * time.Second,
-		},
-		{
-			// activeIdx=1: wetInnerW=(2*36-1)=71, dryInnerW=35.
-			name:            "second step active (activeIdx=1)",
-			step:            "review",
-			activeIdx:       1,
-			cataractaeIndex: 2,
-			elapsed:         0,
-		},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			ch := CataractaeInfo{
-				Name:            "virgo",
-				DropletID:       "ci-abc12",
-				Step:            tc.step,
-				Steps:           steps,
-				CataractaeIndex: tc.cataractaeIndex,
-				TotalCataractae: nSteps,
-				Elapsed:         tc.elapsed,
-			}
-			lines := m.tuiAqueductRow(ch, 0)
-
-			// lines[4] is the channel water row (name[0], info[1], label[2], chan-top[3]).
-			chanWater := stripANSITest(lines[4])
-			runes := []rune(chanWater)
-
-			// Row must not overflow — catch buildChanWater returning more than wetInnerW chars.
-			if len(runes) != expectedRowLen {
-				t.Fatalf("channel water row visual width: got %d, want %d\nrow: %q",
-					len(runes), expectedRowLen, chanWater)
-			}
-
-			// Visual layout (no waterfall for mid-pipeline steps):
-			//   prefix(14) + "█"(1) + inner(106) + "█"(1)
-			//   wetInnerW = (activeIdx+1)*pillarW - 1  (off-by-one corrected)
-			wetInnerW := (tc.activeIdx+1)*pillarW - 1
-			dryInnerW := innerW - wetInnerW
-			innerStart := prefixLen + 1 // skip prefix and left wall
-			dryStart   := innerStart + wetInnerW
-
-			// The dry portion must be all spaces.
-			for i := dryStart; i < dryStart+dryInnerW; i++ {
-				if runes[i] != ' ' {
-					t.Errorf("dry channel at rune %d should be ' ', got %q\nrow: %q",
-						i, runes[i], chanWater)
-					break
-				}
-			}
-
-			// The wet portion must contain non-space content (wave chars or info text).
-			wetSection := string(runes[innerStart : innerStart+wetInnerW])
-			if !strings.ContainsAny(wetSection, "░▒▓≈") {
-				t.Errorf("wet channel portion should contain wave characters (░▒▓≈)\nwet section: %q", wetSection)
-			}
-		})
-	}
-}
-
-// TestTuiAqueductRow_IdleAqueductHasNoWater verifies that an idle aqueduct (no active
-// droplet) renders the channel water row as a fully dry, empty channel (all spaces).
-func TestTuiAqueductRow_IdleAqueductHasNoWater(t *testing.T) {
-	m := newDashboardTUIModel("", "")
-	steps := []string{"implement", "review", "merge"}
-
-	// Idle: no DropletID
-	ch := CataractaeInfo{
-		Name:  "virgo",
-		Steps: steps,
-	}
-	lines := m.tuiAqueductRow(ch, 0)
-
-	// lines[4] is the channel water row (name[0], info[1], label[2], chan-top[3]).
-	chanWater := stripANSITest(lines[4])
-	runes := []rune(chanWater)
-
-	const (
-		prefixLen = 14
-		pillarW   = 36
-		chanW     = 3 * pillarW
-		innerW    = chanW - 2
-	)
-	innerStart := prefixLen + 1
-	innerEnd   := innerStart + innerW
-
-	if len(runes) < innerEnd {
-		t.Fatalf("channel water row too short: got %d runes, need at least %d", len(runes), innerEnd)
-	}
-
-	// Entire inner channel must be spaces (no wave animation for idle).
-	for i := innerStart; i < innerEnd; i++ {
-		if runes[i] != ' ' {
-			t.Errorf("idle channel at rune %d should be ' ', got %q\nrow: %q",
-				i, runes[i], chanWater)
-			break
-		}
-	}
-}
 
 // TestTuiAqueductRow_LineCount verifies tuiAqueductRow returns the correct number
-// of lines: 5 header rows (name, info, label, channel top, channel water) plus the
-// mipmap height for the model's terminal width.
-//
-// newDashboardTUIModel sets width=100 (>= 90), selecting the 100x38 mipmap (37 visual
-// lines after cursor-sequence stripping). Total = 5 + 37 = 42. Independent of step count.
+// of lines: 3 header rows (name, info, label) plus the mipmap height.
+// The mipmap is selected by archPillarW=36 → 36x12 → 12 visual lines.
+// Total = 3 + 12 = 15. Independent of step count.
 func TestTuiAqueductRow_LineCount(t *testing.T) {
 	m := newDashboardTUIModel("", "")
 	tests := []struct {
@@ -1044,9 +897,9 @@ func TestTuiAqueductRow_LineCount(t *testing.T) {
 			}
 			ch := CataractaeInfo{Name: "virgo", Steps: steps}
 			lines := m.tuiAqueductRow(ch, 0)
-			// 5 header rows + 12 mipmap lines (36x12 mipmap — arch selected by
+			// 3 header rows + 12 mipmap lines (36x12 mipmap — arch selected by
 			// archPillarW=36, not terminal width)
-			const wantLines = 17
+			const wantLines = 15
 			if len(lines) != wantLines {
 				t.Errorf("tuiAqueductRow() returned %d lines, want %d", len(lines), wantLines)
 			}
@@ -1055,7 +908,7 @@ func TestTuiAqueductRow_LineCount(t *testing.T) {
 }
 
 // TestTuiAqueductRow_MipmapArchLinesNonEmpty verifies that the arch section of
-// tuiAqueductRow (rows[5:]) consists of non-empty mipmap lines.
+// tuiAqueductRow (rows[3:]) consists of non-empty mipmap lines.
 // The ASCII pillar pixel map has been replaced by a pre-rendered ANSI mipmap;
 // this test confirms the mipmap content is present in the arch section.
 func TestTuiAqueductRow_MipmapArchLinesNonEmpty(t *testing.T) {
@@ -1064,13 +917,12 @@ func TestTuiAqueductRow_MipmapArchLinesNonEmpty(t *testing.T) {
 	ch := CataractaeInfo{Name: "virgo", Steps: steps}
 	lines := m.tuiAqueductRow(ch, 0)
 
-	const headerRows = 5 // name, info, label, channel top, channel water
+	const headerRows = 3 // name, info, label
 	if len(lines) <= headerRows {
 		t.Fatalf("expected more than %d lines, got %d", headerRows, len(lines))
 	}
 
 	// Every line in the mipmap section must be non-empty.
-	// (The last mipmap line is the show-cursor escape sequence, which is also non-empty.)
 	for i := headerRows; i < len(lines); i++ {
 		if lines[i] == "" {
 			t.Errorf("arch mipmap lines[%d] is empty; expected pre-rendered pixel art content", i)
@@ -1081,18 +933,18 @@ func TestTuiAqueductRow_MipmapArchLinesNonEmpty(t *testing.T) {
 // TestTuiAqueductRow_MipmapArchLinesHaveExpectedCount verifies the arch section
 // has exactly the expected number of lines. The mipmap is now selected by
 // archPillarW (36), not terminal width — so the 36x12 mipmap is always used,
-// giving 12 visual lines. Total = 5 header + 12 mipmap = 17.
+// giving 12 visual lines. Total = 3 header + 12 mipmap = 15.
 func TestTuiAqueductRow_MipmapArchLinesHaveExpectedCount(t *testing.T) {
 	m := newDashboardTUIModel("", "")
 	steps := []string{"implement"}
 	ch := CataractaeInfo{Name: "virgo", Steps: steps}
 	lines := m.tuiAqueductRow(ch, 0)
 
-	const headerRows = 5
+	const headerRows = 3
 	const mipmapLines = 12 // 36x12 mipmap — selected by archPillarW=36
 	const wantTotal = headerRows + mipmapLines
 	if len(lines) != wantTotal {
-		t.Errorf("tuiAqueductRow() returned %d lines, want %d (5 header + 12 mipmap)", len(lines), wantTotal)
+		t.Errorf("tuiAqueductRow() returned %d lines, want %d (3 header + 12 mipmap)", len(lines), wantTotal)
 	}
 }
 
@@ -1195,14 +1047,13 @@ func TestViewAqueductArches_ActiveAqueductDoesNotShowDrought(t *testing.T) {
 	}
 }
 
-// TestTuiAqueductRow_ActiveVsIdle_ChannelWaterDiffers verifies that when a
-// droplet is active the channel water row (rows[4]) differs from the idle case.
-// The arch section (rows[5:]) is a static pre-rendered mipmap and is identical
-// for both active and idle aqueducts; the visual active/idle distinction is
-// carried by the animated channel row and the name/info lines above it.
+// TestTuiAqueductRow_ActiveVsIdle_MipmapTopRowDiffers verifies that when a
+// droplet is active the first mipmap row (rows[3]) differs from the idle case
+// because it shows animated wave characters. The static mipmap rows deeper in
+// the arch (rows[5:]) are identical for both active and idle aqueducts.
 //
 // Forces TrueColor rendering so lipgloss emits ANSI escape codes in the test context.
-func TestTuiAqueductRow_ActiveVsIdle_ChannelWaterDiffers(t *testing.T) {
+func TestTuiAqueductRow_ActiveVsIdle_MipmapTopRowDiffers(t *testing.T) {
 	// Force TrueColor so lipgloss emits ANSI escape sequences; restore after.
 	orig := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.TrueColor)
@@ -1223,12 +1074,12 @@ func TestTuiAqueductRow_ActiveVsIdle_ChannelWaterDiffers(t *testing.T) {
 		Steps: steps,
 	}, 0)
 
-	// Channel water row is rows[4]. Active (wet) must differ from idle (dry).
-	if active[4] == idle[4] {
-		t.Error("channel water row (rows[4]) should differ between active and idle aqueduct")
+	// First mipmap row is rows[3]. Active (animated wave) must differ from idle (static).
+	if active[3] == idle[3] {
+		t.Error("first mipmap row (rows[3]) should differ between active and idle aqueduct")
 	}
 
-	// The mipmap arch (rows[5]) is a static image — same content regardless of step state.
+	// The mipmap arch (rows[5]) is beyond the animated trough — same for active and idle.
 	if active[5] != idle[5] {
 		t.Errorf("mipmap arch rows[5] should be identical for active and idle (static image)\nactive: %q\nidle:   %q",
 			active[5], idle[5])
@@ -1313,10 +1164,10 @@ func TestTuiAqueductRow_InfoLineEmpty_WhenIdle(t *testing.T) {
 	}
 }
 
-// TestTuiAqueductRow_WaterChannelPureWave_NoDropletInfo verifies that the channel
-// water row (lines[4]) does not contain the droplet ID or elapsed time — those
-// belong on the info line (lines[1]) only.
-func TestTuiAqueductRow_WaterChannelPureWave_NoDropletInfo(t *testing.T) {
+// TestTuiAqueductRow_MipmapWaveRow_NoDropletInfo verifies that the animated mipmap
+// trough rows (lines[3] and lines[4]) do not contain the droplet ID or elapsed
+// time — those belong on the info line (lines[1]) only.
+func TestTuiAqueductRow_MipmapWaveRow_NoDropletInfo(t *testing.T) {
 	m := newDashboardTUIModel("", "")
 	steps := []string{"implement", "review", "merge"}
 	ch := CataractaeInfo{
@@ -1333,33 +1184,24 @@ func TestTuiAqueductRow_WaterChannelPureWave_NoDropletInfo(t *testing.T) {
 	if len(lines) < 5 {
 		t.Fatalf("expected at least 5 lines, got %d", len(lines))
 	}
-	chanWater := stripANSITest(lines[4])
-	if strings.Contains(chanWater, "ci-abc12") {
-		t.Errorf("channel water row should not contain droplet ID, got %q", chanWater)
-	}
-	if strings.Contains(chanWater, "3m") {
-		t.Errorf("channel water row should not contain elapsed time, got %q", chanWater)
+	for _, rowIdx := range []int{3, 4} {
+		row := stripANSITest(lines[rowIdx])
+		if strings.Contains(row, "ci-abc12") {
+			t.Errorf("mipmap trough row[%d] should not contain droplet ID, got %q", rowIdx, row)
+		}
+		if strings.Contains(row, "3m") {
+			t.Errorf("mipmap trough row[%d] should not contain elapsed time, got %q", rowIdx, row)
+		}
 	}
 }
 
 // TestTuiAqueductRow_WaterfallOnlyOnLastStep verifies that the waterfall animation
-// (wfExit on the channel water row, wfRows on arch lines) is only rendered when the
-// active step is the final step in the pipeline. For mid-pipeline steps and idle
-// aqueducts the waterfall must be absent.
+// (wfExit appended to the last mipmap row) is only rendered when the active step
+// is the final step in the pipeline. For mid-pipeline steps and idle aqueducts
+// the waterfall must be absent.
 func TestTuiAqueductRow_WaterfallOnlyOnLastStep(t *testing.T) {
 	m := newDashboardTUIModel("", "")
 	steps := []string{"implement", "review", "merge"}
-
-	const (
-		prefixLen = 14
-		pillarW   = 36
-		nSteps    = 3
-		chanW     = nSteps * pillarW
-		innerW    = chanW - 2
-		wfExitLen = 4 // "░▒▓▓" — visible chars in wfExit
-	)
-	const rowLenWithWF    = prefixLen + 1 + innerW + 1 + wfExitLen // 126
-	const rowLenWithoutWF = prefixLen + 1 + innerW + 1             // 122
 
 	cases := []struct {
 		name      string
@@ -1403,17 +1245,16 @@ func TestTuiAqueductRow_WaterfallOnlyOnLastStep(t *testing.T) {
 			}
 			lines := m.tuiAqueductRow(ch, 0)
 
-			// lines[4] is the channel water row (name[0], info[1], label[2], chan-top[3]).
-			chanWater := stripANSITest(lines[4])
-			runes := []rune(chanWater)
-
-			wantLen := rowLenWithoutWF
-			if tc.wantWF {
-				wantLen = rowLenWithWF
+			if len(lines) == 0 {
+				t.Fatal("tuiAqueductRow returned no lines")
 			}
-			if len(runes) != wantLen {
-				t.Errorf("channel water row visual width: got %d, want %d (wantWF=%v)\nrow: %q",
-					len(runes), wantLen, tc.wantWF, chanWater)
+
+			// wfExit ("░▒▓▓") is appended to the last mipmap row when on the final step.
+			lastRow := stripANSITest(lines[len(lines)-1])
+			hasWF := strings.Contains(lastRow, "▓▓")
+			if hasWF != tc.wantWF {
+				t.Errorf("last mipmap row waterfall presence: got %v, want %v (wantWF=%v)\nrow: %q",
+					hasWF, tc.wantWF, tc.wantWF, lastRow)
 			}
 		})
 	}
