@@ -1,6 +1,7 @@
 package main
 
 import (
+	_ "embed"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,6 +13,54 @@ import (
 
 	"github.com/MichielDean/cistern/internal/cistern"
 )
+
+// Pixel-art arch mipmaps — pre-rendered ANSI art at three sizes.
+// selectArchMipmap picks the level whose width is closest to the available slot.
+
+//go:embed assets/arch_mipmaps/arch_100x38.ansi
+var archMipmap100x38 string
+
+//go:embed assets/arch_mipmaps/arch_80x30.ansi
+var archMipmap80x30 string
+
+//go:embed assets/arch_mipmaps/arch_60x22.ansi
+var archMipmap60x22 string
+
+// archMipmapStripper removes chafa's cursor-visibility escape sequences
+// (\x1b[?25l hide-cursor and \x1b[?25h show-cursor) from embedded mipmap files.
+// These sequences are terminal control signals, not visual content; bubbletea
+// manages cursor visibility independently.
+var archMipmapStripper = strings.NewReplacer("\x1b[?25l", "", "\x1b[?25h", "")
+
+// archMipmapWidth returns the pixel column width of the mipmap level chosen for
+// the given terminal width, matching the thresholds in selectArchMipmap.
+func archMipmapWidth(availableWidth int) int {
+	if availableWidth >= 90 {
+		return 100
+	}
+	if availableWidth >= 70 {
+		return 80
+	}
+	return 60
+}
+
+// selectArchMipmap returns the ANSI arch mipmap whose width best fits availableWidth,
+// with cursor-control sequences stripped.
+//   - width >= 90  → 100x38 mipmap (37 visual lines)
+//   - width >= 70  → 80x30 mipmap  (30 visual lines)
+//   - width < 70   → 60x22 mipmap  (22 visual lines)
+func selectArchMipmap(availableWidth int) string {
+	var raw string
+	switch archMipmapWidth(availableWidth) {
+	case 100:
+		raw = archMipmap100x38
+	case 80:
+		raw = archMipmap80x30
+	default:
+		raw = archMipmap60x22
+	}
+	return archMipmapStripper.Replace(raw)
+}
 
 // insideTmux reports whether the process is running inside a tmux session.
 // Replaced in tests to control environment without requiring a real tmux session.
@@ -543,17 +592,9 @@ func (m dashboardTUIModel) viewPeekSelectOverlay() string {
 	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, box)
 }
 
-// tuiAqueductRow renders a single aqueduct as a durdraw pillar diagram.
-// Layout (top to bottom): name → info → step labels → channel top (▀) → channel water → 9 pillar rows.
-// Total: 14 lines (1 name + 1 info + 1 label + 2 channel + 9 pillar).
-//
-// Pillar row layout (28 chars wide):
-//
-//	row 5:   ▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒  (arch crown / road)
-//	row 6:         ░▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒       (arch opening widens)
-//	row 7:            ░▒▒▒▒▒▒▒▒▒            (arch narrowing)
-//	row 8:             ░▒▒▒▒▒▒▒             (arch narrowing)
-//	rows 9–13:           ░▒▒▒▒              (pier body)
+// tuiAqueductRow renders a single aqueduct as a pixel art arch diagram.
+// Layout (top to bottom): name → info → step labels → channel top (▀) → channel water → mipmap arch.
+// Total lines: 5 header rows + mipmap height (22/30/37 depending on terminal width).
 //
 // Water flows only to the active step — columns beyond it show a dry channel.
 // Idle aqueducts (no active droplet) show no water at all.
@@ -683,42 +724,25 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string
 		}
 	}
 
-	wfRows := [14]string{
-		wfMid.Render("▒") + wfA(0).Render("▓") + wfMid.Render("▒") + wfDim.Render("░"),
-		wfDim.Render("░") + wfA(1).Render("▓") + wfMid.Render("▒"),
-		" " + wfMid.Render("▒") + wfA(2).Render("▓") + wfMid.Render("▒"),
-		" " + wfDim.Render("░") + wfA(0).Render("▓") + wfMid.Render("▒"),
-		"  " + wfA(1).Render("▓") + wfMid.Render("▒"),
-		"  " + wfA(2).Render("▓") + wfMid.Render("▒"),
-		"  " + wfDim.Render("░") + wfMid.Render("▒") + wfA(0).Render("▓") + wfMid.Render("▒") + wfDim.Render("░"),
-		wfDim.Render("░≈") + wfMid.Render("▒▒") + wfA(1).Render("▓▓") + wfMid.Render("▒▒") + wfDim.Render("≈░"),
-		wfDim.Render("≈░") + wfMid.Render("▒▒") + wfA(2).Render("▓▓") + wfMid.Render("▒▒") + wfDim.Render("░≈"),
-		" " + wfDim.Render("░") + wfMid.Render("▒") + wfA(0).Render("▓▓") + wfMid.Render("▒") + wfDim.Render("░"),
-		" " + wfDim.Render("░") + wfMid.Render("▒") + wfA(1).Render("▓") + wfMid.Render("▒") + wfDim.Render("░"),
-		"  " + wfDim.Render("░") + wfA(2).Render("▓") + wfDim.Render("░"),
-		"  " + wfMid.Render("▒") + wfA(0).Render("▓") + wfMid.Render("▒"),
-		"  " + wfDim.Render("░") + wfA(1).Render("▒") + wfDim.Render("░"),
-	}
-
 	wfExit := wfDim.Render("░") + wfMid.Render("▒") + wfA(0).Render("▓▓")
 	l2 := indent + archRoleChannelWall.Render("█") + water + archRoleChannelWall.Render("█")
 	if isLastStep {
 		l2 += wfExit
 	}
 
-	// Build 9 arch lines: tile one pillar column per step using the static pixel map,
-	// then append the waterfall column when the droplet is on the final step.
+	// Mipmap arch: select the pre-rendered pixel art arch for the available width,
+	// center it in the terminal, and use its lines in place of the ASCII pillar rows.
+	mipmapW := archMipmapWidth(m.width)
+	mipmap := selectArchMipmap(m.width)
+	mipmapLines := strings.Split(strings.TrimRight(mipmap, "\n"), "\n")
+	leftPad := (m.width - mipmapW) / 2
+	if leftPad < 0 {
+		leftPad = 0
+	}
+	padStr := strings.Repeat(" ", leftPad)
 	var archLines []string
-	for r := 5; r < 14; r++ {
-		var sb strings.Builder
-		sb.WriteString(indent)
-		for _, step := range steps {
-			sb.WriteString(renderArchPillarRow(r, isActive(step)))
-		}
-		if isLastStep {
-			sb.WriteString(wfRows[r-5])
-		}
-		archLines = append(archLines, sb.String())
+	for _, line := range mipmapLines {
+		archLines = append(archLines, padStr+line)
 	}
 
 	// Label line: step names centered within pillarW, active step bold+green.
@@ -740,7 +764,7 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string
 
 	// Return order: name → info → label → channel top → channel water → arch pillars.
 	result := []string{nameLine, infoLine, lblLine.String(), l1, l2}
-	result   = append(result, archLines...)
+	result = append(result, archLines...)
 	return result
 }
 

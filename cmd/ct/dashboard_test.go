@@ -761,23 +761,84 @@ func TestFormatElapsed_MinutesAndSeconds(t *testing.T) {
 // --- TestTuiAqueductRow — pillar template ---
 
 // stripANSITest removes ANSI escape sequences from s, returning plain text.
+// Uses a two-state FSM to correctly handle CSI sequences:
+//   - After \x1b, if next char is '[' enter CSI-param state (not a terminator)
+//   - In CSI-param state, consume until final byte (0x40–0x7E)
+//
+// This distinguishes 'after ESC' from 'inside CSI params', fixing the bug
+// where '[' (0x5B) would be treated as a CSI terminator, leaking params.
 func stripANSITest(s string) string {
+	const (
+		stateNormal   = 0
+		stateAfterESC = 1
+		stateInCSI    = 2
+	)
 	var out strings.Builder
-	inEsc := false
+	state := stateNormal
 	for _, r := range s {
-		if r == '\x1b' {
-			inEsc = true
-			continue
-		}
-		if inEsc {
-			if r == 'm' {
-				inEsc = false
+		switch state {
+		case stateNormal:
+			if r == '\x1b' {
+				state = stateAfterESC
+			} else {
+				out.WriteRune(r)
 			}
-			continue
+		case stateAfterESC:
+			if r == '[' {
+				// CSI introducer — enter param-consuming state
+				state = stateInCSI
+			} else if r >= 0x40 && r <= 0x7E {
+				// Two-character escape sequence (e.g. \x1bm) — final byte consumed
+				state = stateNormal
+			}
+			// else: intermediate byte, stay in stateAfterESC
+		case stateInCSI:
+			// Consume until CSI final byte (0x40–0x7E)
+			if r >= 0x40 && r <= 0x7E {
+				state = stateNormal
+			}
 		}
-		out.WriteRune(r)
 	}
 	return out.String()
+}
+
+// TestStripANSITest_CSISequences verifies the two-state FSM correctly strips
+// CSI escape sequences, exercising stateAfterESC and stateInCSI branches.
+func TestStripANSITest_CSISequences(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "TrueColor_fg_reset",
+			input: "\x1b[38;2;255;0;0mRed\x1b[0m",
+			want:  "Red",
+		},
+		{
+			name:  "multiple_CSI_sequences",
+			input: "\x1b[1mBold\x1b[0m and \x1b[32mgreen\x1b[0m",
+			want:  "Bold and green",
+		},
+		{
+			name:  "no_escape_sequences",
+			input: "plain text",
+			want:  "plain text",
+		},
+		{
+			name:  "empty_string",
+			input: "",
+			want:  "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := stripANSITest(tt.input)
+			if got != tt.want {
+				t.Errorf("stripANSITest(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
 }
 
 // TestTuiAqueductRow_LabelRowAboveArch verifies that:
@@ -959,8 +1020,12 @@ func TestTuiAqueductRow_IdleAqueductHasNoWater(t *testing.T) {
 	}
 }
 
-// TestTuiAqueductRow_LineCount verifies tuiAqueductRow returns exactly 14 lines:
-// 1 name row + 1 info row + 1 label row + 2 channel rows + 9 pillar rows.
+// TestTuiAqueductRow_LineCount verifies tuiAqueductRow returns the correct number
+// of lines: 5 header rows (name, info, label, channel top, channel water) plus the
+// mipmap height for the model's terminal width.
+//
+// newDashboardTUIModel sets width=100 (>= 90), selecting the 100x38 mipmap (37 visual
+// lines after cursor-sequence stripping). Total = 5 + 37 = 42. Independent of step count.
 func TestTuiAqueductRow_LineCount(t *testing.T) {
 	m := newDashboardTUIModel("", "")
 	tests := []struct {
@@ -979,7 +1044,8 @@ func TestTuiAqueductRow_LineCount(t *testing.T) {
 			}
 			ch := CataractaeInfo{Name: "virgo", Steps: steps}
 			lines := m.tuiAqueductRow(ch, 0)
-			const wantLines = 14 // 1 name + 1 info + 1 label + 2 channel + 9 pillar
+			// 5 header rows + 37 mipmap lines (100x38 for width=100, after cursor-seq strip)
+			const wantLines = 42
 			if len(lines) != wantLines {
 				t.Errorf("tuiAqueductRow() returned %d lines, want %d", len(lines), wantLines)
 			}
@@ -987,85 +1053,45 @@ func TestTuiAqueductRow_LineCount(t *testing.T) {
 	}
 }
 
-// TestTuiAqueductRow_CrownRowIsSolidBlocks verifies that the arch crown row
-// (pillar row 5 = result[5]) contains N×28 ▒ characters in the pillar section.
-// This fails with the old brick arch (which used ▀/█/▌) and passes with the
-// new durdraw pillar template.
-func TestTuiAqueductRow_CrownRowIsSolidBlocks(t *testing.T) {
+// TestTuiAqueductRow_MipmapArchLinesNonEmpty verifies that the arch section of
+// tuiAqueductRow (rows[5:]) consists of non-empty mipmap lines.
+// The ASCII pillar pixel map has been replaced by a pre-rendered ANSI mipmap;
+// this test confirms the mipmap content is present in the arch section.
+func TestTuiAqueductRow_MipmapArchLinesNonEmpty(t *testing.T) {
 	m := newDashboardTUIModel("", "")
 	steps := []string{"implement", "review", "merge"}
 	ch := CataractaeInfo{Name: "virgo", Steps: steps}
 	lines := m.tuiAqueductRow(ch, 0)
 
-	if len(lines) < 6 {
-		t.Fatalf("not enough lines: got %d", len(lines))
+	const headerRows = 5 // name, info, label, channel top, channel water
+	if len(lines) <= headerRows {
+		t.Fatalf("expected more than %d lines, got %d", headerRows, len(lines))
 	}
 
-	// result[5] = archLines[0] = pillar row 5 (full-width crown, first rendered row).
-	// [0]=name, [1]=info, [2]=label, [3]=channel top, [4]=channel water, [5]=first arch row.
-	// After stripping ANSI and prefix, the first N*28 runes must all be ▒.
-	crownLine := stripANSITest(lines[5])
-	runes := []rune(crownLine)
-
-	// Prefix visual width = "  " + nameW(10) + "  " = 14 chars.
-	const prefixLen = 14
-	const pillarW = 28
-	want := len(steps) * pillarW
-
-	if len(runes) < prefixLen+want {
-		t.Fatalf("crown row too short: %d runes, need at least %d", len(runes), prefixLen+want)
-	}
-	for i := 0; i < want; i++ {
-		if runes[prefixLen+i] != '▒' {
-			t.Errorf("crown row pillar[%d] = %q, want '▒'", i, runes[prefixLen+i])
-			break
+	// Every line in the mipmap section must be non-empty.
+	// (The last mipmap line is the show-cursor escape sequence, which is also non-empty.)
+	for i := headerRows; i < len(lines); i++ {
+		if lines[i] == "" {
+			t.Errorf("arch mipmap lines[%d] is empty; expected pre-rendered pixel art content", i)
 		}
 	}
 }
 
-// TestTuiAqueductRow_PierBodyRowHasCorrectStructure verifies a pier body row
-// (pillar rows 9–13 = result[13..17]) has the expected 12sp+░+4▒+11sp structure
-// for each pillar, for a single-step aqueduct.
-func TestTuiAqueductRow_PierBodyRowHasCorrectStructure(t *testing.T) {
+// TestTuiAqueductRow_MipmapArchLinesHaveExpectedCount verifies the arch section
+// has exactly the expected number of lines for the model width.
+// newDashboardTUIModel uses width=100 (>= 90), selecting the 100x38 mipmap
+// (37 visual lines after cursor-seq stripping). Total rows = 5 + 37 = 42.
+func TestTuiAqueductRow_MipmapArchLinesHaveExpectedCount(t *testing.T) {
 	m := newDashboardTUIModel("", "")
 	steps := []string{"implement"}
 	ch := CataractaeInfo{Name: "virgo", Steps: steps}
 	lines := m.tuiAqueductRow(ch, 0)
 
-	// result[9] = archLines[4] = pillar row 9 (first pier body row).
-	// [0]=name, [1]=info, [2]=label, [3]=chan top, [4]=chan water, [5..8]=arch rows 5-8, [9]=arch row 9.
-	// After stripping ANSI and prefix: 12 spaces + ░ + 4 ▒ + 11 spaces (+ waterfall).
-	pierLine := stripANSITest(lines[9])
-	runes := []rune(pierLine)
-
-	const prefixLen = 14
-	const pillarW = 28
-	if len(runes) < prefixLen+pillarW {
-		t.Fatalf("pier row too short: %d runes, need at least %d", len(runes), prefixLen+pillarW)
-	}
-	content := runes[prefixLen : prefixLen+pillarW]
-
-	// Verify structure: 12 spaces, then ░, then 4 ▒, then 11 spaces.
-	for i := 0; i < 12; i++ {
-		if content[i] != ' ' {
-			t.Errorf("pier row content[%d] = %q, want ' '", i, content[i])
-			break
-		}
-	}
-	if content[12] != '░' {
-		t.Errorf("pier row content[12] = %q, want '░'", content[12])
-	}
-	for i := 13; i < 17; i++ {
-		if content[i] != '▒' {
-			t.Errorf("pier row content[%d] = %q, want '▒'", i, content[i])
-			break
-		}
-	}
-	for i := 17; i < 28; i++ {
-		if content[i] != ' ' {
-			t.Errorf("pier row content[%d] = %q, want ' '", i, content[i])
-			break
-		}
+	const headerRows = 5
+	const mipmapLines = 37 // 100x38 mipmap for width=100, after cursor-seq strip
+	const wantTotal = headerRows + mipmapLines
+	if len(lines) != wantTotal {
+		t.Errorf("tuiAqueductRow() returned %d lines, want %d (5 header + 37 mipmap)", len(lines), wantTotal)
 	}
 }
 
@@ -1218,10 +1244,14 @@ func TestViewAqueductArches_ActiveAqueductDoesNotShowDrought(t *testing.T) {
 	}
 }
 
-// TestTuiAqueductRow_ActiveStepHasDifferentCrownColor verifies that the active
-// step pillar uses a different ANSI color for ▒ in the crown row than idle pillars.
+// TestTuiAqueductRow_ActiveVsIdle_ChannelWaterDiffers verifies that when a
+// droplet is active the channel water row (rows[4]) differs from the idle case.
+// The arch section (rows[5:]) is a static pre-rendered mipmap and is identical
+// for both active and idle aqueducts; the visual active/idle distinction is
+// carried by the animated channel row and the name/info lines above it.
+//
 // Forces TrueColor rendering so lipgloss emits ANSI escape codes in the test context.
-func TestTuiAqueductRow_ActiveStepHasDifferentCrownColor(t *testing.T) {
+func TestTuiAqueductRow_ActiveVsIdle_ChannelWaterDiffers(t *testing.T) {
 	// Force TrueColor so lipgloss emits ANSI escape sequences; restore after.
 	orig := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.TrueColor)
@@ -1242,16 +1272,15 @@ func TestTuiAqueductRow_ActiveStepHasDifferentCrownColor(t *testing.T) {
 		Steps: steps,
 	}, 0)
 
-	// Crown row is result[5] (after name[0], info[1], label[2], chan-top[3], chan-water[4]).
-	// Active version must differ from idle (different color escape).
-	if active[5] == idle[5] {
-		t.Error("active crown row should have different ANSI color than idle crown row")
+	// Channel water row is rows[4]. Active (wet) must differ from idle (dry).
+	if active[4] == idle[4] {
+		t.Error("channel water row (rows[4]) should differ between active and idle aqueduct")
 	}
 
-	// Both versions must have the same plain-text content (same ▒ chars, just different colors).
-	if stripANSITest(active[5]) != stripANSITest(idle[5]) {
-		t.Errorf("active and idle crown rows should have same plain text\nactive: %q\nidle:   %q",
-			stripANSITest(active[5]), stripANSITest(idle[5]))
+	// The mipmap arch (rows[5]) is a static image — same content regardless of step state.
+	if active[5] != idle[5] {
+		t.Errorf("mipmap arch rows[5] should be identical for active and idle (static image)\nactive: %q\nidle:   %q",
+			active[5], idle[5])
 	}
 }
 

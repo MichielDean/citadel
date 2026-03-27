@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Dashboard TUI: replace ASCII arch with chafa-rendered pixel art mipmaps (ci-9lzhh)
+- The aqueduct arch diagram in `ct dashboard` now renders high-quality pixel art instead of hand-drawn ASCII
+- Three mipmap levels automatically selected based on terminal width for pixel-perfect rendering at any size:
+  - **Width ≥ 90 columns**: 100×38 mipmap (highest quality)
+  - **Width ≥ 70 columns**: 80×30 mipmap (medium quality)
+  - **Width < 70 columns**: 60×22 mipmap (mobile/constrained terminals)
+- Generated with `chafa --size <WxH> --font-ratio=1/2 --colors full --symbols block` for rich color gradients and block character rendering
+- Mipmaps are embedded at compile time (`go:embed`) — no additional assets required at runtime
+- Cursor-visibility escape sequences (`\x1b[?25l` / `\x1b[?25h`) are automatically stripped before rendering, preventing terminal state pollution
+- Visual improvement: arch now has realistic shading, smooth curves, and detailed stonework instead of geometric block patterns
+- No changes to overall dashboard layout or functionality — only the pillar arch visual is replaced
+
 ### Add ct droplet stats command: show droplet counts by status (ci-2a4ms)
 - New `ct droplet stats` command displays a summary table of droplet counts grouped by status: flowing (in_progress), queued (open), delivered, and stagnant
 - Output is a simple tabwriter table showing counts for each status category plus a total count

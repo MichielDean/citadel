@@ -188,29 +188,26 @@ func TestDashboard_PeekSelect_InTmux_Success_ClearsPeekSelectMode(t *testing.T) 
 	}
 }
 
-// TestTuiAqueductRow_WaterfallIndex_WidePoolRowsAtBottom verifies that when a
-// droplet is on the final step the wide-pool waterfall rows (containing "≈")
-// appear at the bottom of the arch, not near the top.
+// TestTuiAqueductRow_MipmapArch_ReplacesOldPillarRows verifies that tuiAqueductRow
+// uses the pre-rendered pixel art mipmap for the arch section instead of hand-drawn
+// ASCII pillar rows, and that the total row count equals 5 header rows plus the
+// mipmap height for the given terminal width.
 //
-// wfRows is a 14-element array indexed 0..13. The arch loop runs r=5..13 (9
-// iterations). Using wfRows[r] skips the first five entries and places the
-// wide-pool rows (indices 7–8) at arch rows r=7 and r=8 — near the top.
-// The correct index is wfRows[r-5], which maps r=12→wfRows[7] and
-// r=13→wfRows[8], placing the pool at the very bottom of the waterfall.
+// Layout returned by tuiAqueductRow with mipmap arch:
 //
-// Result layout returned by tuiAqueductRow:
+//	rows[0]     = nameLine
+//	rows[1]     = infoLine
+//	rows[2]     = lblLine
+//	rows[3]     = l1 (channel top)
+//	rows[4]     = l2 (channel water + wfExit when last step)
+//	rows[5..N]  = mipmap arch lines (22 lines for width=0 → 60x22 mipmap)
 //
-//	rows[0]    = nameLine
-//	rows[1]    = infoLine
-//	rows[2]    = lblLine
-//	rows[3]    = l1 (channel top)
-//	rows[4]    = l2 (channel water + wfExit)
-//	rows[5..13] = arch rows for r=5..13
-//
-// Given: a CataractaeInfo with a droplet assigned to the last step
+// Given: a CataractaeInfo with a droplet assigned to the last step and a zero-width model
 // When:  tuiAqueductRow is called at frame 0
-// Then:  "≈" appears only in rows[12] and rows[13], never in rows[5..11]
-func TestTuiAqueductRow_WaterfallIndex_WidePoolRowsAtBottom(t *testing.T) {
+// Then:  total rows == 27 (5 header + 22 mipmap lines for width=0)
+//
+//	and all mipmap rows (rows[5:]) are non-empty
+func TestTuiAqueductRow_MipmapArch_ReplacesOldPillarRows(t *testing.T) {
 	steps := []string{"implement", "review", "merge"}
 	ch := CataractaeInfo{
 		Name:      "virgo",
@@ -219,25 +216,21 @@ func TestTuiAqueductRow_WaterfallIndex_WidePoolRowsAtBottom(t *testing.T) {
 		Step:      "merge", // last step → isLastStep = true
 		Steps:     steps,
 	}
+	// Zero-width model → selectArchMipmap(0) returns 60x22 mipmap (22 lines).
 	m := dashboardTUIModel{}
 	rows := m.tuiAqueductRow(ch, 0)
 
-	// Sanity: nameLine + infoLine + lblLine + l1 + l2 + 9 arch rows = 14.
-	if len(rows) != 14 {
-		t.Fatalf("tuiAqueductRow returned %d rows, want 14", len(rows))
+	const wantHeaderRows = 5 // nameLine + infoLine + lblLine + l1 + l2
+	const wantMipmapLines = 22 // 60x22 mipmap: 22 visual lines after cursor-seq strip
+	wantTotal := wantHeaderRows + wantMipmapLines
+	if len(rows) != wantTotal {
+		t.Fatalf("tuiAqueductRow returned %d rows, want %d (5 header + 22 mipmap)", len(rows), wantTotal)
 	}
 
-	// Upper arch rows must NOT contain the wide-pool "≈" glyph.
-	for i := 5; i <= 11; i++ {
-		if strings.Contains(rows[i], "≈") {
-			t.Errorf("rows[%d] contains '≈' (wide-pool row should be at the bottom, not row %d); got: %q", i, i, rows[i])
-		}
-	}
-
-	// The last two arch rows MUST contain "≈" (wfRows[7] and wfRows[8]).
-	for i := 12; i <= 13; i++ {
-		if !strings.Contains(rows[i], "≈") {
-			t.Errorf("rows[%d] missing '≈' (wide-pool row should appear at bottom of waterfall); got: %q", i, rows[i])
+	// All mipmap rows must be non-empty (pixel art content present).
+	for i := wantHeaderRows; i < len(rows); i++ {
+		if rows[i] == "" {
+			t.Errorf("rows[%d] is empty; expected non-empty mipmap line", i)
 		}
 	}
 }
@@ -454,5 +447,71 @@ func TestTuiFlowGraphRow_InfoLine_IncludesTitle(t *testing.T) {
 
 	if !strings.Contains(infoLine, "Add retry logic to export pipeline") {
 		t.Errorf("flow graph info line should include title, got: %q", infoLine)
+	}
+}
+
+// --- selectArchMipmap tests ---
+
+// TestSelectArchMipmap_ReturnsCorrectLevelForWidth verifies that selectArchMipmap
+// picks the mipmap level whose width is closest to the available slot width,
+// using the thresholds: width >= 90 → 100x38; width >= 70 → 80x30; else → 60x22.
+//
+// Given: various terminal widths
+// When:  selectArchMipmap is called
+// Then:  the returned string has the expected number of lines for each level
+func TestSelectArchMipmap_ReturnsCorrectLevelForWidth(t *testing.T) {
+	tests := []struct {
+		width     int
+		wantLines int
+		desc      string
+	}{
+		{120, 37, "width 120 >= 90 → 100x38 (37 visual lines after cursor-seq strip)"},
+		{100, 37, "width 100 >= 90 → 100x38 (37 visual lines after cursor-seq strip)"},
+		{90, 37, "width == 90 → 100x38 (37 visual lines after cursor-seq strip)"},
+		{89, 30, "width 89 < 90 → 80x30 (30 lines)"},
+		{80, 30, "width 80 >= 70 → 80x30 (30 lines)"},
+		{70, 30, "width == 70 → 80x30 (30 lines)"},
+		{69, 22, "width 69 < 70 → 60x22 (22 lines)"},
+		{60, 22, "width 60 < 70 → 60x22 (22 lines)"},
+		{0, 22, "width 0 < 70 → 60x22 (22 lines)"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.desc, func(t *testing.T) {
+			got := selectArchMipmap(tc.width)
+			if got == "" {
+				t.Fatalf("selectArchMipmap(%d): returned empty string", tc.width)
+			}
+			lines := strings.Split(strings.TrimRight(got, "\n"), "\n")
+			if len(lines) != tc.wantLines {
+				t.Errorf("selectArchMipmap(%d): got %d lines, want %d", tc.width, len(lines), tc.wantLines)
+			}
+		})
+	}
+}
+
+// TestSelectArchMipmap_EachLevelReturnsDistinctContent verifies that the three
+// mipmap levels are distinct strings (i.e., the embed loaded different files).
+//
+// Given: the three boundary widths that select different levels
+// When:  selectArchMipmap is called for each
+// Then:  all three returned strings are non-empty and pairwise distinct
+func TestSelectArchMipmap_EachLevelReturnsDistinctContent(t *testing.T) {
+	large := selectArchMipmap(90)  // 100x38
+	medium := selectArchMipmap(70) // 80x30
+	small := selectArchMipmap(0)   // 60x22
+
+	for _, s := range []string{large, medium, small} {
+		if s == "" {
+			t.Fatal("selectArchMipmap returned empty string for at least one level")
+		}
+	}
+	if large == medium {
+		t.Error("large (100x38) and medium (80x30) mipmaps are identical — embed may be wrong")
+	}
+	if medium == small {
+		t.Error("medium (80x30) and small (60x22) mipmaps are identical — embed may be wrong")
+	}
+	if large == small {
+		t.Error("large (100x38) and small (60x22) mipmaps are identical — embed may be wrong")
 	}
 }
