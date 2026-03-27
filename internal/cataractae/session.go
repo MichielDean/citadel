@@ -9,9 +9,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"time"
 
-	"github.com/MichielDean/cistern/internal/oauth"
 	"github.com/MichielDean/cistern/internal/provider"
 )
 
@@ -90,18 +88,6 @@ func (s *Session) spawn() error {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("spawn: cannot determine home directory: %w", err)
-	}
-
-	// Pre-spawn: read the current Claude OAuth token from ~/.claude/.credentials.json
-	// and inject it into the process environment so collectEnvArgs picks it up.
-	// We read the token fresh every spawn rather than trying to refresh it ourselves —
-	// the Claude CLI manages its own token refresh when run interactively, so we simply
-	// defer to whatever it has written. This avoids the broken Anthropic refresh endpoint
-	// that returns HTTP 400 "Invalid request format" for our request format.
-	if err := injectClaudeTokenFromCredentials(home); err != nil {
-		slog.Default().Warn("session: could not read Claude credentials — falling back to ANTHROPIC_API_KEY env var",
-			"error", err)
-		// Non-fatal: fall back to whatever is already in ANTHROPIC_API_KEY.
 	}
 
 	skillsDir := filepath.Join(home, ".cistern", "skills")
@@ -229,28 +215,20 @@ func isSessionAlive(sessionID string) bool {
 
 // collectEnvArgs builds the tmux -e env argument pairs for the session.
 // The preset path forwards EnvPassthrough vars and ExtraEnv static values.
-// The legacy path forwards ANTHROPIC_API_KEY.
 // Platform-level vars (PATH, GH_TOKEN, CT_CATARACTA_NAME, CT_DB) are always
 // forwarded regardless of provider.
 func (s *Session) collectEnvArgs() []string {
 	var args []string
 
-	if s.Preset.Name != "" {
-		// Preset-driven env passthrough: forward each listed var if set.
-		for _, envVar := range s.Preset.EnvPassthrough {
-			if val := os.Getenv(envVar); val != "" {
-				args = append(args, "-e", envVar+"="+val)
-			}
+	// Preset-driven env passthrough: forward each listed var if set.
+	for _, envVar := range s.Preset.EnvPassthrough {
+		if val := os.Getenv(envVar); val != "" {
+			args = append(args, "-e", envVar+"="+val)
 		}
-		// Extra env: static values injected from preset config overrides.
-		for k, v := range s.Preset.ExtraEnv {
-			args = append(args, "-e", k+"="+v)
-		}
-	} else {
-		// Legacy fallback: forward the claude API key.
-		if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
-			args = append(args, "-e", "ANTHROPIC_API_KEY="+key)
-		}
+	}
+	// Extra env: static values injected from preset config overrides.
+	for k, v := range s.Preset.ExtraEnv {
+		args = append(args, "-e", k+"="+v)
 	}
 
 	// Always-pass: platform-level vars needed regardless of provider.
@@ -588,50 +566,6 @@ var claudePathFn = claudePath
 // Holding this lock during the detect→kill→retry block ensures only one goroutine
 // restarts the tmux server at a time.
 var tmuxRecoveryMu sync.Mutex
-
-// injectClaudeTokenFromCredentials reads the current access token from
-// ~/.claude/.credentials.json and injects it into ANTHROPIC_API_KEY so
-// collectEnvArgs forwards the fresh token into agent tmux sessions.
-//
-// Design rationale: the Claude CLI manages its own OAuth token lifecycle —
-// when Michiel runs claude interactively, it refreshes and writes a new token.
-// We read that token fresh on every spawn rather than maintaining our own
-// refresh path. The Anthropic token refresh endpoint returns HTTP 400 for our
-// request format, so we deliberately do not attempt refresh here.
-//
-// If the credentials file is absent or unreadable, the function returns an
-// error and the caller falls back to whatever is already in ANTHROPIC_API_KEY.
-// injectTokenMu serializes token injection + CLI refresh across concurrent spawns.
-var injectTokenMu sync.Mutex
-
-func injectClaudeTokenFromCredentials(home string) error {
-	injectTokenMu.Lock()
-	defer injectTokenMu.Unlock()
-
-	creds := oauth.Read(home)
-	if creds == nil || creds.AccessToken == "" {
-		return fmt.Errorf("no access token in ~/.claude/.credentials.json")
-	}
-
-	// If the token is expired, force the Claude CLI to refresh it by running a
-	// no-op invocation. The CLI manages its own OAuth lifecycle — when it runs
-	// it checks the token and refreshes via its own mechanism (which works,
-	// unlike the Anthropic refresh endpoint which returns HTTP 400 for us).
-	if oauth.IsExpiredOrNear(creds, 2*time.Minute) {
-		slog.Default().Info("session: OAuth token expired or near-expiry — triggering Claude CLI refresh")
-		cmd := exec.Command(claudePathFn(), "--print", "-p", ".")
-		cmd.Env = append(os.Environ(), "ANTHROPIC_API_KEY="+creds.AccessToken)
-		_ = cmd.Run() // best-effort — re-read credentials regardless of exit code
-
-		// Re-read after CLI run — it may have refreshed the token.
-		if fresh := oauth.Read(home); fresh != nil && fresh.AccessToken != "" {
-			creds = fresh
-		}
-	}
-
-	os.Setenv("ANTHROPIC_API_KEY", creds.AccessToken) //nolint:errcheck
-	return nil
-}
 
 // claudePath returns the absolute path to the claude binary.
 func claudePath() string {

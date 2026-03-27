@@ -42,7 +42,7 @@ func TestProviderCommandStrings(t *testing.T) {
 			preset:               builtinPreset(t, "claude"),
 			wantCommand:          "claude",
 			wantArgs:             []string{"--dangerously-skip-permissions"},
-			wantEnvPassthrough:   []string{"ANTHROPIC_API_KEY"},
+			wantEnvPassthrough:   nil, // claude uses its own OAuth credentials — no env var required
 			wantInstructionsFile: "CLAUDE.md",
 			wantAddDir:           true,
 			wantModelFlag:        "--model",

@@ -98,7 +98,6 @@ var builtins = []ProviderPreset{
 		Name:             "claude",
 		Command:          "claude",
 		Args:             []string{"--dangerously-skip-permissions"},
-		EnvPassthrough:   []string{"ANTHROPIC_API_KEY"},
 		ProcessNames:     []string{"claude", "node"},
 		ModelFlag:        "--model",
 		AddDirFlag:       "--add-dir",

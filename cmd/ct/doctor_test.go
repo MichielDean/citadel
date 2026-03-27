@@ -846,6 +846,8 @@ func TestProviderInstallHint_KnownPreset_ReturnsHint(t *testing.T) {
 // --- Env var checks (check 2) ---
 
 func TestRunDoctorExtendedChecks_EnvVarMissing_Fails(t *testing.T) {
+	// Claude authenticates via its own OAuth file — no env var required.
+	// Use codex (requires OPENAI_API_KEY) to test the env-var-missing path.
 	home := t.TempDir()
 
 	cisternDir := filepath.Join(home, ".cistern")
@@ -857,17 +859,19 @@ func TestRunDoctorExtendedChecks_EnvVarMissing_Fails(t *testing.T) {
 		}
 	}
 
-	// Fake binary present, but API key explicitly unset.
-	setupFakeBinAndAPIKey(t, "claude", "")
-	t.Setenv("ANTHROPIC_API_KEY", "")
+	// Fake codex binary present, but OPENAI_API_KEY explicitly unset.
+	setupFakeBinAndAPIKey(t, "codex", "")
+	t.Setenv("OPENAI_API_KEY", "")
 
+	codexWorkflow := strings.ReplaceAll(minimalWorkflowYAML, "provider: claude", "provider: codex")
 	wfPath := filepath.Join(aqueductDir, "workflow.yaml")
-	if err := os.WriteFile(wfPath, []byte(minimalWorkflowYAML), 0o644); err != nil {
+	if err := os.WriteFile(wfPath, []byte(codexWorkflow), 0o644); err != nil {
 		t.Fatalf("write workflow: %v", err)
 	}
 
+	codexConfig := strings.ReplaceAll(minimalCisternConfigYAML, "provider: claude", "provider: codex")
 	cfgPath := filepath.Join(cisternDir, "cistern.yaml")
-	if err := os.WriteFile(cfgPath, []byte(minimalCisternConfigYAML), 0o644); err != nil {
+	if err := os.WriteFile(cfgPath, []byte(codexConfig), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 
@@ -875,8 +879,8 @@ func TestRunDoctorExtendedChecks_EnvVarMissing_Fails(t *testing.T) {
 	if err := os.MkdirAll(testerDir, 0o755); err != nil {
 		t.Fatalf("mkdir tester: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(testerDir, "CLAUDE.md"), []byte("ct droplet pass"), 0o644); err != nil {
-		t.Fatalf("write CLAUDE.md: %v", err)
+	if err := os.WriteFile(filepath.Join(testerDir, "AGENTS.md"), []byte("ct droplet pass"), 0o644); err != nil {
+		t.Fatalf("write AGENTS.md: %v", err)
 	}
 
 	cfg, err := aqueduct.ParseAqueductConfig(cfgPath)

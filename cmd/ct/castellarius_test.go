@@ -585,11 +585,12 @@ func TestStartupRequiredEnvVars_GeminiConfig_ReturnsGeminiKey(t *testing.T) {
 	}
 }
 
-func TestStartupRequiredEnvVars_ClaudeConfig_ReturnsAnthropicKey(t *testing.T) {
+func TestStartupRequiredEnvVars_ClaudeConfig_ReturnsNoRequiredVars(t *testing.T) {
+	// Claude authenticates via its own OAuth credentials file — no env vars required.
 	cfgPath := writeMinimalConfig(t, t.TempDir(), "claude")
 	vars, usesClaude := startupRequiredEnvVars(cfgPath)
-	if len(vars) != 1 || vars[0] != "ANTHROPIC_API_KEY" {
-		t.Errorf("expected [ANTHROPIC_API_KEY], got %v", vars)
+	if len(vars) != 0 {
+		t.Errorf("expected no required vars for claude, got %v", vars)
 	}
 	if !usesClaude {
 		t.Error("expected usesClaude=true for claude provider")

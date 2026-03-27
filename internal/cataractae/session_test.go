@@ -974,62 +974,6 @@ func TestResolveIdentityDir_FallbackSandbox(t *testing.T) {
 	}
 }
 
-// --- ensureClaudeOAuthFresh tests ---
-
-// writeSessionCredentials writes a minimal credentials file for session tests.
-func writeSessionCredentials(t *testing.T, home, accessToken, refreshToken string, expiresAtMs int64) {
-	t.Helper()
-	claudeDir := filepath.Join(home, ".claude")
-	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
-		t.Fatalf("mkdir .claude: %v", err)
-	}
-	content := fmt.Sprintf(
-		`{"claudeAiOauth":{"accessToken":%q,"refreshToken":%q,"expiresAt":%d}}`,
-		accessToken, refreshToken, expiresAtMs,
-	)
-	if err := os.WriteFile(filepath.Join(claudeDir, ".credentials.json"), []byte(content), 0o600); err != nil {
-		t.Fatalf("write credentials: %v", err)
-	}
-}
-
-func TestInjectClaudeTokenFromCredentials_InjectsToken(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	writeSessionCredentials(t, home, "tok-fresh", "tok-refresh", time.Now().Add(time.Hour).UnixMilli())
-
-	if err := injectClaudeTokenFromCredentials(home); err != nil {
-		t.Fatalf("injectClaudeTokenFromCredentials: %v", err)
-	}
-	if got := os.Getenv("ANTHROPIC_API_KEY"); got != "tok-fresh" {
-		t.Errorf("ANTHROPIC_API_KEY = %q, want tok-fresh", got)
-	}
-}
-
-func TestInjectClaudeTokenFromCredentials_NoCredentials_ReturnsError(t *testing.T) {
-	home := t.TempDir()
-	// No credentials file — should return an error (non-fatal, caller logs warn).
-	err := injectClaudeTokenFromCredentials(home)
-	if err == nil {
-		t.Error("expected error when credentials file absent")
-	}
-}
-
-func TestInjectClaudeTokenFromCredentials_ExpiredToken_StillInjects(t *testing.T) {
-	// Even an expired token should be injected — the agent will fail auth and
-	// the session log capture will tell us why. We do not attempt refresh.
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	expiredAt := time.Now().Add(-1 * time.Hour).UnixMilli()
-	writeSessionCredentials(t, home, "tok-expired", "tok-refresh", expiredAt)
-
-	if err := injectClaudeTokenFromCredentials(home); err != nil {
-		t.Fatalf("injectClaudeTokenFromCredentials: %v", err)
-	}
-	if got := os.Getenv("ANTHROPIC_API_KEY"); got != "tok-expired" {
-		t.Errorf("ANTHROPIC_API_KEY = %q, want tok-expired", got)
-	}
-}
-
 // TestBuildPresetCmd_CommandWithSpaces_IsShellQuoted verifies that a command
 // path containing spaces is shell-quoted before being interpolated into the
 // tmux command string. An unquoted path with spaces would split in /bin/sh -c.
