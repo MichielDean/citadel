@@ -190,7 +190,7 @@ func TestDashboard_PeekSelect_InTmux_Success_ClearsPeekSelectMode(t *testing.T) 
 
 // TestTuiAqueductRow_MipmapArch_ReplacesOldPillarRows verifies that tuiAqueductRow
 // uses the pre-rendered pixel art mipmap for the arch section instead of hand-drawn
-// ASCII pillar rows, and that the total row count equals 5 header rows plus the
+// ASCII pillar rows, and that the total row count equals 3 header rows plus the
 // mipmap height for the given terminal width.
 //
 // Layout returned by tuiAqueductRow with mipmap arch:
@@ -198,15 +198,13 @@ func TestDashboard_PeekSelect_InTmux_Success_ClearsPeekSelectMode(t *testing.T) 
 //	rows[0]     = nameLine
 //	rows[1]     = infoLine
 //	rows[2]     = lblLine
-//	rows[3]     = l1 (channel top)
-//	rows[4]     = l2 (channel water + wfExit when last step)
-//	rows[5..N]  = mipmap arch lines (12 lines for width=0 → 36x12 mipmap)
+//	rows[3..N]  = mipmap arch lines (12 lines for width=0 → 36x12 mipmap)
 //
 // Given: a CataractaeInfo with a droplet assigned to the last step and a zero-width model
 // When:  tuiAqueductRow is called at frame 0
-// Then:  total rows == 17 (5 header + 12 mipmap lines for width=0)
+// Then:  total rows == 15 (3 header + 12 mipmap lines for width=0)
 //
-//	and all mipmap rows (rows[5:]) are non-empty
+//	and all mipmap rows (rows[3:]) are non-empty
 func TestTuiAqueductRow_MipmapArch_ReplacesOldPillarRows(t *testing.T) {
 	steps := []string{"implement", "review", "merge"}
 	ch := CataractaeInfo{
@@ -220,11 +218,11 @@ func TestTuiAqueductRow_MipmapArch_ReplacesOldPillarRows(t *testing.T) {
 	m := dashboardTUIModel{}
 	rows := m.tuiAqueductRow(ch, 0)
 
-	const wantHeaderRows = 5   // nameLine + infoLine + lblLine + l1 + l2
+	const wantHeaderRows = 3   // nameLine + infoLine + lblLine
 	const wantMipmapLines = 12 // 36x12 mipmap: 12 visual lines after cursor-seq strip
 	wantTotal := wantHeaderRows + wantMipmapLines
 	if len(rows) != wantTotal {
-		t.Fatalf("tuiAqueductRow returned %d rows, want %d (5 header + 12 mipmap)", len(rows), wantTotal)
+		t.Fatalf("tuiAqueductRow returned %d rows, want %d (3 header + 12 mipmap)", len(rows), wantTotal)
 	}
 
 	// All mipmap rows must be non-empty (pixel art content present).
@@ -232,6 +230,94 @@ func TestTuiAqueductRow_MipmapArch_ReplacesOldPillarRows(t *testing.T) {
 		if rows[i] == "" {
 			t.Errorf("rows[%d] is empty; expected non-empty mipmap line", i)
 		}
+	}
+}
+
+// TestTuiAqueductRow_ActiveMipmap_WaterAnimatesTopRows verifies that for an
+// active aqueduct the mipmap's top 2 rows (rows[3] and rows[4]) contain animated
+// wave characters (░▒▓≈) rather than the static pixel-art content.
+//
+// Given: a CataractaeInfo with an active droplet at the first step
+// When:  tuiAqueductRow is called at frame 0
+// Then:  rows[3] and rows[4] (first two mipmap rows) contain the wave char ≈,
+//
+//	which is unique to the wave animation and absent from the static mipmap
+func TestTuiAqueductRow_ActiveMipmap_WaterAnimatesTopRows(t *testing.T) {
+	ch := CataractaeInfo{
+		Name:      "virgo",
+		RepoName:  "myrepo",
+		DropletID: "ci-test01",
+		Step:      "implement",
+		Steps:     []string{"implement", "review"},
+	}
+	m := dashboardTUIModel{}
+	rows := m.tuiAqueductRow(ch, 0)
+
+	const headerRows = 3
+	if len(rows) < headerRows+2 {
+		t.Fatalf("expected at least %d rows, got %d", headerRows+2, len(rows))
+	}
+
+	// ≈ is unique to the wave animation pattern; the static mipmap never contains it.
+	for _, rowIdx := range []int{headerRows, headerRows + 1} {
+		if !strings.Contains(stripANSI(rows[rowIdx]), "≈") {
+			t.Errorf("rows[%d] should contain wave char '≈', got: %q", rowIdx, stripANSI(rows[rowIdx]))
+		}
+	}
+}
+
+// TestTuiAqueductRow_IdleMipmap_TopRowsAreStatic verifies that for an idle
+// aqueduct (no active droplet) the mipmap rows are unmodified static pixel art —
+// no wave characters are injected.
+//
+// Given: a CataractaeInfo with no DropletID (idle)
+// When:  tuiAqueductRow is called at frame 0
+// Then:  rows[3] (first mipmap row) does not contain the wave char ≈
+func TestTuiAqueductRow_IdleMipmap_TopRowsAreStatic(t *testing.T) {
+	ch := CataractaeInfo{
+		Name:     "virgo",
+		RepoName: "myrepo",
+		Steps:    []string{"implement", "review"},
+	}
+	m := dashboardTUIModel{}
+	rows := m.tuiAqueductRow(ch, 0)
+
+	const headerRows = 3
+	if len(rows) < headerRows+1 {
+		t.Fatalf("expected at least %d rows, got %d", headerRows+1, len(rows))
+	}
+
+	if strings.Contains(stripANSI(rows[headerRows]), "≈") {
+		t.Errorf("rows[%d] for idle aqueduct should not contain wave char '≈', got: %q",
+			headerRows, stripANSI(rows[headerRows]))
+	}
+}
+
+// TestTuiAqueductRow_WaterExitAppendsToLastMipmapRow verifies that for an
+// active aqueduct on its final step the wfExit indicator (░▒▓▓) is appended
+// to the last mipmap row rather than a separate channel row.
+//
+// Given: a CataractaeInfo with a droplet assigned to the final step
+// When:  tuiAqueductRow is called at frame 0
+// Then:  the last returned row (last mipmap line) contains "▓▓" from wfExit
+func TestTuiAqueductRow_WaterExitAppendsToLastMipmapRow(t *testing.T) {
+	ch := CataractaeInfo{
+		Name:      "virgo",
+		RepoName:  "myrepo",
+		DropletID: "ci-test01",
+		Step:      "merge",
+		Steps:     []string{"implement", "review", "merge"},
+	}
+	m := dashboardTUIModel{}
+	rows := m.tuiAqueductRow(ch, 0)
+
+	if len(rows) == 0 {
+		t.Fatal("tuiAqueductRow returned no rows")
+	}
+
+	lastRow := rows[len(rows)-1]
+	if !strings.Contains(stripANSI(lastRow), "▓▓") {
+		t.Errorf("last row should contain wfExit '▓▓', got: %q", stripANSI(lastRow))
 	}
 }
 
