@@ -105,6 +105,19 @@ func main() {
 	flag.String("resume", "", "")
 	flag.Parse()
 
+	mode := os.Getenv("FAKEAGENT_MODE")
+
+	// Interactive mode: optionally dump environment variables for env-hygiene integration tests.
+	// When FAKEAGENT_MODE=env_dump the agent prints all env vars to stdout (which is tee'd to
+	// the session log), then proceeds normally so the droplet still gets delivered.
+	if mode == "env_dump" {
+		fmt.Println("=== FAKEAGENT ENV DUMP ===")
+		for _, e := range os.Environ() {
+			fmt.Println(e)
+		}
+		fmt.Println("=== END ENV DUMP ===")
+	}
+
 	// Interactive mode: read CONTEXT.md from the working directory to find the droplet ID.
 	data, err := os.ReadFile("CONTEXT.md")
 	if err != nil {
@@ -119,6 +132,11 @@ func main() {
 		os.Exit(1)
 	}
 	dropletID := string(m[1])
+
+	// no_signal mode: exit without signaling — used for dead-session recovery tests.
+	if mode == "no_signal" {
+		os.Exit(0)
+	}
 
 	// Simulate work.
 	time.Sleep(200 * time.Millisecond)
