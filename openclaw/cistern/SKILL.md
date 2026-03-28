@@ -149,7 +149,7 @@ systemctl --user start cistern-ttyd.service
 | Symptom | Check |
 |---------|-------|
 | Castellarius not running | `systemctl --user status cistern-castellarius` → start it |
-| Sessions failing auth | `claude -p "hi"` — if that works, Claude's own auth is fine. Check nothing is setting ANTHROPIC_API_KEY in the env |
+| Sessions failing auth | `claude auth status` — if that shows logged in, Claude's own auth is fine. Check nothing is setting ANTHROPIC_API_KEY in the env |
 | Droplet stuck | `ct droplet show <id>` — check notes; `ct droplet restart <id>` |
 | Logs | `journalctl --user -u cistern-castellarius -f` or `cat ~/.cistern/castellarius.log` |
 | Dashboard stale after rebuild | Kill old process on port 5737, restart cistern-ttyd.service |
