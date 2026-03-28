@@ -462,7 +462,8 @@ func (m dashboardTUIModel) viewStatusBar() string {
 }
 
 // viewAqueductArches renders the dashboard aqueduct section.
-// Active aqueducts first (with blank line between each), then all idle ones below.
+// Active aqueducts are stacked with no blank lines between them.
+// Idle aqueducts follow with a single blank separator.
 func (m dashboardTUIModel) viewAqueductArches() []string {
 	if len(m.data.Cataractae) == 0 {
 		return []string{"  No aqueducts configured"}
@@ -479,11 +480,8 @@ func (m dashboardTUIModel) viewAqueductArches() []string {
 
 	var lines []string
 
-	// Active aqueducts: progress bar with a blank line between each for breathing room.
-	for i, ch := range active {
-		if i > 0 {
-			lines = append(lines, "")
-		}
+	// Active aqueducts: stacked with no blank lines between them.
+	for _, ch := range active {
 		lines = append(lines, m.viewAqueductProgress(ch))
 	}
 
@@ -510,10 +508,19 @@ func (m dashboardTUIModel) viewAqueductRow(ch CataractaeInfo) string {
 	return m.viewAqueductProgress(ch)
 }
 
-// viewAqueductProgress renders an active aqueduct as a segmented pipeline bar.
-// Each cataracta gets its own labelled segment. Open sluice gates (upstream
-// segment complete) render as seamless filled continuation — no walls, no gap.
-// Closed gates (water not yet arrived) render as ═╪═ breaking the flow.
+// viewAqueductProgress renders an active aqueduct as a two-row segmented bar.
+//
+// Layout (header + label + two bar rows, no trailing blank):
+//
+//	  virgo  ci-abc12  0s
+//	  implement      review      deliver
+//	               ][                      ← top bar: raised gates where cataracta complete
+//	  │██████████████│═╪═│░░░░░░░│        ← bottom bar: channel fill
+//
+// A gate is RAISED (shown on top row as ][) when the upstream segment is
+// complete. The bottom bar shows seamless fill through raised gates.
+// A gate is CLOSED (shown on bottom row as ═╪═, top row blank) when water
+// hasn't arrived yet.
 func (m dashboardTUIModel) viewAqueductProgress(ch CataractaeInfo) string {
 	g := tuiStyleGreen
 
@@ -523,20 +530,17 @@ func (m dashboardTUIModel) viewAqueductProgress(ch CataractaeInfo) string {
 	}
 	n := len(steps)
 
-	// Available width for the segmented bar (full terminal minus indent).
+	// Available width for the bar (full terminal minus indent).
 	indent := "  "
 	avail := m.width - len([]rune(indent))
 	if avail < 20 {
 		avail = 20
 	}
 
-	// Gate width: 3 chars between segments.
-	// Open gate renders as 3 filled █ (seamless).
-	// Closed gate renders as ═╪═.
-	const gateW = 3
+	// Gate width: 2 chars ("]['"). Open = raised to top row. Closed = ═╪ on bottom row.
+	const gateW = 2
 
 	// Each segment: │████│ with gateW-char gate between segments.
-	// Total chars: n*segW + (n-1)*gateW = avail → segW = (avail - gateW*(n-1)) / n
 	segW := (avail - gateW*(n-1)) / n
 	if segW < 3 {
 		segW = 3
@@ -554,14 +558,15 @@ func (m dashboardTUIModel) viewAqueductProgress(ch CataractaeInfo) string {
 	// Water colors.
 	const (
 		waterFull = "#1a8fa8" // completed segments
-		waterDark = "#0a3545" // empty segments
+		waterDark = "#0a3545" // empty/future segments
 	)
 	waterGradA := "#1a7a96"
 	waterGradB := "#a8eeff"
 
 	gateClosedStyle := tuiStyleDim
+	gateRaisedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(waterFull))
 
-	// wallStyle returns the channel wall colour (│) for segment i.
+	// wallStyle returns the channel wall colour for segment i.
 	wallStyle := func(i int) lipgloss.Style {
 		if i < activeIdx {
 			return lipgloss.NewStyle().Foreground(lipgloss.Color(waterFull))
@@ -576,7 +581,7 @@ func (m dashboardTUIModel) viewAqueductProgress(ch CataractaeInfo) string {
 	lblRow.WriteString(indent)
 	for i, s := range steps {
 		if i > 0 {
-			lblRow.WriteString(strings.Repeat(" ", gateW)) // align labels over gate gap
+			lblRow.WriteString(strings.Repeat(" ", gateW))
 		}
 		lbl := s
 		if len([]rune(lbl)) > segW {
@@ -592,74 +597,74 @@ func (m dashboardTUIModel) viewAqueductProgress(ch CataractaeInfo) string {
 		}
 	}
 
-	// Bar row: segments joined by open or closed gates.
-	var barRow strings.Builder
-	barRow.WriteString(indent)
+	// topRow: shows raised gate markers (][) at completed gate positions; spaces elsewhere.
+	// bottomRow: shows the full channel — seamless fill through raised gates, ═╪ for closed.
+	var topRow, botRow strings.Builder
+	topRow.WriteString(indent)
+	botRow.WriteString(indent)
+
 	for i := range steps {
 		if i > 0 {
 			// Gate between segment i-1 and segment i.
-			// OPEN (i-1 < activeIdx): render gateW solid █ in completed colour — seamless fill.
-			// CLOSED (i-1 >= activeIdx): render ═╪═ to visually break the channel.
+			// RAISED (open): upstream complete → ][ on top row, seamless fill on bottom.
+			// CLOSED: water not arrived → spaces on top, ═╪ on bottom.
 			if (i - 1) < activeIdx {
-				barRow.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(waterFull)).Render(strings.Repeat("█", gateW)))
+				topRow.WriteString(gateRaisedStyle.Render("]["))
+				botRow.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(waterFull)).Render(strings.Repeat("█", gateW)))
 			} else {
-				barRow.WriteString(gateClosedStyle.Render("═╪═"))
+				topRow.WriteString(strings.Repeat(" ", gateW))
+				botRow.WriteString(gateClosedStyle.Render("═╪"))
 			}
 		}
-		// Left channel wall — omitted when the left gate is open (seamless join).
-		// The right wall of the previous segment also becomes fill, so we only
-		// render walls at the very start and very end, and wherever a gate is closed.
-		leftWall := i == 0 // always render left wall of first segment
-		if i > 0 && (i-1) >= activeIdx {
-			leftWall = true // closed gate: render wall after it
+
+		// Left wall on bottom row — omit when left gate is raised (seamless join).
+		leftRaised := i > 0 && (i-1) < activeIdx
+		rightRaised := i < n-1 && i < activeIdx
+
+		// Top row: spaces over segment interior (gate markers are between segments only).
+		topRow.WriteString(strings.Repeat(" ", segW))
+
+		// Bottom row: left wall.
+		if !leftRaised {
+			botRow.WriteString(wallStyle(i).Render("│"))
 		}
-		if leftWall {
-			barRow.WriteString(wallStyle(i).Render("│"))
-		}
-		// Inner fill width: full segW when walls are suppressed by open gates,
-		// otherwise segW-2 (accounting for both │ walls).
-		leftOpen := i > 0 && (i-1) < activeIdx   // left side fused to previous segment
-		rightOpen := i < n-1 && i < activeIdx     // right side will fuse to next segment
+
+		// Inner fill width.
 		innerW := segW
-		if !leftOpen {
-			innerW-- // subtract left wall
+		if !leftRaised {
+			innerW--
 		}
-		if !rightOpen {
-			innerW-- // subtract right wall
+		if !rightRaised {
+			innerW--
 		}
 		if innerW < 0 {
 			innerW = 0
 		}
+
 		for j := 0; j < innerW; j++ {
 			if i < activeIdx {
-				// Completed: solid teal fill.
-				barRow.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(waterFull)).Render("█"))
+				botRow.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(waterFull)).Render("█"))
 			} else if i == activeIdx {
-				// Active: water gradient with animated leading edge.
 				filled := innerW
 				halfFilled := (filled * (m.frame % (filled + 1))) / filled
 				if j < halfFilled {
 					t := float64(j) / float64(filled)
 					color := interpolateHex(waterGradA, waterGradB, t)
-					barRow.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render("█"))
+					botRow.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render("█"))
 				} else if j == halfFilled {
 					edge := []string{"░", "▒", "▓"}[m.frame%3]
-					barRow.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(waterGradA)).Render(edge))
+					botRow.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(waterGradA)).Render(edge))
 				} else {
-					barRow.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(waterDark)).Render("░"))
+					botRow.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(waterDark)).Render("░"))
 				}
 			} else {
-				// Future: dim empty.
-				barRow.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(waterDark)).Render("░"))
+				botRow.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(waterDark)).Render("░"))
 			}
 		}
-		// Right channel wall — omit when right side is open (next gate is open).
-		rightWall := i == n-1 // always render right wall of last segment
-		if i < n-1 && i >= activeIdx {
-			rightWall = true // closed gate ahead: render wall before it
-		}
-		if rightWall {
-			barRow.WriteString(wallStyle(i).Render("│"))
+
+		// Bottom row: right wall — omit when right gate is raised.
+		if !rightRaised {
+			botRow.WriteString(wallStyle(i).Render("│"))
 		}
 	}
 
@@ -669,7 +674,7 @@ func (m dashboardTUIModel) viewAqueductProgress(ch CataractaeInfo) string {
 	elapsed := formatElapsed(ch.Elapsed)
 	header := fmt.Sprintf("%s%s  %s  %s", indent, name, ch.DropletID, elapsed)
 
-	return header + "\n" + lblRow.String() + "\n" + barRow.String() + "\n"
+	return header + "\n" + lblRow.String() + "\n" + topRow.String() + "\n" + botRow.String()
 }
 
 // pipelineLabel returns the pipeline steps as "step1 → step2 → ..." with the
