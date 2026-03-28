@@ -889,6 +889,37 @@ func TestViewAqueductProgress_PipelineContainsAllSteps(t *testing.T) {
 	}
 }
 
+// TestViewAqueductProgress_SluiceGates verifies open/closed gate rendering.
+// When step i-1 is complete (upstream of activeIdx), the gate between i-1 and i
+// must be seamless fill (no ═╪═, no │ between them).
+// When step i-1 is not yet complete, the gate must show ═╪═.
+func TestViewAqueductProgress_SluiceGates(t *testing.T) {
+	m := newDashboardTUIModel("", "")
+	m.width = 80
+
+	ch := CataractaeInfo{
+		Name:      "virgo",
+		DropletID: "ci-abc12",
+		Step:      "review",
+		Steps:     []string{"implement", "review", "deliver"},
+	}
+	result := m.viewAqueductProgress(ch)
+	stripped := stripANSITest(result)
+	barLine := strings.Split(stripped, "\n")[2]
+
+	// Gate between implement (complete) and review (active): must be seamless — no ═╪═ there.
+	// Gate between review (active) and deliver (future): must be closed — ═╪═ present.
+	if strings.Count(barLine, "═╪═") != 1 {
+		t.Errorf("expected exactly 1 closed gate (═╪═) when only one downstream gate is closed, bar=%q", barLine)
+	}
+	// The closed gate must appear after the active segment, not before it.
+	activeWallIdx := strings.Index(barLine, "│")
+	closedGateIdx := strings.Index(barLine, "═╪═")
+	if closedGateIdx <= activeWallIdx {
+		t.Errorf("closed gate should appear after the first wall (past the active segment), bar=%q", barLine)
+	}
+}
+
 // --- viewIdleAqueductRow tests ---
 
 func TestViewIdleAqueductRow_ShowsName(t *testing.T) {
