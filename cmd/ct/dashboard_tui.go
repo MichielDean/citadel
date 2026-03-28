@@ -683,8 +683,23 @@ func (m dashboardTUIModel) viewAqueductProgress(ch CataractaeInfo) string {
 
 	const nameW = 10
 	name := g.Render(padRight(ch.Name, nameW))
-	header := fmt.Sprintf("%s%s  %s", indent, name, ch.DropletID)
+	header := fmt.Sprintf("%s%s", indent, name)
 
+	// Droplet ID row: ID centered over the active segment column.
+	// Active segment starts at: activeIdx*(segW+gateW) visual chars from indent.
+	// For raised gates (i < activeIdx), each gate contributes gateW chars to both rows
+	// so the offset is uniform: activeIdx*(segW+gateW).
+	var idRow string
+	if activeIdx >= 0 && ch.DropletID != "" {
+		activeOffset := activeIdx * (segW + gateW)
+		// Center the ID within segW, then left-pad to the active segment column.
+		centeredID := padOrTruncCenter(ch.DropletID, segW)
+		idRow = indent + strings.Repeat(" ", activeOffset) + tuiStyleHeader.Render(centeredID)
+	}
+
+	if idRow != "" {
+		return header + "\n" + idRow + "\n" + lblRow.String() + "\n" + topRow.String() + "\n" + botRow.String()
+	}
 	return header + "\n" + lblRow.String() + "\n" + topRow.String() + "\n" + botRow.String()
 }
 
