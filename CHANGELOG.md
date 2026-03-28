@@ -2,12 +2,37 @@
 
 ## Unreleased
 
+### Update docs and CHANGELOG for complexity renumbering breaking change (ci-9f2js)
+- Removed remaining `trivial` references from user-facing documentation (README CLI reference)
+- Added migration guide and `**BREAKING CHANGE**` marker to the ci-9mbco CHANGELOG entry
+- Complexity guide table is consistent across all docs: 1=standard, 2=full, 3=critical
+
 ### Remove trivial complexity level and renumber (ci-9mbco)
+
+> **BREAKING CHANGE** — complexity integers have shifted. Scripts and external tooling using `--complexity <int>` must be updated.
+
+**Migration guide — integer mapping:**
+
+| Old value | Old name | → | New value | New name |
+|---|---|---|---|---|
+| 1 | trivial | → | *(removed)* | use 1 (standard) or omit for default full |
+| 2 | standard | → | 1 | standard |
+| 3 | full | → | 2 | full |
+| 4 | critical | → | 3 | critical |
+
+Update any scripts or CI configurations that pass `--complexity` as an integer:
+- `--complexity 1` (was trivial) → use `--complexity 1` (now standard) or omit for full(2) default
+- `--complexity 2` (was standard) → `--complexity 1`
+- `--complexity 3` (was full) → `--complexity 2`
+- `--complexity 4` (was critical) → `--complexity 3`
+- Named values (`standard`, `full`, `critical`) are unchanged and continue to work
+
+Changes:
 - Removed trivial complexity level — all droplets now use standard, full, or critical
 - Renumbered complexity codes: standard=1, full=2, critical=3 (was trivial=1, standard=2, full=3, critical=4)
-- Default complexity remains full(2) when no `--complexity` flag is specified
+- Default complexity for new droplets is full(2) when no `--complexity` flag is specified
 - All complexity-based pipeline routing, skip logic, and documentation updated
-- Backward-incompatible change: `--complexity 1` (old trivial) is now rejected with a clear error message
+- `--complexity 1` with the old trivial intent is now standard; passing an out-of-range integer is rejected with a clear error message
 
 ### Add ct droplet peek --raw flag: read session log directly without tmux (ci-7f5bz)
 - New `--raw` flag for `ct droplet peek` reads the session log file directly instead of attaching to tmux

@@ -469,7 +469,7 @@ ct droplet add --title "..." --repo myproject                     Add a droplet
 ct droplet add --title "..." --repo myproject --filter            LLM-assisted filtration before adding
 ct droplet add --title "..." --repo myproject --filter --yes      Non-interactive filtration (agent use)
 ct droplet add --title "..." --depends-on <id>                    Add with dependency on another droplet
-ct droplet add --title "..." --complexity trivial                  Set complexity (trivial/standard/full/critical or 1–4)
+ct droplet add --title "..." --complexity standard                 Set complexity (standard/full/critical or 1–3)
 ct droplet add --title "..." --priority 1                         Set priority (1=highest)
 ct droplet list                                                   List active droplets
 ct droplet list --all                                             Include delivered droplets (dimmed)
