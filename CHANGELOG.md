@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Track drought goroutine liveness in castellarius.health (ci-a6d81)
+
+- HealthFile schema extended with `droughtRunning: bool` and `droughtStartedAt: "<RFC3339>|null"` fields
+- Castellarius writes atomic updates to `~/.cistern/castellarius.health` when drought hooks start and end
+- `ct castellarius status` now displays `drought hooks: running (Xm)` when a drought goroutine is active; omitted when idle
+- Heartbeat cycle checks for hung drought goroutines: if `droughtRunning` is true and `now - droughtStartedAt > 5m`, logs a warning: `"drought goroutine may be hung"`
+- Useful for monitoring: external scripts can detect stalled drought cycles by reading the health file and comparing elapsed time
+- Atomic update pattern: all health file writes (including drought state) are atomic (write to `.tmp`, rename)
+
 ### Drought hooks: add 30s timeout to git fetch, auto-deploy skills and cataractae files (ci-mbo2j)
 
 **git_sync enhancements:**

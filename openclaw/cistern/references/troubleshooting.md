@@ -127,6 +127,21 @@ Drought hooks run during idle periods. If they're not firing:
 2. Check if the aqueduct has active droplets (drought only triggers when empty)
 3. Check logs: `journalctl --user -u cistern-castellarius | grep drought`
 
+## Drought Goroutine Appears Hung
+
+If a drought hook goroutine gets stuck and doesn't complete:
+
+1. Check status: `ct castellarius status` will show `drought hooks: running (Xm)` where X is the elapsed time
+   - If X > 5 minutes, the Castellarius has logged a warning: `"drought goroutine may be hung"`
+2. View health file: `cat ~/.cistern/castellarius.health` shows `"droughtRunning": true` and the start time
+3. Check recent warnings in logs: `journalctl --user -u cistern-castellarius -n 50 | grep "may be hung"`
+4. **Remedy**: Stop and restart the Castellarius to kill the stuck goroutine:
+   ```bash
+   ct castellarius stop
+   ct castellarius start
+   # or: systemctl --user restart cistern-castellarius
+   ```
+
 ## OAuth Token or API Key Expired
 
 Castellarius automatically detects expired or near-expiry credentials and handles them gracefully.

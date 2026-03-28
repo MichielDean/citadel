@@ -124,6 +124,7 @@ Displays the health and flow of all configured aqueducts:
   repo-4 (queue: 0 open, 0 active)
 
 last tick: 5s ago
+drought hooks: running (2m)
 ```
 
 - **Active aqueducts**: Shows how many of your configured aqueducts have a droplet currently flowing
@@ -131,8 +132,11 @@ last tick: 5s ago
 - **Last tick**: Time since the Castellarius last completed a full poll cycle
   - `last tick: 5s ago` — Castellarius is healthy and actively polling
   - `last tick: unknown (health file missing)` — Health file not yet written (startup) or removed unexpectedly
+- **Drought hooks** *(optional)*: Shows when a drought goroutine is running and how long it has been active
+  - `drought hooks: running (2m)` — A drought hook cycle is active (has been running for 2 minutes)
+  - *(line omitted)* — No drought goroutine currently active (idle state)
 
-The health file is written atomically to `~/.cistern/castellarius.health` after each poll cycle completes.
+The health file is written atomically to `~/.cistern/castellarius.health` after each poll cycle completes. It includes liveness tracking fields: `droughtRunning` (boolean) and `droughtStartedAt` (RFC3339 timestamp or null).
 
 ## Cataractae (Pipeline Stages)
 
