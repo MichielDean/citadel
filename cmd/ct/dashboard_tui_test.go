@@ -432,28 +432,29 @@ func TestDashboardTUIModel_ExitsIdleModeWhenStateChanges(t *testing.T) {
 
 // TestTuiAqueductRow_InfoLine_IncludesTitle verifies that the info line in an
 // active aqueduct arch row includes the droplet title styled dim after the
-// elapsed time.
+// elapsed time. The title must fit within the archBlockW budget (archPillarW+2=38)
+// after the droplet ID and elapsed time are deducted.
 //
-// Given: a CataractaeInfo with DropletID, Title, and Elapsed set
-// When:  tuiAqueductRow is called on a model with sufficient terminal width
+// Given: a CataractaeInfo with DropletID, a short Title that fits in the block, and Elapsed
+// When:  tuiAqueductRow is called
 // Then:  rows[1] (the info line) contains the title text
 func TestTuiAqueductRow_InfoLine_IncludesTitle(t *testing.T) {
 	ch := CataractaeInfo{
 		Name:      "virgo",
 		RepoName:  "myrepo",
 		DropletID: "ci-abc123",
-		Title:     "Add retry logic to export pipeline",
+		Title:     "Fix retry logic",
 		Step:      "implement",
 		Steps:     []string{"implement", "review"},
 		Elapsed:   5 * time.Minute,
 	}
-	m := dashboardTUIModel{width: 120}
+	m := dashboardTUIModel{}
 	rows := m.tuiAqueductRow(ch, 0)
 
 	if len(rows) < 2 {
 		t.Fatalf("tuiAqueductRow returned %d rows, want at least 2", len(rows))
 	}
-	if !strings.Contains(rows[1], "Add retry logic to export pipeline") {
+	if !strings.Contains(rows[1], "Fix retry logic") {
 		t.Errorf("info line should include title, got: %q", rows[1])
 	}
 }
@@ -619,5 +620,416 @@ func TestSelectArchMipmap_EachLevelReturnsDistinctContent(t *testing.T) {
 	}
 	if medium == xsmall {
 		t.Error("medium (80x30) and xsmall (36x12) mipmaps are identical — embed may be wrong")
+	}
+}
+
+// --- Fix 1: label line tests ---
+
+// TestTuiAqueductRow_LblLine_ShowsActiveStepOnly verifies that when an aqueduct
+// has an active droplet, lines[2] (the label line) contains the active step name
+// and does NOT contain the names of other steps.
+//
+// Given: a CataractaeInfo with 3 steps, active on "review"
+// When:  tuiAqueductRow is called
+// Then:  lines[2] contains "review" and does not contain "implement" or "merge"
+func TestTuiAqueductRow_LblLine_ShowsActiveStepOnly(t *testing.T) {
+	ch := CataractaeInfo{
+		Name:      "virgo",
+		DropletID: "ci-abc12",
+		Step:      "review",
+		Steps:     []string{"implement", "review", "merge"},
+	}
+	m := dashboardTUIModel{}
+	rows := m.tuiAqueductRow(ch, 0)
+
+	if len(rows) < 3 {
+		t.Fatalf("expected at least 3 rows, got %d", len(rows))
+	}
+
+	lblLine := stripANSI(rows[2])
+	if !strings.Contains(lblLine, "review") {
+		t.Errorf("label line should contain active step 'review', got: %q", lblLine)
+	}
+	if strings.Contains(lblLine, "implement") {
+		t.Errorf("label line should NOT contain non-active step 'implement', got: %q", lblLine)
+	}
+	if strings.Contains(lblLine, "merge") {
+		t.Errorf("label line should NOT contain non-active step 'merge', got: %q", lblLine)
+	}
+}
+
+// TestTuiAqueductRow_LblLine_ShowsPipelineWhenIdle verifies that when no droplet
+// is active, lines[2] shows a pipeline indicator containing the step names joined
+// with an arrow separator, rather than being blank.
+//
+// Given: a CataractaeInfo with 3 steps and no active droplet
+// When:  tuiAqueductRow is called
+// Then:  lines[2] contains at least the first step name and "→"
+func TestTuiAqueductRow_LblLine_ShowsPipelineWhenIdle(t *testing.T) {
+	ch := CataractaeInfo{
+		Name:  "virgo",
+		Steps: []string{"implement", "review", "merge"},
+	}
+	m := dashboardTUIModel{}
+	rows := m.tuiAqueductRow(ch, 0)
+
+	if len(rows) < 3 {
+		t.Fatalf("expected at least 3 rows, got %d", len(rows))
+	}
+
+	lblLine := stripANSI(rows[2])
+	if !strings.Contains(lblLine, "implement") {
+		t.Errorf("idle label line should contain step name 'implement', got: %q", lblLine)
+	}
+	if !strings.Contains(lblLine, "→") {
+		t.Errorf("idle label line should contain arrow '→', got: %q", lblLine)
+	}
+}
+
+// TestTuiAqueductRow_LblLine_FitsArchWidth verifies that the label line does not
+// exceed archPillarW characters of visual content (after stripping ANSI and
+// the leading indent). This ensures the label fits within one arch column.
+//
+// Given: a CataractaeInfo with many steps (7) and one active
+// When:  tuiAqueductRow is called
+// Then:  the label line's visual width does not exceed archPillarW + a small indent
+func TestTuiAqueductRow_LblLine_FitsArchWidth(t *testing.T) {
+	ch := CataractaeInfo{
+		Name:      "virgo",
+		DropletID: "ci-abc12",
+		Step:      "step4",
+		Steps:     []string{"step1", "step2", "step3", "step4", "step5", "step6", "step7"},
+	}
+	m := dashboardTUIModel{width: 80}
+	rows := m.tuiAqueductRow(ch, 0)
+
+	if len(rows) < 3 {
+		t.Fatalf("expected at least 3 rows, got %d", len(rows))
+	}
+
+	lblLine := stripANSI(rows[2])
+	// Visual width: small indent + archPillarW at most.
+	// Allow up to archPillarW + 4 for indent (generous bound).
+	maxWidth := archPillarW + 4
+	if len([]rune(lblLine)) > maxWidth {
+		t.Errorf("label line visual width %d exceeds max %d (archPillarW=%d): %q",
+			len([]rune(lblLine)), maxWidth, archPillarW, lblLine)
+	}
+}
+
+// --- Fix 2: all-aqueducts layout tests ---
+
+// TestViewAqueductArches_IdleAqueductShowsArchRows verifies that idle aqueducts
+// (no active droplet) are rendered with mipmap arch rows rather than a compact
+// single-line text entry. The arch rows (mipmap lines) should be non-empty.
+//
+// Given: a dashboard with one active aqueduct and one idle aqueduct
+// When:  viewAqueductArches is called on an 80-column model
+// Then:  the output contains more than 3 lines of content for the idle aqueduct
+//
+//	(i.e., the mipmap arch rows are present)
+func TestViewAqueductArches_IdleAqueductShowsArchRows(t *testing.T) {
+	m := newDashboardTUIModel("", "")
+	m.width = 80
+	m.data = &DashboardData{
+		Cataractae: []CataractaeInfo{
+			{Name: "virgo", DropletID: "ci-abc12", Step: "implement", Steps: []string{"implement", "review"}},
+			{Name: "marcia", Steps: []string{"implement", "review"}},
+		},
+	}
+
+	lines := m.viewAqueductArches()
+	allText := strings.Join(lines, "\n")
+	cleanText := stripANSI(allText)
+
+	// The idle arch for "marcia" should produce many lines (mipmap = 12 lines + headers).
+	// Total output must be more than just a few header lines.
+	if len(lines) < 10 {
+		t.Errorf("viewAqueductArches returned only %d lines; expected arch rows for idle aqueduct", len(lines))
+	}
+	// "marcia" must still be visible.
+	if !strings.Contains(cleanText, "marcia") {
+		t.Error("idle aqueduct 'marcia' should appear in arch output")
+	}
+}
+
+// TestViewAqueductArches_IdleAqueductShowsIdleLabel verifies that the "idle" label
+// appears in the output for idle aqueducts when rendered by viewAqueductArches.
+//
+// Given: a dashboard with one idle aqueduct "marcia"
+// When:  viewAqueductArches is called
+// Then:  the output contains "idle"
+func TestViewAqueductArches_IdleAqueductShowsIdleLabel(t *testing.T) {
+	m := newDashboardTUIModel("", "")
+	m.width = 80
+	m.data = &DashboardData{
+		Cataractae: []CataractaeInfo{
+			{Name: "virgo", DropletID: "ci-abc12", Step: "implement", Steps: []string{"implement", "review"}},
+			{Name: "marcia", Steps: []string{"implement", "review"}},
+		},
+	}
+
+	lines := m.viewAqueductArches()
+	allText := strings.Join(lines, "\n")
+	cleanText := stripANSI(allText)
+
+	if !strings.Contains(cleanText, "idle") {
+		t.Error("viewAqueductArches should show 'idle' label for idle aqueduct")
+	}
+}
+
+// TestViewAqueductArches_FitsIn80Cols verifies that all output lines from
+// viewAqueductArches fit within 80 columns on an 80-column terminal, including
+// when the active aqueduct has a long title that exercises the titleW truncation path.
+//
+// Given: a dashboard with 2 aqueducts (one active with a realistic title, one idle)
+// When:  viewAqueductArches is called with m.width=80
+// Then:  every output line's visual width (stripped of ANSI) is ≤ 80
+func TestViewAqueductArches_FitsIn80Cols(t *testing.T) {
+	m := newDashboardTUIModel("", "")
+	m.width = 80
+	m.data = &DashboardData{
+		Cataractae: []CataractaeInfo{
+			{Name: "virgo", DropletID: "ci-abc12", Title: "Add retry logic to export pipeline", Step: "implement", Steps: []string{"implement", "review"}},
+			{Name: "marcia", Steps: []string{"implement", "review"}},
+		},
+	}
+
+	lines := m.viewAqueductArches()
+	for i, line := range lines {
+		visual := len([]rune(stripANSI(line)))
+		if visual > 80 {
+			t.Errorf("line[%d] visual width %d exceeds 80 cols: %q", i, visual, stripANSI(line))
+		}
+	}
+}
+
+// TestViewAqueductArches_TwoActiveWithTitles_FitsIn80Cols verifies that when two
+// active aqueducts each have a title, horizontal tiling still fits within 80 cols.
+//
+// Given: a dashboard with 2 active aqueducts each carrying a realistic title
+// When:  viewAqueductArches is called with m.width=80
+// Then:  every output line's visual width (stripped of ANSI) is ≤ 80
+func TestViewAqueductArches_TwoActiveWithTitles_FitsIn80Cols(t *testing.T) {
+	m := newDashboardTUIModel("", "")
+	m.width = 80
+	m.data = &DashboardData{
+		Cataractae: []CataractaeInfo{
+			{Name: "virgo", DropletID: "ci-abc12", Title: "Add retry logic to export pipeline", Step: "implement", Steps: []string{"implement", "review"}},
+			{Name: "marcia", DropletID: "ci-def34", Title: "Refactor auth middleware for compliance", Step: "review", Steps: []string{"implement", "review"}},
+		},
+	}
+
+	lines := m.viewAqueductArches()
+	for i, line := range lines {
+		visual := len([]rune(stripANSI(line)))
+		if visual > 80 {
+			t.Errorf("line[%d] visual width %d exceeds 80 cols: %q", i, visual, stripANSI(line))
+		}
+	}
+}
+
+// TestViewAqueductArches_TwoActiveOnFinalStep_FitsIn80Cols verifies that when two
+// active aqueducts are both on their final step (wfExit appended), horizontal
+// tiling still fits within 80 cols.
+//
+// Given: a dashboard with 2 active aqueducts both on their last step
+// When:  viewAqueductArches is called with m.width=80
+// Then:  every output line's visual width (stripped of ANSI) is ≤ 80
+func TestViewAqueductArches_TwoActiveOnFinalStep_FitsIn80Cols(t *testing.T) {
+	m := newDashboardTUIModel("", "")
+	m.width = 80
+	m.data = &DashboardData{
+		Cataractae: []CataractaeInfo{
+			{Name: "virgo", DropletID: "ci-abc12", Step: "merge", Steps: []string{"implement", "review", "merge"}},
+			{Name: "marcia", DropletID: "ci-def34", Step: "merge", Steps: []string{"implement", "review", "merge"}},
+		},
+	}
+
+	lines := m.viewAqueductArches()
+	for i, line := range lines {
+		visual := len([]rune(stripANSI(line)))
+		if visual > 80 {
+			t.Errorf("line[%d] visual width %d exceeds 80 cols: %q", i, visual, stripANSI(line))
+		}
+	}
+}
+
+// --- ansiTruncVisual tests ---
+
+// TestAnsiTruncVisual_PreservesANSICodes verifies that ANSI escape sequences
+// in the retained prefix are kept intact after truncation.
+//
+// Given: "\x1b[32mhello\x1b[0m world" (green "hello" then reset then " world")
+// When:  ansiTruncVisual(s, 5)
+// Then:  result contains "\x1b[32m" and visible text is "hello"
+func TestAnsiTruncVisual_PreservesANSICodes(t *testing.T) {
+	input := "\x1b[32mhello\x1b[0m world"
+	got := ansiTruncVisual(input, 5)
+	if !strings.Contains(got, "\x1b[32m") {
+		t.Errorf("ANSI green code should be preserved in truncated output; got %q", got)
+	}
+	if stripANSI(got) != "hello" {
+		t.Errorf("visible content = %q, want %q", stripANSI(got), "hello")
+	}
+}
+
+// TestAnsiTruncVisual_VisualWidthIsExact verifies that the visual width of the
+// result (after stripping ANSI) equals min(width, input visual width).
+//
+// Given: various ANSI-encoded strings and target widths
+// When:  ansiTruncVisual is called
+// Then:  len([]rune(stripANSI(result))) == wantVis
+func TestAnsiTruncVisual_VisualWidthIsExact(t *testing.T) {
+	cases := []struct {
+		name    string
+		input   string
+		width   int
+		wantVis int
+	}{
+		{"plain exact", "hello", 5, 5},
+		{"plain truncate", "hello world", 5, 5},
+		{"ANSI prefix truncate", "\x1b[32mhello world\x1b[0m", 5, 5},
+		{"ANSI mid-string truncate", "he\x1b[32mllo\x1b[0m world", 3, 3},
+		{"width >= visual length", "hi", 10, 2},
+		{"empty input", "", 5, 0},
+		{"24-bit color sequence", "\x1b[38;2;255;128;0mABC\x1b[0m", 2, 2},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ansiTruncVisual(tc.input, tc.width)
+			vis := len([]rune(stripANSI(got)))
+			if vis != tc.wantVis {
+				t.Errorf("visual width = %d, want %d (input=%q, width=%d, got=%q)",
+					vis, tc.wantVis, tc.input, tc.width, got)
+			}
+		})
+	}
+}
+
+// TestTuiAqueductRow_LastMipmapRow_RetainsColorsOnFinalStep verifies that when a
+// droplet is on the final step, the retained arch-base pixels (trimTo visual chars)
+// in the last mipmap row still contain ANSI escape sequences.
+//
+// Before the fix, stripANSI was called on the whole last row, destroying all
+// 24-bit pixel-art colours. The mipmap last row has hundreds of raw bytes of ANSI
+// codes; if they are stripped the raw byte count drops to near visual-width bytes.
+//
+// Given: TrueColor profile active; aqueduct on final step
+// When:  tuiAqueductRow is called
+// Then:  last row raw byte count >> visual char count (ANSI codes present)
+func TestTuiAqueductRow_LastMipmapRow_RetainsColorsOnFinalStep(t *testing.T) {
+	m := dashboardTUIModel{}
+	// Idle aqueduct: last mipmap row is unmodified — use as reference.
+	idleRows := m.tuiAqueductRow(CataractaeInfo{
+		Name:  "virgo",
+		Steps: []string{"implement", "review", "merge"},
+	}, 0)
+	idleLastRow := idleRows[len(idleRows)-1]
+
+	// If the test environment emits no ANSI codes, skip (nothing to verify).
+	if !strings.Contains(idleLastRow, "\x1b[") {
+		t.Skip("no ANSI codes in mipmap (non-TrueColor test environment)")
+	}
+
+	// Final-step aqueduct: last mipmap row has wfExit appended after truncation.
+	finalRows := m.tuiAqueductRow(CataractaeInfo{
+		Name:      "virgo",
+		DropletID: "ci-test01",
+		Step:      "merge",
+		Steps:     []string{"implement", "review", "merge"},
+	}, 0)
+	finalLastRow := finalRows[len(finalRows)-1]
+
+	// The final-step row must still contain ANSI codes from the mipmap pixels.
+	// With the bug (stripANSI applied), the retained 34-char prefix would be
+	// plain text and the only ANSI codes would come from the appended wfExit.
+	// Verify by checking raw byte count: plain 34 runes (block chars, 3 bytes/char)
+	// = ~102 bytes; with ANSI the mipmap last row has 500+ bytes for its 36 visible chars.
+	const trimTo = 34 // (archPillarW + 2) - wfW
+	// Set a conservative minimum: at least trimTo * 6 raw bytes means ANSI is present.
+	if len(finalLastRow) <= trimTo*6 {
+		t.Errorf("last mipmap row has %d raw bytes, want > %d: ANSI pixel-art colours likely stripped",
+			len(finalLastRow), trimTo*6)
+	}
+}
+
+// --- Fix 3: animateTroughLine tests ---
+
+// TestAnimateTroughLine_ReplacesColoredCharsWithWave verifies that
+// animateTroughLine replaces every visible (non-space) character in an
+// ANSI-encoded mipmap row with a wave animation character (one of ░▒▓≈).
+//
+// Given: a mipmap row string containing ANSI-colored block characters
+// When:  animateTroughLine is called at frame 0
+// Then:  the stripped result contains only wave chars and spaces
+func TestAnimateTroughLine_ReplacesColoredCharsWithWave(t *testing.T) {
+	// Use the real 36x12 mipmap row 0 as input.
+	mipmap := selectArchMipmap(archPillarW)
+	rows := strings.Split(strings.TrimRight(mipmap, "\n"), "\n")
+	if len(rows) < 1 {
+		t.Fatal("no mipmap rows")
+	}
+	row0 := rows[0]
+
+	result := animateTroughLine(row0, 0, archPillarW)
+	stripped := stripANSI(result)
+
+	// All non-space runes in the result must be wave characters.
+	for i, r := range []rune(stripped) {
+		if r != ' ' && !strings.ContainsRune("░▒▓≈", r) {
+			t.Errorf("animateTroughLine: position %d has non-wave char %q; want one of ░▒▓≈ or space", i, r)
+		}
+	}
+	// The result must contain at least one wave character.
+	if !strings.ContainsAny(stripped, "░▒▓≈") {
+		t.Errorf("animateTroughLine: result contains no wave chars, got %q", stripped)
+	}
+}
+
+// TestAnimateTroughLine_PreservesSpaces verifies that blank positions in the
+// mipmap row (space characters) remain as spaces after animation, so that the
+// arch shape (wall/void areas) is not filled with water.
+//
+// Given: a synthetic ANSI row with some space characters
+// When:  animateTroughLine is called
+// Then:  positions that were spaces remain spaces in the output
+func TestAnimateTroughLine_PreservesSpaces(t *testing.T) {
+	// Build a synthetic row: ANSI-colored char followed by plain space, repeated.
+	colored := archRoleWaterMid.Render("▓")
+	synthetic := colored + " " + colored + " " + colored
+
+	result := animateTroughLine(synthetic, 0, 5)
+	stripped := stripANSI(result)
+	runes := []rune(stripped)
+
+	// Positions 1 and 3 were spaces → must remain spaces.
+	if len(runes) >= 4 {
+		if runes[1] != ' ' {
+			t.Errorf("position 1 should remain space after animation, got %q", runes[1])
+		}
+		if runes[3] != ' ' {
+			t.Errorf("position 3 should remain space after animation, got %q", runes[3])
+		}
+	}
+}
+
+// TestAnimateTroughLine_ContainsWaveChar verifies that animateTroughLine output
+// for a fully-colored row contains the "≈" wave character at frame 0
+// (position 3 in the 6-element wave pattern gets "≈" at offset 0).
+//
+// Given: a fully-colored row (no spaces), frame=0
+// When:  animateTroughLine is called with width=36
+// Then:  the result contains "≈" (appears at positions 3, 9, 15, …)
+func TestAnimateTroughLine_ContainsWaveChar(t *testing.T) {
+	mipmap := selectArchMipmap(archPillarW)
+	rows := strings.Split(strings.TrimRight(mipmap, "\n"), "\n")
+	if len(rows) < 1 {
+		t.Fatal("no mipmap rows")
+	}
+
+	result := animateTroughLine(rows[0], 0, archPillarW)
+	if !strings.Contains(stripANSI(result), "≈") {
+		t.Errorf("animateTroughLine at frame 0 should contain '≈', got: %q", stripANSI(result))
 	}
 }

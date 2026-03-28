@@ -306,6 +306,17 @@ func formatElapsed(d time.Duration) string {
 	return fmt.Sprintf("%ds", s)
 }
 
+// padToVisualWidth pads s with trailing spaces so its visual width (rune count
+// after stripping ANSI escape codes) equals width. If the visual width is already
+// >= width, s is returned unchanged.
+func padToVisualWidth(s string, width int) string {
+	visual := len([]rune(stripANSI(s)))
+	if visual >= width {
+		return s
+	}
+	return s + strings.Repeat(" ", width-visual)
+}
+
 // padRight pads s to width using spaces, truncating if longer.
 func padRight(s string, width int) string {
 	r := []rune(s)

@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Dashboard TUI: fix layout for compact multi-aqueduct view and correct terminal sizing (ci-p28rl)
+- The dashboard TUI now correctly sizes aqueduct arch blocks to fit within terminal width limits, fixing layout overflow issues when multiple aqueducts are displayed simultaneously or when aqueduct titles are non-empty
+- **All aqueducts now always visible**: Previously only active aqueducts showed the full arch diagram; idle aqueducts displayed only as compact text rows below. Now all configured aqueducts display consistently with the same compact arch format, with active aqueducts showing animated water and idle aqueducts showing static, dimmed mipmaps
+- **Horizontal tiling**: Aqueduct arch blocks now tile horizontally when the terminal is wide enough (38 columns per block, fitting 2 arches in a standard 80-column terminal) and stack vertically when space is constrained
+- **Single-step label**: Step labels now show only the active step name (or a compact pipeline indicator "step1 → step2 → …" when idle) in a single centered line, replacing the previous full-width label row that spanned n×36 characters (252 chars for 7 steps)
+- **Improved water animation**: Water animation now post-processes each trough row in the mipmap, cycling the brightness of existing water pixels (░▒▓≈) instead of overlaying a separate wave strip. This preserves trough shape and flows naturally within the existing pixel-art architecture
+- **Fixes addressing**:
+  - Fixed `infoLine` width exceeding per-block budget: now correctly caps title width to `archBlockW` (38 chars) instead of full terminal width (80 chars) so multi-aqueduct horizontal layout doesn't overflow
+  - Fixed waterfall exit (`wfExit`) overflow: the 4-char waterfall annotation is now included in the per-block width budget, preventing overflow when multiple aqueducts on final steps tile horizontally
+  - Fixed ANSI color loss: the `wfExit` overflow fix now uses ANSI-aware truncation (`ansiTruncVisual`) to preserve pixel-art colors on the arch base instead of stripping all color codes
+  - Removed dead `viewDroughtArch` function (call site was removed but function lingered)
+- **Acceptance criteria met**:
+  - ✓ Dashboard fits in an 80-column terminal without horizontal overflow
+  - ✓ All configured aqueducts visible simultaneously (active and idle)
+  - ✓ Water flows within the mipmap trough, not as a separate overlay
+  - ✓ Active aqueduct shows droplet ID and current step below the arch
+- Architectural notes: `const archBlockW = 38` (36 + 2 pad), `const indent = 2` (reduced from 14 for tiling), `padToVisualWidth` helper for visual-width-aware truncation, `ansiTruncVisual` for ANSI-code-preserving truncation
+
 ### Simplify ANTHROPIC_API_KEY checks: remove redundant env validation (ci-wwmtc)
 - `start-castellarius.sh` now simply execs `ct castellarius start` without credential validation — all checks moved into the binary for clarity and single point of maintenance
 - Credential resolution is simplified: (1) OAuth token from `~/.claude/.credentials.json` if present and fresh (automatic refresh on expiry), (2) `ANTHROPIC_API_KEY` from `~/.cistern/env` as fallback for API-key auth
