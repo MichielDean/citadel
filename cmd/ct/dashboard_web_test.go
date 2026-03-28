@@ -44,6 +44,36 @@ func TestDashboardWebMux_RootServesHTML(t *testing.T) {
 	}
 }
 
+func TestDashboardWebMux_RootServesDefaultFontFamily_WhenNotConfigured(t *testing.T) {
+	mux := newDashboardMux(tempCfg(t), tempDB(t))
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	body := w.Body.String()
+	if !strings.Contains(body, dashboardDefaultFontFamily) {
+		t.Errorf("body should contain default font family %q", dashboardDefaultFontFamily)
+	}
+}
+
+func TestDashboardWebMux_RootInjectsDashboardFontFamily_WhenConfigured(t *testing.T) {
+	customFont := "'Berkeley Mono', monospace"
+	mux := newDashboardMux(tempCfgWithFontFamily(t, "'Berkeley Mono', monospace"), tempDB(t))
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	body := w.Body.String()
+	if !strings.Contains(body, customFont) {
+		t.Errorf("body should contain configured font family %q", customFont)
+	}
+	if strings.Contains(body, dashboardDefaultFontFamily) {
+		t.Error("body should not contain default font family when custom font is configured")
+	}
+}
+
 func TestDashboardWebMux_NotFoundForUnknownPaths(t *testing.T) {
 	mux := newDashboardMux(tempCfg(t), tempDB(t))
 
