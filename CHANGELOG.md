@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Remove trivial complexity level and renumber (ci-9mbco)
+- Removed trivial complexity level — all droplets now use standard, full, or critical
+- Renumbered complexity codes: standard=1, full=2, critical=3 (was trivial=1, standard=2, full=3, critical=4)
+- Default complexity remains full(2) when no `--complexity` flag is specified
+- All complexity-based pipeline routing, skip logic, and documentation updated
+- Backward-incompatible change: `--complexity 1` (old trivial) is now rejected with a clear error message
+
 ### Add ct droplet peek --raw flag: read session log directly without tmux (ci-7f5bz)
 - New `--raw` flag for `ct droplet peek` reads the session log file directly instead of attaching to tmux
 - Reads from `~/.cistern/session-logs/<aqueduct>.log` (configurable via `CT_SESSION_LOG_DIR`)

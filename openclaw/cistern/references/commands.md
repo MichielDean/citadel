@@ -35,7 +35,7 @@ ct droplet note <id> "..."               # Add a note
 |------|--------|---------|
 | `--title` | string (required) | — |
 | `--repo` | repo name (required) | — |
-| `--complexity` | trivial / standard / full / critical | full |
+| `--complexity` | standard / full / critical | full |
 | `--priority` | 1–4 (1 = highest) | 2 |
 | `--depends-on` | droplet ID (repeatable) | — |
 | `--description` | multiline text | — |
@@ -67,10 +67,9 @@ tmux send-keys -t filtration "/tmp/add-droplet.sh" Enter
 
 | Level | Code | Stages skipped |
 |-------|------|---------------|
-| trivial | 1 | review, qa |
-| standard | 2 | qa |
-| full | 3 | none (default) |
-| critical | 4 | none + human approval required |
+| standard | 1 | review, qa |
+| full | 2 | none (default) |
+| critical | 3 | none + human approval required |
 
 ### Droplet Signaling (Terminal Outcomes)
 

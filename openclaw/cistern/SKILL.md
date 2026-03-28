@@ -80,10 +80,9 @@ This files the final version. Only run this after confirming with the user.
 
 | Level | Code | Stages skipped |
 |-------|------|---------------|
-| trivial | 1 | review, qa — fast lane for obvious fixes |
-| standard | 2 | qa |
-| full | 3 | all stages — default |
-| critical | 4 | all stages + human approval before merge |
+| standard | 1 | review, qa |
+| full | 2 | all stages — default |
+| critical | 3 | all stages + human approval before merge |
 
 ## Key Commands
 
