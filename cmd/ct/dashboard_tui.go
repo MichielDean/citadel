@@ -450,43 +450,28 @@ func (m dashboardTUIModel) viewAqueductArches() []string {
 		return []string{tuiStyleDim.Render("  No aqueducts configured")}
 	}
 
-	active := activeAqueducts(m.data.Cataractae)
+	// One unified row per aqueduct: active ones show the segmented bar inline,
+	// idle ones show a simple name + status line. No drought state, no sections.
 	var lines []string
-
-	if len(active) == 0 {
-		// Drought: centered label
-		lines = append(lines, tuiStyleDim.Render(tuiPadCenter("◈  drought  ◈", m.width)))
-		lines = append(lines, "")
-	} else {
-		// Active aqueducts: progress bar per flowing aqueduct
-		for _, ch := range active {
-			lines = append(lines, m.viewAqueductProgress(ch))
-			lines = append(lines, "")
-		}
-	}
-
-	// Compact list of all aqueducts
 	for _, ch := range m.data.Cataractae {
-		lines = append(lines, m.viewIdleAqueductRow(ch))
+		lines = append(lines, m.viewAqueductRow(ch))
 	}
-
 	return lines
 }
 
-// viewAqueductProgress renders an active aqueduct as a progress bar row.
-// Layout:
-//
-//	  virgo  cistern  ci-abc12  implement  5m 23s
-//	  [████████████░░░░░░░░░░░░░░░░░░░░░░░░░]  3/7
+// viewAqueductRow renders a single unified row for an aqueduct.
+// Active: name + elapsed + segmented bar (one segment per cataracta)
+// Idle:   name + repo + "· idle"
+func (m dashboardTUIModel) viewAqueductRow(ch CataractaeInfo) string {
+	if ch.DropletID == "" {
+		return m.viewIdleAqueductRow(ch)
+	}
+	return m.viewAqueductProgress(ch)
+}
+
 // viewAqueductProgress renders an active aqueduct as a segmented pipeline bar.
 // Each cataracta gets its own labelled segment. Completed = filled teal,
 // active = animated water gradient, future = dim empty.
-//
-// Example (7 steps, active on step 3):
-//
-//	  virgo  ci-abc12  3m 45s
-//	  implement  review    qa       security  docs     simplify  delivery
-//	  [████████][████████][▒░░░░░░][░░░░░░░░][░░░░░░░░][░░░░░░░░][░░░░░░░░]
 func (m dashboardTUIModel) viewAqueductProgress(ch CataractaeInfo) string {
 	g   := tuiStyleGreen
 	dim := tuiStyleDim
