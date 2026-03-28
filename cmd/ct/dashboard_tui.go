@@ -553,7 +553,6 @@ func (m dashboardTUIModel) viewAqueductArches() []string {
 	return lines
 }
 
-
 // viewPeekSelectOverlay renders a centered picker overlay listing every active aqueduct.
 // The user navigates with Up/Down, confirms with Enter, and cancels with Esc or q.
 func (m dashboardTUIModel) viewPeekSelectOverlay() string {
@@ -639,9 +638,7 @@ func animateTroughLine(line string, frame, width int) string {
 // Water is animated inside the mipmap trough (top 2 mipmap rows) for active aqueducts.
 // Idle aqueducts (no active droplet) show a static mipmap with no water animation.
 func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string {
-	const (
-		nameW = 10
-	)
+	const nameW = 10
 
 	g   := tuiStyleGreen
 	dim := tuiStyleDim
@@ -650,7 +647,6 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string
 	if len(steps) == 0 {
 		steps = []string{"—"}
 	}
-	n := len(steps)
 
 	// indent is the shared left padding for info and label rows.
 	// Kept minimal (2 chars) so each arch block fits within archPillarW+2 columns,
@@ -691,7 +687,7 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string
 	}
 
 	// Waterfall is visible only when the droplet is on the final step.
-	isLastStep := activeIdx == n-1 && activeIdx >= 0
+	isLastStep := activeIdx >= 0 && activeIdx == len(steps)-1
 
 	// Waterfall brightness rotates with frame so ▓ appears to fall.
 	wfAccent := []lipgloss.Style{archRoleWaterBright, archRoleWaterMid, archRoleWaterDim}[frame%3]
@@ -704,29 +700,24 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string
 	mipmap := selectArchMipmap(archPillarW)
 	mipmapLines := strings.Split(strings.TrimRight(mipmap, "\n"), "\n")
 
-	leftPad := len(indent) // align arch at indent so block width = indent + mipmapW
-	padStr := strings.Repeat(" ", leftPad)
 	var archLines []string
 	for _, line := range mipmapLines {
-		archLines = append(archLines, padStr+line)
+		archLines = append(archLines, indent+line)
 	}
 
 	// For active aqueducts, animate the trough: post-process the top 2 mipmap rows
 	// by replacing each visible (non-space) character with a cycling wave character.
 	// Space positions (arch walls, blank sky) are preserved unchanged.
 	if activeIdx >= 0 && len(archLines) >= 2 {
-		archLines[0] = padStr + animateTroughLine(mipmapLines[0], frame, mipmapW)
-		archLines[1] = padStr + animateTroughLine(mipmapLines[1], frame, mipmapW)
+		archLines[0] = indent + animateTroughLine(mipmapLines[0], frame, mipmapW)
+		archLines[1] = indent + animateTroughLine(mipmapLines[1], frame, mipmapW)
 	}
 
 	// Waterfall exit: replace the last wfW visual chars of the last mipmap row with
 	// wfExit, keeping the arch line within archBlockW (archPillarW+2).
 	if isLastStep && len(archLines) > 0 {
 		const wfW = 4 // visual width of wfExit (░▒▓▓)
-		trimTo := (archPillarW + 2) - wfW
-		if trimTo < 0 {
-			trimTo = 0
-		}
+		const trimTo = (archPillarW + 2) - wfW
 		stripped := []rune(stripANSI(archLines[len(archLines)-1]))
 		if len(stripped) > trimTo {
 			stripped = stripped[:trimTo]
