@@ -423,12 +423,33 @@ func (m dashboardTUIModel) View() string {
 	return strings.Join(visible, "\n") + "\n" + footer
 }
 
+// cisternLogoLines are the raw block-character logo lines for CISTERN.
+// Rendered with a left→right water gradient (deep teal → bright cyan).
+var cisternLogoLines = []string{
+	` ██████╗ ██╗███████╗████████╗███████╗██████╗ ███╗   ██╗`,
+	`██╔════╝ ██║██╔════╝╚══██╔══╝██╔════╝██╔══██╗████╗  ██║`,
+	`██║      ██║███████╗   ██║   █████╗  ██████╔╝██╔██╗ ██║`,
+	`██║      ██║╚════██║   ██║   ██╔══╝  ██╔══██╗██║╚██╗██║`,
+	`╚██████╗ ██║███████║   ██║   ███████╗██║  ██║██║ ╚████║`,
+	` ╚═════╝ ╚═╝╚══════╝   ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝  ╚═══╝`,
+}
+
 func (m dashboardTUIModel) viewLogo() []string {
-	return []string{
-		strings.Repeat("▓", m.width),
-		tuiStyleHeader.Bold(true).Render(tuiPadCenter("◈  C I S T E R N  ◈", m.width)),
-		strings.Repeat("▓", m.width),
+	const colorA = "#0d5a72"
+	const colorB = "#c8f4ff"
+	var lines []string
+	for _, line := range cisternLogoLines {
+		runes := []rune(line)
+		n := len(runes)
+		var sb strings.Builder
+		for i, r := range runes {
+			t := float64(i) / float64(n)
+			color := interpolateHex(colorA, colorB, t)
+			sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render(string(r)))
+		}
+		lines = append(lines, tuiPadCenter(sb.String(), m.width))
 	}
+	return lines
 }
 
 func (m dashboardTUIModel) viewStatusBar() string {
