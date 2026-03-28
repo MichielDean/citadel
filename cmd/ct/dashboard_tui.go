@@ -54,7 +54,7 @@ var (
 	tuiStyleRed    = lipgloss.NewStyle().Foreground(lipgloss.Color("#e06c75"))
 	tuiStyleDim    = lipgloss.NewStyle().Foreground(lipgloss.Color("#8a8a9a"))
 	tuiStyleHeader = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#9db1db"))
-	tuiStyleFooter = lipgloss.NewStyle().Foreground(lipgloss.Color("#36364a"))
+	tuiStyleFooter = lipgloss.NewStyle()
 )
 
 // --- Messages ---
