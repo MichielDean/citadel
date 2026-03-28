@@ -136,13 +136,11 @@ func resolveCanonicalRepo(input string) (string, error) {
 		// No config available; cannot validate — pass through unchanged.
 		return input, nil
 	}
+	names := make([]string, 0, len(cfg.Repos))
 	for _, r := range cfg.Repos {
 		if strings.EqualFold(r.Name, input) {
 			return r.Name, nil
 		}
-	}
-	names := make([]string, 0, len(cfg.Repos))
-	for _, r := range cfg.Repos {
 		names = append(names, r.Name)
 	}
 	return "", fmt.Errorf("unknown repo %s — configured repos are: %s", input, strings.Join(names, ", "))
