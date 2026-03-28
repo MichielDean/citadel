@@ -1428,6 +1428,192 @@ func TestSearch_ExcludesCancelledByDefault(t *testing.T) {
 	}
 }
 
+// TestGetReady_CaseInsensitiveRepo_ReturnsDropletStoredWithWrongCase verifies that
+// GetReady("PortfolioWebsite") returns a droplet stored as "portfoliowebsite".
+func TestGetReady_CaseInsensitiveRepo_ReturnsDropletStoredWithWrongCase(t *testing.T) {
+	c := testClient(t)
+	// Given: a droplet stored with lower-case repo name.
+	_, err := c.Add("portfoliowebsite", "My task", "", 1, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// When: GetReady is called with the canonical casing.
+	got, err := c.GetReady("PortfolioWebsite")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Then: the droplet is returned.
+	if got == nil {
+		t.Fatal("GetReady(PortfolioWebsite): expected droplet, got nil")
+	}
+	if got.Title != "My task" {
+		t.Errorf("GetReady(PortfolioWebsite): title = %q, want %q", got.Title, "My task")
+	}
+}
+
+// TestGetReadyForAqueduct_CaseInsensitiveRepo_ReturnsDroplet verifies that
+// GetReadyForAqueduct respects case-insensitive repo matching.
+func TestGetReadyForAqueduct_CaseInsensitiveRepo_ReturnsDroplet(t *testing.T) {
+	c := testClient(t)
+	// Given: a droplet stored with upper-case repo name.
+	_, err := c.Add("CISTERN", "Cistern task", "", 1, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// When: GetReadyForAqueduct is called with the canonical lower-case name.
+	got, err := c.GetReadyForAqueduct("cistern", "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Then: the droplet is returned.
+	if got == nil {
+		t.Fatal("GetReadyForAqueduct(cistern): expected droplet, got nil")
+	}
+	if got.Title != "Cistern task" {
+		t.Errorf("GetReadyForAqueduct(cistern): title = %q, want %q", got.Title, "Cistern task")
+	}
+}
+
+// TestList_CaseInsensitiveRepo_ReturnsDroplets verifies that List filters by repo
+// case-insensitively.
+func TestList_CaseInsensitiveRepo_ReturnsDroplets(t *testing.T) {
+	c := testClient(t)
+	// Given: droplets stored with mixed-case repo names.
+	c.Add("scaledtest", "Task A", "", 1, 2)
+	c.Add("SCALEDTEST", "Task B", "", 1, 2)
+	c.Add("other", "Task C", "", 1, 2)
+
+	// When: List is called with canonical casing.
+	items, err := c.List("ScaledTest", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Then: both ScaledTest-repo droplets are returned, "other" is excluded.
+	if len(items) != 2 {
+		t.Fatalf("List(ScaledTest): got %d items, want 2", len(items))
+	}
+}
+
+// TestNew_RepoCaseMigration_NormalizesCanonicalRepos verifies that when New() is
+// called on a DB containing wrong-cased canonical repo values, they are normalized
+// to canonical casing (cistern, ScaledTest, PortfolioWebsite).
+func TestNew_RepoCaseMigration_NormalizesCanonicalRepos(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "migrate_repo.db")
+
+	// Seed the DB with wrong-cased repo values, bypassing New() so the migration
+	// has not yet run.
+	seedDB, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = seedDB.Exec(`CREATE TABLE IF NOT EXISTS droplets (
+		id TEXT PRIMARY KEY,
+		repo TEXT NOT NULL,
+		title TEXT NOT NULL,
+		description TEXT DEFAULT '',
+		priority INTEGER DEFAULT 2,
+		complexity INTEGER DEFAULT 2,
+		status TEXT DEFAULT 'open',
+		assignee TEXT DEFAULT '',
+		current_cataractae TEXT DEFAULT '',
+		outcome TEXT DEFAULT NULL,
+		assigned_aqueduct TEXT DEFAULT '',
+		last_reviewed_commit TEXT DEFAULT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range []struct {
+		id   string
+		repo string
+	}{
+		{"id-1", "CISTERN"},
+		{"id-2", "Cistern"},
+		{"id-3", "SCALEDTEST"},
+		{"id-4", "scaledtest"},
+		{"id-5", "portfoliowebsite"},
+		{"id-6", "PORTFOLIOWEBSITE"},
+		{"id-7", "unrelated"},         // should not be touched
+		{"id-8", "cistern"},           // already canonical — should not change
+		{"id-9", "ScaledTest"},        // already canonical — should not change
+		{"id-10", "PortfolioWebsite"}, // already canonical — should not change
+	} {
+		if _, err := seedDB.Exec(`INSERT INTO droplets (id, repo, title) VALUES (?, ?, 't')`, row.id, row.repo); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seedDB.Close()
+
+	// Open with New() to trigger the migration.
+	c, err := New(dbPath, "bf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	cases := []struct {
+		id       string
+		wantRepo string
+	}{
+		{"id-1", "cistern"},
+		{"id-2", "cistern"},
+		{"id-3", "ScaledTest"},
+		{"id-4", "ScaledTest"},
+		{"id-5", "PortfolioWebsite"},
+		{"id-6", "PortfolioWebsite"},
+		{"id-7", "unrelated"},
+		{"id-8", "cistern"},
+		{"id-9", "ScaledTest"},
+		{"id-10", "PortfolioWebsite"},
+	}
+	for _, tc := range cases {
+		var got string
+		if err := c.db.QueryRow(`SELECT repo FROM droplets WHERE id = ?`, tc.id).Scan(&got); err != nil {
+			t.Fatalf("id=%s: %v", tc.id, err)
+		}
+		if got != tc.wantRepo {
+			t.Errorf("id=%s: repo after migration = %q, want %q", tc.id, got, tc.wantRepo)
+		}
+	}
+}
+
+// TestNew_RepoCaseMigration_IsIdempotent verifies that running New() on an already-
+// migrated database does not alter canonical repo values a second time.
+func TestNew_RepoCaseMigration_IsIdempotent(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "idempotent_repo.db")
+
+	// First open: migration runs.
+	c1, err := New(dbPath, "bf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c1.Add("cistern", "Task", "", 1, 2)
+	c1.Close()
+
+	// Second open: migration must be a no-op.
+	c2, err := New(dbPath, "bf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c2.Close()
+
+	// Verify the migration sentinel exists exactly once.
+	var count int
+	if err := c2.db.QueryRow(`SELECT COUNT(*) FROM _schema_migrations WHERE id = 'repo_case_normalize'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Errorf("_schema_migrations sentinel count = %d, want 1", count)
+	}
+}
+
 // TestSearch_CancelledStatus_ReturnsCancelled verifies that Search with an explicit
 // status="cancelled" filter returns cancelled droplets.
 func TestSearch_CancelledStatus_ReturnsCancelled(t *testing.T) {

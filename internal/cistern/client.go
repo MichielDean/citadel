@@ -101,6 +101,24 @@ func New(dbPath, prefix string) (*Client, error) {
 			tx.Commit()
 		}
 	}
+	// Idempotent one-time migration: normalize stored repo values to canonical casing
+	// (cistern, ScaledTest, PortfolioWebsite). Tracked in _schema_migrations so it
+	// runs exactly once per database.
+	var repoCaseMigrationDone int
+	db.QueryRow(`SELECT COUNT(*) FROM _schema_migrations WHERE id = 'repo_case_normalize'`).Scan(&repoCaseMigrationDone)
+	if repoCaseMigrationDone == 0 {
+		tx, err := db.Begin()
+		if err == nil {
+			for _, canonical := range []string{"cistern", "ScaledTest", "PortfolioWebsite"} {
+				tx.Exec(
+					`UPDATE droplets SET repo = ? WHERE LOWER(repo) = LOWER(?) AND repo != ?`,
+					canonical, canonical, canonical,
+				)
+			}
+			tx.Exec(`INSERT OR IGNORE INTO _schema_migrations (id) VALUES ('repo_case_normalize')`)
+			tx.Commit()
+		}
+	}
 	db.Exec(`ALTER TABLE droplets ADD COLUMN outcome TEXT DEFAULT NULL`)
 	// Vocabulary migrations: update legacy status values to canonical vocabulary.
 	db.Exec(`UPDATE droplets SET status = 'stagnant' WHERE status = 'escalated'`)
@@ -234,7 +252,7 @@ func (c *Client) GetReady(repo string) (*Droplet, error) {
 	row := tx.QueryRow(
 		`SELECT id, repo, title, description, priority, complexity, status, assignee, current_cataractae, outcome, assigned_aqueduct, last_reviewed_commit, created_at, updated_at
 		 FROM droplets d
-		 WHERE d.repo = ? AND d.status = 'open'
+		 WHERE d.repo = ? COLLATE NOCASE AND d.status = 'open'
 		   AND NOT EXISTS (
 		     SELECT 1 FROM droplet_dependencies dep
 		     JOIN droplets dep_d ON dep_d.id = dep.depends_on
@@ -295,7 +313,7 @@ func (c *Client) GetReadyForAqueduct(repo, aqueductName string) (*Droplet, error
 	row := tx.QueryRow(
 		`SELECT id, repo, title, description, priority, complexity, status, assignee, current_cataractae, outcome, assigned_aqueduct, last_reviewed_commit, created_at, updated_at
 		 FROM droplets d
-		 WHERE d.repo = ? AND d.status = 'open'
+		 WHERE d.repo = ? COLLATE NOCASE AND d.status = 'open'
 		   AND (d.assigned_aqueduct = '' OR d.assigned_aqueduct IS NULL OR d.assigned_aqueduct = ?)
 		   AND NOT EXISTS (
 		     SELECT 1 FROM droplet_dependencies dep
@@ -642,7 +660,7 @@ func (c *Client) List(repo, status string) ([]*Droplet, error) {
 		 FROM droplets WHERE 1=1`
 	var args []any
 	if repo != "" {
-		query += ` AND repo = ?`
+		query += ` AND repo = ? COLLATE NOCASE`
 		args = append(args, repo)
 	}
 	if status != "" {
