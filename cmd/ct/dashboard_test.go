@@ -1221,8 +1221,10 @@ func TestTuiAqueductRow_WaterfallOnlyOnLastStep(t *testing.T) {
 			}
 
 			// wfExit ("░▒▓▓") is appended to the last mipmap row when on the final step.
+			// Check for the specific wfExit sequence rather than just ▓▓ to avoid
+			// false-positives from arch pillar characters.
 			lastRow := stripANSITest(lines[len(lines)-1])
-			hasWF := strings.Contains(lastRow, "▓▓")
+			hasWF := strings.Contains(lastRow, "░▒▓▓")
 			if hasWF != tc.wantWF {
 				t.Errorf("last mipmap row waterfall presence: got %v, want %v (wantWF=%v)\nrow: %q",
 					hasWF, tc.wantWF, tc.wantWF, lastRow)
