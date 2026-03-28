@@ -500,8 +500,11 @@ func (m dashboardTUIModel) viewAqueductProgress(ch CataractaeInfo) string {
 	step := g.Bold(true).Render(ch.Step)
 	header := fmt.Sprintf("  %s  %s  %s  %s  %s", name, repo, dim.Render(ch.DropletID), step, elapsed)
 
-	// Progress bar: water colors, fills to active step fraction
-	barW := w - 8 // leave room for " N/M" suffix
+	// Progress bar: fixed width, water colors
+	barW := 48
+	if barW > w-8 {
+		barW = w - 8
+	}
 	if barW < 10 {
 		barW = 10
 	}
@@ -532,7 +535,7 @@ func (m dashboardTUIModel) viewAqueductProgress(ch CataractaeInfo) string {
 			edge := []string{"░", "▒", "▓"}[m.frame%3]
 			bar.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(waterA)).Render(edge))
 		} else {
-			bar.WriteString(dim.Render("░"))
+			bar.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#0a3545")).Render("░"))
 		}
 	}
 	bar.WriteString(fmt.Sprintf("  %s", dim.Render(fmt.Sprintf("%d/%d", ch.CataractaeIndex, total))))
