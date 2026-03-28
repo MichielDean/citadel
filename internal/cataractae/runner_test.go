@@ -1401,7 +1401,7 @@ func TestSpawnStep_DiffOnly_NoSandboxDirFails(t *testing.T) {
 	}
 
 	step := &aqueduct.WorkflowCataractae{
-		Name:    "adversarial-review",
+		Name:    "review",
 		Type:    aqueduct.CataractaeTypeAgent,
 		Context: aqueduct.ContextDiffOnly,
 	}

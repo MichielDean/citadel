@@ -3,7 +3,7 @@ name: feature
 complexity:
   trivial:
     level: 1
-    skip_cataractae: [adversarial-review, qa, docs]
+    skip_cataractae: [review, qa, docs]
   standard:
     level: 2
     skip_cataractae: [qa]
@@ -41,12 +41,12 @@ cataractae:
       - name: code-simplifier
     timeout_minutes: 20
     skip_for: [1] # trivial droplets skip simplification
-    on_pass: adversarial-review
+    on_pass: review
     on_fail: implement
     on_recirculate: implement
     on_escalate: human
 
-  - name: adversarial-review
+  - name: review
     type: agent
     identity: reviewer
     model: opus         # strongest reasoning needed — must find non-obvious bugs across full codebase

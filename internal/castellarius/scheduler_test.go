@@ -1191,14 +1191,14 @@ func complexityWorkflow() *aqueduct.Workflow {
 	return &aqueduct.Workflow{
 		Name: "feature",
 		Cataractae: []aqueduct.WorkflowCataractae{
-			{Name: "implement", Type: aqueduct.CataractaeTypeAgent, OnPass: "adversarial-review", OnFail: "blocked"},
-			{Name: "adversarial-review", Type: aqueduct.CataractaeTypeAgent, SkipFor: []int{1}, OnPass: "qa", OnFail: "implement", OnRecirculate: "implement"},
+			{Name: "implement", Type: aqueduct.CataractaeTypeAgent, OnPass: "review", OnFail: "blocked"},
+			{Name: "review", Type: aqueduct.CataractaeTypeAgent, SkipFor: []int{1}, OnPass: "qa", OnFail: "implement", OnRecirculate: "implement"},
 			{Name: "qa", Type: aqueduct.CataractaeTypeAgent, SkipFor: []int{1, 2}, OnPass: "docs", OnFail: "implement"},
 			{Name: "docs", Type: aqueduct.CataractaeTypeAgent, SkipFor: []int{1}, OnPass: "delivery", OnFail: "implement", OnRecirculate: "implement", OnEscalate: "human"},
 			{Name: "delivery", Type: aqueduct.CataractaeTypeAgent, OnPass: "done", OnRecirculate: "implement", OnEscalate: "human"},
 		},
 		Complexity: aqueduct.ComplexityConfig{
-			Trivial:  aqueduct.ComplexityLevel{Level: 1, SkipCataractae: []string{"adversarial-review", "qa", "docs"}},
+			Trivial:  aqueduct.ComplexityLevel{Level: 1, SkipCataractae: []string{"review", "qa", "docs"}},
 			Standard: aqueduct.ComplexityLevel{Level: 2, SkipCataractae: []string{"qa"}},
 			Full:     aqueduct.ComplexityLevel{Level: 3, SkipCataractae: []string{}},
 			Critical: aqueduct.ComplexityLevel{Level: 4, SkipCataractae: []string{}, RequireHuman: true},
@@ -1208,12 +1208,12 @@ func complexityWorkflow() *aqueduct.Workflow {
 
 func TestAdvanceSkipped_TrivialSkipsReviewAndQA(t *testing.T) {
 	wf := complexityWorkflow()
-	skipSteps := wf.Complexity.SkipCataractaeForLevel(1) // ["adversarial-review", "qa"]
+	skipSteps := wf.Complexity.SkipCataractaeForLevel(1) // ["review", "qa"]
 
-	// After implement passes, next is adversarial-review — should skip to delivery.
-	got := advanceSkippedCataractae("adversarial-review", wf, skipSteps)
+	// After implement passes, next is review — should skip to delivery.
+	got := advanceSkippedCataractae("review", wf, skipSteps)
 	if got != "delivery" {
-		t.Errorf("advanceSkippedCataractae(adversarial-review, trivial) = %q, want %q", got, "delivery")
+		t.Errorf("advanceSkippedCataractae(review, trivial) = %q, want %q", got, "delivery")
 	}
 }
 
@@ -1221,16 +1221,16 @@ func TestAdvanceSkipped_StandardSkipsQA(t *testing.T) {
 	wf := complexityWorkflow()
 	skipSteps := wf.Complexity.SkipCataractaeForLevel(2) // ["qa"]
 
-	// adversarial-review passes → qa (skipped) → docs (not skipped for standard).
+	// review passes → qa (skipped) → docs (not skipped for standard).
 	got := advanceSkippedCataractae("qa", wf, skipSteps)
 	if got != "docs" {
 		t.Errorf("advanceSkippedCataractae(qa, standard) = %q, want %q", got, "docs")
 	}
 
-	// adversarial-review itself is not skipped.
-	got = advanceSkippedCataractae("adversarial-review", wf, skipSteps)
-	if got != "adversarial-review" {
-		t.Errorf("advanceSkippedCataractae(adversarial-review, standard) = %q, want %q", got, "adversarial-review")
+	// review itself is not skipped.
+	got = advanceSkippedCataractae("review", wf, skipSteps)
+	if got != "review" {
+		t.Errorf("advanceSkippedCataractae(review, standard) = %q, want %q", got, "review")
 	}
 }
 
@@ -1238,17 +1238,17 @@ func TestAdvanceSkipped_FullSkipsNothing(t *testing.T) {
 	wf := complexityWorkflow()
 	skipSteps := wf.Complexity.SkipCataractaeForLevel(3)
 
-	got := advanceSkippedCataractae("adversarial-review", wf, skipSteps)
-	if got != "adversarial-review" {
-		t.Errorf("advanceSkippedCataractae(adversarial-review, full) = %q, want %q", got, "adversarial-review")
+	got := advanceSkippedCataractae("review", wf, skipSteps)
+	if got != "review" {
+		t.Errorf("advanceSkippedCataractae(review, full) = %q, want %q", got, "review")
 	}
 }
 
 func TestAdvanceSkipped_NoSkipList(t *testing.T) {
 	wf := complexityWorkflow()
-	got := advanceSkippedCataractae("adversarial-review", wf, nil)
-	if got != "adversarial-review" {
-		t.Errorf("advanceSkippedCataractae with nil skip = %q, want %q", got, "adversarial-review")
+	got := advanceSkippedCataractae("review", wf, nil)
+	if got != "review" {
+		t.Errorf("advanceSkippedCataractae with nil skip = %q, want %q", got, "review")
 	}
 }
 
@@ -1295,8 +1295,8 @@ func TestTick_TrivialDropSkipsReviewAndQA(t *testing.T) {
 	}
 
 	runner := newMockRunner(client)
-	// default outcome "pass"; implement.OnPass = "adversarial-review"
-	// trivial skips adversarial-review, qa, and docs → goes to delivery
+	// default outcome "pass"; implement.OnPass = "review"
+	// trivial skips review, qa, and docs → goes to delivery
 
 	config := aqueduct.AqueductConfig{
 		Repos: []aqueduct.RepoConfig{
@@ -1317,7 +1317,7 @@ func TestTick_TrivialDropSkipsReviewAndQA(t *testing.T) {
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	// implement passes → adversarial-review skipped → qa skipped → docs skipped → should go to delivery.
+	// implement passes → review skipped → qa skipped → docs skipped → should go to delivery.
 	if client.steps["triv-1"] != "delivery" {
 		t.Errorf("expected trivial droplet at delivery, got %q", client.steps["triv-1"])
 	}
@@ -1911,7 +1911,7 @@ func TestRecoverDispatchLoop_DirtyWorktree(t *testing.T) {
 // passes its path as req.SandboxDir. Without this, generateDiff runs on the
 // worker's own sandbox (on main, no changes) and produces an empty diff.patch.
 //
-// Regression test for ci-s5eg9: adversarial-review blocked 3× with empty diff.
+// Regression test for ci-s5eg9: review blocked 3× with empty diff.
 func TestDispatch_DiffOnlyStepGetsSandboxDir(t *testing.T) {
 	sandboxRoot := t.TempDir()
 
@@ -1919,7 +1919,7 @@ func TestDispatch_DiffOnlyStepGetsSandboxDir(t *testing.T) {
 	client := newMockClient()
 	client.readyItems = append(client.readyItems, &cistern.Droplet{
 		ID:                itemID,
-		CurrentCataractae: "adversarial-review",
+		CurrentCataractae: "review",
 		Status:            "open",
 	})
 
@@ -1938,13 +1938,13 @@ func TestDispatch_DiffOnlyStepGetsSandboxDir(t *testing.T) {
 		t.Fatalf("git checkout -b feat/%s: %v\n%s", itemID, err, out)
 	}
 
-	// Workflow with a diff_only adversarial-review step.
+	// Workflow with a diff_only review step.
 	wf := &aqueduct.Workflow{
 		Name: "test",
 		Cataractae: []aqueduct.WorkflowCataractae{
-			{Name: "implement", Type: aqueduct.CataractaeTypeAgent, OnPass: "adversarial-review"},
+			{Name: "implement", Type: aqueduct.CataractaeTypeAgent, OnPass: "review"},
 			{
-				Name:    "adversarial-review",
+				Name:    "review",
 				Type:    aqueduct.CataractaeTypeAgent,
 				Context: aqueduct.ContextDiffOnly,
 				OnPass:  "done",

@@ -120,7 +120,7 @@ See [references/commands.md](references/commands.md) for the full command refere
 ## Pipeline
 
 ```
-implement → simplify → adversarial-review → qa → security-review → docs → delivery
+implement → simplify → review → qa → security-review → docs → delivery
 ```
 
 Castellarius routes each droplet through the stages configured for its aqueduct. Completed droplets move to the next stage automatically; recirculated ones go back for revision.

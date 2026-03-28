@@ -42,7 +42,7 @@ func initTestRepo(t *testing.T) string {
 }
 
 // TestGenerateDiff_NonEmptyWithChanges is an end-to-end regression test for
-// ci-s5eg9: adversarial-review got an empty diff.patch because generateDiff
+// ci-s5eg9: review got an empty diff.patch because generateDiff
 // was called on the worker's own sandbox (on main) instead of the per-droplet
 // worktree (on feat/<id> with committed changes).
 //

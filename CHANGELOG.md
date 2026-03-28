@@ -440,9 +440,9 @@
 - TUI mode (no flags) is unchanged
 - `cistern-arch-designer.service` — systemd user service starts `arch-designer --web --port 5738` on login; logs to `~/.cistern/arch-designer.log`
 
-### Castellarius: fix empty diff.patch on repeated adversarial-review cycles (ci-s5eg9)
-- `diff.patch` was empty (0 bytes) on the third and subsequent adversarial-review spawns for any recirculated droplet, blocking the pipeline and requiring manual intervention each time
-- Root cause: `prepareDropletWorktree` was only called for `full_codebase` context steps — `diff_only` steps (adversarial-review) fell back to the worker's own sandbox, which is on `main` and has no feature-branch changes; `generateDiff` then produced an empty output
+### Castellarius: fix empty diff.patch on repeated review cycles (ci-s5eg9)
+- `diff.patch` was empty (0 bytes) on the third and subsequent review spawns for any recirculated droplet, blocking the pipeline and requiring manual intervention each time
+- Root cause: `prepareDropletWorktree` was only called for `full_codebase` context steps — `diff_only` steps (review) fell back to the worker's own sandbox, which is on `main` and has no feature-branch changes; `generateDiff` then produced an empty output
 - Fix: `prepareDropletWorktree` now runs for every agent context type except `spec_only` — `diff_only` steps receive the per-droplet worktree path so `generateDiff` always reads the correct feature branch
 - Defense: `SpawnStep` now fails loudly with an explicit error if a `diff_only` step arrives without a per-droplet `SandboxDir`, rather than silently producing an empty diff
 
@@ -452,17 +452,17 @@
 - `wfRows` array size is now derived from constants at compile time (`[2*(taperRows+pierRows)]string`) — mismatches between the array size and the constants are now caught by the compiler instead of causing a runtime panic
 
 ### cistern-reviewer skill: unified multi-language reviewer (ci-1xcm6)
-- New bundled skill `cistern-reviewer` merges `adversarial-reviewer` and `critical-code-reviewer` into a single authoritative review skill covering Go, TypeScript/Next.js, and TypeScript/React
+- New bundled skill `cistern-reviewer` merges `reviewer` and `critical-code-reviewer` into a single authoritative review skill covering Go, TypeScript/Next.js, and TypeScript/React
 - Retains the full adversarial mindset (Guilty Until Proven Exceptional, Evaluate the Artifact), Go-specific red flags (goroutine leaks, bare recover, unguarded map writes, defer in loops), TypeScript red flags (any abuse, missing null checks, unhandled promises, useEffect lies), front-end patterns, SQL/ORM patterns, structured severity tiers (Blocking / Required / Suggestions), the Slop Detector, Structural Contempt, When Uncertain section, and the two-phase pre-finalization checklist
-- `adversarial-review` cataractae in `aqueduct.yaml` now references `cistern-reviewer` instead of `adversarial-reviewer`
-- `skills/adversarial-reviewer/` and `skills/critical-code-reviewer/` removed from the repo — both are superseded by `cistern-reviewer`
+- `review` cataractae in `aqueduct.yaml` now references `cistern-reviewer` instead of `reviewer`
+- `skills/reviewer/` and `skills/critical-code-reviewer/` removed from the repo — both are superseded by `cistern-reviewer`
 
 ### Replace github-workflow skill with Cistern-native cistern-github (ci-cdc8h)
 - New `skills/cistern-github/SKILL.md` replaces the externally-installed `github-workflow` skill
 - Explicitly enforces automatic conflict resolution — agents must never stop and ask the user; keep both sets of changes (HEAD adds X, branch adds Y → keep both)
 - Includes the `git add $(git diff --name-only --diff-filter=U)` staging step between conflict resolution and `git rebase --continue` — previously missing, which left resolved files unstaged
 - Removes all stacked-PR workflow content (Cistern uses per-droplet branches, not stacked PRs)
-- `aqueduct.yaml`: `github-workflow` replaced by `cistern-github` in all cataractae that referenced it (`implement`, `adversarial-review`, `delivery`)
+- `aqueduct.yaml`: `github-workflow` replaced by `cistern-github` in all cataractae that referenced it (`implement`, `review`, `delivery`)
 - Delivery `timeout_minutes` raised from 45 → 60 to match typical merge + CI wait times
 
 ### Castellarius: hot-reload cistern.yaml on change (ci-o3790)
@@ -483,7 +483,7 @@
 - If `model:` is absent, the agent uses its default — no behavior change for existing configs
 - `WorkflowCataractae.Model` is `*string` so absent vs. empty-string are distinguishable
 - `ct doctor` validates that `model:` values are non-empty strings when present
-- `simplify` and `adversarial-review` steps in the default `aqueduct.yaml` now set `model: opus` — deep refactoring and adversarial review benefit from the stronger model
+- `simplify` and `review` steps in the default `aqueduct.yaml` now set `model: opus` — deep refactoring and adversarial review benefit from the stronger model
 
 ### Remove embedded defaults and `ct cataractae reset` (ci-kda7q)
 - Removed `internal/aqueduct/defaults/` — embedded role content (`implementer.md`, `qa.md`, `reviewer.md`, `security.md`) is superseded by the `cataractae/` directories introduced in #102.
@@ -557,7 +557,7 @@
 - Each cataractae identity is now a self-contained directory under `cataractae/<identity>/` containing `PERSONA.md` (role and guardrails) and `INSTRUCTIONS.md` (task protocol). `CLAUDE.md` remains a generated artifact built from these files.
 - `aqueduct.yaml` no longer stores inline `instructions:` blobs — routing config only. Operators who previously edited inline YAML text should move that content into the appropriate `PERSONA.md` / `INSTRUCTIONS.md` files and run `ct cataractae generate`.
 - New `ct cataractae add <name>` command scaffolds a new cataractae directory with template files and adds the entry to `aqueduct.yaml`. Run `ct cataractae generate` after editing the templates to produce `CLAUDE.md`.
-- All skills now have explicit `path:` references in `aqueduct.yaml`; `adversarial-reviewer` and `github-workflow` skills added to the repo under `skills/`.
+- All skills now have explicit `path:` references in `aqueduct.yaml`; `reviewer` and `github-workflow` skills added to the repo under `skills/`.
 - `simplifier` cataractae directory created (was previously missing).
 
 ### ct status: --watch flag for auto-refresh (ci-drisq)
@@ -723,7 +723,7 @@
 First stable release of Cistern — a Mad Max–themed agentic workflow orchestrator for software development.
 
 ### Core pipeline
-- **4-cataractae pipeline**: implement → adversarial-review → qa → delivery
+- **4-cataractae pipeline**: implement → review → qa → delivery
 - **Non-blocking Castellarius**: observe-dispatch loop; agents write outcomes directly to SQLite via `ct droplet pass/recirculate/block`
 - **Dedicated sandbox clones**: each aqueduct gets a full independent git clone; worktree conflicts are impossible
 - **Sticky aqueduct assignment**: droplets stay on their first aqueduct for all pipeline steps
