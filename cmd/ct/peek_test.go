@@ -198,6 +198,174 @@ func TestDropletPeekNoSession(t *testing.T) {
 	}
 }
 
+// TestDropletPeekRaw_ReadsSessionLog verifies that --raw reads and prints the
+// session log file for the droplet's session.
+//
+// Given: a droplet in_progress and a session log file exists
+// When:  peek is run with --raw
+// Then:  the log file contents are written to stdout
+func TestDropletPeekRaw_ReadsSessionLog(t *testing.T) {
+	dir := t.TempDir()
+	db := filepath.Join(dir, "test.db")
+	t.Setenv("CT_DB", db)
+
+	c, err := cistern.New(db, "ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Add("myrepo", "Test item", "", 1, 3); err != nil {
+		t.Fatal(err)
+	}
+	item, err := c.GetReady("myrepo")
+	if err != nil || item == nil {
+		t.Fatalf("GetReady failed: %v", err)
+	}
+	if err := c.Assign(item.ID, "test-worker", "implement"); err != nil {
+		t.Fatal(err)
+	}
+	c.Close()
+
+	// Create a session log file in a temp dir.
+	logDir := t.TempDir()
+	sessionLogDir = logDir
+	defer func() { sessionLogDir = "" }()
+
+	logContent := "agent output line 1\nagent output line 2\n"
+	logFile := filepath.Join(logDir, "myrepo-test-worker.log")
+	if err := os.WriteFile(logFile, []byte(logContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	peekLines = 0
+	peekRaw = true
+	peekFollow = false
+	peekSnapshot = false
+
+	err = dropletPeekCmd.RunE(dropletPeekCmd, []string{item.ID})
+
+	w.Close()
+	os.Stdout = old
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var buf bytes.Buffer
+	buf.ReadFrom(r)
+	out := buf.String()
+
+	if !strings.Contains(out, "agent output line 1") {
+		t.Errorf("expected session log content in output, got: %q", out)
+	}
+	if !strings.Contains(out, "agent output line 2") {
+		t.Errorf("expected session log content in output, got: %q", out)
+	}
+}
+
+// TestDropletPeekRaw_NoLogFile_PrintsHelpfulMessage verifies that --raw prints
+// a helpful message when no session log file exists for the droplet.
+//
+// Given: a droplet in_progress but no session log file exists
+// When:  peek is run with --raw
+// Then:  a helpful "No session log found" message is printed to stdout
+func TestDropletPeekRaw_NoLogFile_PrintsHelpfulMessage(t *testing.T) {
+	dir := t.TempDir()
+	db := filepath.Join(dir, "test.db")
+	t.Setenv("CT_DB", db)
+
+	c, err := cistern.New(db, "ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Add("myrepo", "Test item", "", 1, 3); err != nil {
+		t.Fatal(err)
+	}
+	item, err := c.GetReady("myrepo")
+	if err != nil || item == nil {
+		t.Fatalf("GetReady failed: %v", err)
+	}
+	if err := c.Assign(item.ID, "test-worker", "implement"); err != nil {
+		t.Fatal(err)
+	}
+	c.Close()
+
+	// Point sessionLogDir to an empty temp dir (no log file present).
+	sessionLogDir = t.TempDir()
+	defer func() { sessionLogDir = "" }()
+
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	peekLines = 0
+	peekRaw = true
+	peekFollow = false
+	peekSnapshot = false
+
+	err = dropletPeekCmd.RunE(dropletPeekCmd, []string{item.ID})
+
+	w.Close()
+	os.Stdout = old
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var buf bytes.Buffer
+	buf.ReadFrom(r)
+	out := buf.String()
+
+	if !strings.Contains(out, "No session log") {
+		t.Errorf("expected 'No session log' message, got: %q", out)
+	}
+}
+
+// TestDropletPeekRaw_WithSnapshot_ReturnsError verifies that --raw and --snapshot
+// are mutually exclusive.
+//
+// Given: a droplet in_progress
+// When:  peek is run with both --raw and --snapshot
+// Then:  an error mentioning --snapshot is returned
+func TestDropletPeekRaw_WithSnapshot_ReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	db := filepath.Join(dir, "test.db")
+	t.Setenv("CT_DB", db)
+
+	c, err := cistern.New(db, "ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Add("myrepo", "Test item", "", 1, 3); err != nil {
+		t.Fatal(err)
+	}
+	item, err := c.GetReady("myrepo")
+	if err != nil || item == nil {
+		t.Fatalf("GetReady failed: %v", err)
+	}
+	if err := c.Assign(item.ID, "test-worker", "implement"); err != nil {
+		t.Fatal(err)
+	}
+	c.Close()
+
+	peekLines = 0
+	peekRaw = true
+	peekFollow = false
+	peekSnapshot = true
+
+	err = dropletPeekCmd.RunE(dropletPeekCmd, []string{item.ID})
+
+	if err == nil {
+		t.Fatal("expected error when --raw used with --snapshot, got nil")
+	}
+	if !strings.Contains(err.Error(), "--snapshot") {
+		t.Errorf("error should mention --snapshot, got: %q", err.Error())
+	}
+}
+
 // TestDropletPeek_FollowWithoutSnapshot_ReturnsError verifies that running
 // 'ct droplet peek --follow' without --snapshot returns an error explaining
 // that --follow requires --snapshot.

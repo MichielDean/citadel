@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -1121,10 +1122,11 @@ var dropletApproveCmd = &cobra.Command{
 // --- cistern peek ---
 
 var (
-	peekLines    int
-	peekRaw      bool
-	peekFollow   bool
-	peekSnapshot bool
+	peekLines     int
+	peekRaw       bool
+	peekFollow    bool
+	peekSnapshot  bool
+	sessionLogDir string // overrideable in tests; empty means ~/.cistern/session-logs
 )
 
 // tmuxHasSession reports whether the named tmux session exists.
@@ -1190,13 +1192,44 @@ var dropletPeekCmd = &cobra.Command{
 			return nil
 		}
 
+		session := item.Repo + "-" + item.Assignee
+
+		// --raw: read the session log file directly without requiring tmux.
+		// Mutually exclusive with --snapshot and --follow.
+		if peekRaw {
+			if peekSnapshot {
+				return fmt.Errorf("--raw is incompatible with --snapshot; use one or the other")
+			}
+			if peekFollow {
+				return fmt.Errorf("--raw is incompatible with --follow")
+			}
+			logDir := sessionLogDir
+			if logDir == "" {
+				home, herr := os.UserHomeDir()
+				if herr != nil {
+					return fmt.Errorf("cannot determine home directory: %w", herr)
+				}
+				logDir = filepath.Join(home, ".cistern", "session-logs")
+			}
+			logPath := filepath.Join(logDir, session+".log")
+			data, rerr := os.ReadFile(logPath)
+			if rerr != nil {
+				if os.IsNotExist(rerr) {
+					fmt.Printf("No session log found at %s\n", logPath)
+					return nil
+				}
+				return rerr
+			}
+			_, err = os.Stdout.Write(data)
+			return err
+		}
+
 		// Check if tmux is available.
 		if _, err := exec.LookPath("tmux"); err != nil {
 			fmt.Println("tmux not installed")
 			return nil
 		}
 
-		session := item.Repo + "-" + item.Assignee
 		fmt.Printf("[%s] %s — flowing %s\n", item.ID, item.Title, formatElapsed(time.Since(item.UpdatedAt)))
 
 		// notesHint prints a no-session message and falls back to the last note.
@@ -1237,9 +1270,7 @@ var dropletPeekCmd = &cobra.Command{
 				fmt.Fprintf(os.Stderr, "tmux capture-pane: %v\n", cerr)
 				return
 			}
-			if !peekRaw {
-				out = stripANSI(out)
-			}
+			out = stripANSI(out)
 			fmt.Print(out)
 		}
 
@@ -1375,7 +1406,7 @@ func init() {
 	dropletCancelCmd.Flags().StringVar(&cancelNotes, "notes", "", "reason for cancellation")
 
 	dropletPeekCmd.Flags().IntVar(&peekLines, "lines", 0, "number of scrollback lines to capture; 0 means full scrollback")
-	dropletPeekCmd.Flags().BoolVar(&peekRaw, "raw", false, "do not strip ANSI codes")
+	dropletPeekCmd.Flags().BoolVar(&peekRaw, "raw", false, "read the session log file directly instead of attaching to tmux")
 	dropletPeekCmd.Flags().BoolVar(&peekFollow, "follow", false, "re-capture every 3 seconds (Ctrl-C to stop); use with --snapshot")
 	dropletPeekCmd.Flags().BoolVar(&peekSnapshot, "snapshot", false, "capture a static snapshot instead of attaching read-only to the live session")
 
