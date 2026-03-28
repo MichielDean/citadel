@@ -24,6 +24,13 @@ func tempDB(t *testing.T) string {
 // Returns the path to the config file.
 func tempCfg(t *testing.T) string {
 	t.Helper()
+	return tempCfgWithFontFamily(t, "")
+}
+
+// tempCfgWithFontFamily writes a minimal cistern.yaml with the given
+// dashboard_font_family value. Pass "" to omit the field entirely.
+func tempCfgWithFontFamily(t *testing.T, fontFamily string) string {
+	t.Helper()
 	dir := t.TempDir()
 
 	// Minimal workflow YAML.
@@ -53,6 +60,11 @@ cataractae:
     prefix: mr
 max_cataractae: 4
 `
+	if fontFamily != "" {
+		// Wrap in YAML double-quoted string; escape backslash and double-quote.
+		escaped := strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(fontFamily)
+		cfgContent += "dashboard_font_family: \"" + escaped + "\"\n"
+	}
 	cfgPath := filepath.Join(dir, "cistern.yaml")
 	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0o644); err != nil {
 		t.Fatal(err)

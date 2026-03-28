@@ -16,6 +16,15 @@ All droplets now flow through the same 7-step pipeline regardless of complexity 
 - `aqueduct.yaml`: removed all `skip_cataractae` and `skip_for` definitions
 - Complexity levels reduced to a simple flag in `aqueduct.yaml`: only `critical` has `require_human: true`
 
+### Inject dashboard_font_family into web dashboard xterm Terminal init (ci-x74pi)
+
+- New `dashboard_font_family` field in `cistern.yaml` (AqueductConfig) allows customizing the xterm Terminal font
+- Value is read fresh at `ct dashboard --web` server start (not cached at process init), so edits to `cistern.yaml` + server restart take effect without recompiling
+- Falls back to default monospace font stack if `dashboard_font_family` is empty or omitted
+- Font family is injected into the xterm `Terminal({ fontFamily: '...' })` call in the HTML served by the web dashboard
+- String escaping uses `encoding/json.Marshal` to safely handle backslashes, double-quotes, newlines, `</script>` sequences, and Unicode line/paragraph separators
+- Update path: edit `dashboard_font_family` in `cistern.yaml`, restart `ct dashboard --web`, refresh browser — no recompile needed
+
 ### Add ct doctor check for hung or silent Castellarius scheduler (ci-bwm5x)
 
 - `ct doctor` now reads `~/.cistern/castellarius.health` and reports three failure cases:

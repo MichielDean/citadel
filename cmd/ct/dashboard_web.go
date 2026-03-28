@@ -24,6 +24,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/MichielDean/cistern/internal/aqueduct"
 	"github.com/MichielDean/cistern/internal/cistern"
 	"github.com/creack/pty"
 )
@@ -53,6 +54,10 @@ const wsMaxClientPayload = 4096
 
 // ptyReadBufSize is the read buffer for forwarding PTY output to WebSocket.
 const ptyReadBufSize = 4096
+
+// dashboardDefaultFontFamily is the CSS font-family fallback used when
+// dashboard_font_family is not set in cistern.yaml.
+const dashboardDefaultFontFamily = "'Cascadia Code','JetBrains Mono','DejaVu Sans Mono','Fira Code','Menlo','Consolas','Liberation Mono',monospace"
 
 // WebSocket opcodes (RFC 6455 §5.2).
 const (
@@ -630,6 +635,20 @@ func newDashboardMuxInternal(cfgPath, dbPath string, tui *DashboardTUI) http.Han
 // newDashboardMuxInternalWith returns an http.Handler for the web dashboard with custom
 // fetcher and refresh intervals. Exposed for testing.
 func newDashboardMuxInternalWith(cfgPath, dbPath string, tui *DashboardTUI, fetcher func(cfg, db string) *DashboardData, fastInterval, slowInterval time.Duration) http.Handler {
+	// Read dashboard_font_family fresh at server start so a cistern.yaml edit
+	// followed by restarting ct dashboard --web takes effect without recompiling.
+	// This is the supported update path: edit cistern.yaml, restart the server.
+	fontFamily := dashboardDefaultFontFamily
+	if cfg, err := aqueduct.ParseAqueductConfig(cfgPath); err == nil && cfg.DashboardFontFamily != "" {
+		// Use json.Marshal to produce a fully JS-safe escaped string (handles
+		// backslash, double-quote, newlines, </script> sequences, and Unicode
+		// line/paragraph separators). Trim the surrounding JSON quotes since the
+		// template already wraps the value in double-quotes.
+		b, _ := json.Marshal(cfg.DashboardFontFamily)
+		fontFamily = string(b[1 : len(b)-1])
+	}
+	html := strings.Replace(dashboardHTML, "__DASHBOARD_FONT_FAMILY__", fontFamily, 1)
+
 	mux := http.NewServeMux()
 
 	// Serve bundled xterm.js assets so the dashboard works in airgapped environments.
@@ -645,7 +664,7 @@ func newDashboardMuxInternalWith(cfgPath, dbPath string, tui *DashboardTUI, fetc
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		fmt.Fprint(w, dashboardHTML)
+		fmt.Fprint(w, html)
 	})
 
 	mux.HandleFunc("/api/dashboard", func(w http.ResponseWriter, r *http.Request) {
@@ -924,10 +943,9 @@ var term = new Terminal({
     brightYellow:  '#e3b341', brightBlue:    '#79c0ff', brightMagenta: '#d2a8ff',
     brightCyan:    '#56d4dd', brightWhite:   '#f0f6fc'
   },
-  /* Font stack: prefer fonts known to have good Unicode box-drawing coverage.
-     Cascadia Code (Windows Terminal), DejaVu Sans Mono, and JetBrains Mono all
-     render box-drawing chars correctly. Fall back to system monospace. */
-  fontFamily: "'Cascadia Code','JetBrains Mono','DejaVu Sans Mono','Fira Code','Menlo','Consolas','Liberation Mono',monospace",
+  /* Font stack injected from dashboard_font_family in cistern.yaml at server
+     start. Falls back to dashboardDefaultFontFamily when the field is unset. */
+  fontFamily: "__DASHBOARD_FONT_FAMILY__",
   fontSize: 13,
   lineHeight: 1.2,
   letterSpacing: 0,
