@@ -842,7 +842,7 @@ func TestStripANSITest_CSISequences(t *testing.T) {
 }
 
 // TestTuiAqueductRow_LabelRowAboveArch verifies that:
-// - lines[2] is the label row (contains all step names)
+// - lines[2] is the label row (shows only the active step name, not all steps)
 // - lines[3] is the first mipmap row (animated wave for active aqueducts)
 func TestTuiAqueductRow_LabelRowAboveArch(t *testing.T) {
 	m := newDashboardTUIModel("", "")
@@ -859,11 +859,15 @@ func TestTuiAqueductRow_LabelRowAboveArch(t *testing.T) {
 		t.Fatalf("expected at least 4 lines, got %d", len(lines))
 	}
 
-	// lines[2] is the label row — must contain all step names.
+	// lines[2] is the label row — shows only the active step name.
 	labelRow := stripANSITest(lines[2])
-	for _, step := range steps {
-		if !strings.Contains(labelRow, step) {
-			t.Errorf("label row %q should contain step name %q", labelRow, step)
+	if !strings.Contains(labelRow, "review") {
+		t.Errorf("label row %q should contain active step name 'review'", labelRow)
+	}
+	// Non-active steps must not appear (label is single-step only).
+	for _, step := range []string{"implement", "merge"} {
+		if strings.Contains(labelRow, step) {
+			t.Errorf("label row %q should NOT contain non-active step %q", labelRow, step)
 		}
 	}
 
@@ -988,9 +992,10 @@ func TestViewDroughtArch_MipmapLinesNonEmpty(t *testing.T) {
 	}
 }
 
-// TestViewAqueductArches_DroughtState_ShowsDroughtLabel verifies that when all
-// aqueducts are idle, viewAqueductArches shows the drought display (not compact idle rows).
-func TestViewAqueductArches_DroughtState_ShowsDroughtLabel(t *testing.T) {
+// TestViewAqueductArches_AllIdleState_ShowsIdleArchs verifies that when all
+// aqueducts are idle, viewAqueductArches renders each aqueduct with its arch
+// mipmap and an "idle" label — no longer shows a single "drought" arch.
+func TestViewAqueductArches_AllIdleState_ShowsIdleArchs(t *testing.T) {
 	m := newDashboardTUIModel("", "")
 	m.width = 80
 	steps := []string{"implement", "review", "merge"}
@@ -1003,27 +1008,30 @@ func TestViewAqueductArches_DroughtState_ShowsDroughtLabel(t *testing.T) {
 
 	lines := m.viewAqueductArches()
 	if len(lines) == 0 {
-		t.Fatal("viewAqueductArches() returned no lines in drought state")
+		t.Fatal("viewAqueductArches() returned no lines in all-idle state")
 	}
 	allText := strings.Join(lines, "\n")
 	cleanText := stripANSITest(allText)
 
-	// Must show "drought" label.
-	if !strings.Contains(cleanText, "drought") {
-		t.Error("drought state should display 'drought' label")
+	// Both aqueduct names must be visible (each gets its own arch block).
+	if !strings.Contains(cleanText, "virgo") {
+		t.Error("all-idle display should show arch for 'virgo'")
 	}
-	// Must NOT show individual aqueduct names (no name prefix in drought arch).
-	if strings.Contains(cleanText, "virgo") {
-		t.Error("drought display should not contain individual aqueduct name 'virgo'")
+	if !strings.Contains(cleanText, "marcia") {
+		t.Error("all-idle display should show arch for 'marcia'")
 	}
-	// Must NOT show old compact idle row format.
-	if strings.Contains(cleanText, "idle") {
-		t.Error("drought display should not contain 'idle' text from compact row format")
+	// Each idle aqueduct shows an "idle" label.
+	if !strings.Contains(cleanText, "idle") {
+		t.Error("all-idle display should contain 'idle' label for each idle aqueduct")
+	}
+	// Must produce enough lines to contain mipmap rows (more than just 2 name lines).
+	if len(lines) < 10 {
+		t.Errorf("all-idle display returned only %d lines; expected arch rows", len(lines))
 	}
 }
 
 // TestViewAqueductArches_ActiveAqueductDoesNotShowDrought verifies that when at
-// least one aqueduct is active, the normal arch + compact idle display is used.
+// least one aqueduct is active, both aqueducts are shown as arch blocks (no drought).
 func TestViewAqueductArches_ActiveAqueductDoesNotShowDrought(t *testing.T) {
 	m := newDashboardTUIModel("", "")
 	m.width = 80
@@ -1042,8 +1050,13 @@ func TestViewAqueductArches_ActiveAqueductDoesNotShowDrought(t *testing.T) {
 	if strings.Contains(cleanText, "drought") {
 		t.Error("active state should not show drought display")
 	}
+	// Idle aqueduct "marcia" must appear — now as an arch block, not compact text.
 	if !strings.Contains(cleanText, "marcia") {
-		t.Error("idle aqueduct 'marcia' should appear in compact idle row")
+		t.Error("idle aqueduct 'marcia' should appear in arch output")
+	}
+	// The idle arch must have an "idle" label.
+	if !strings.Contains(cleanText, "idle") {
+		t.Error("idle aqueduct should show 'idle' label below its arch")
 	}
 }
 
