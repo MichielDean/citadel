@@ -842,7 +842,7 @@ func TestStripANSITest_CSISequences(t *testing.T) {
 }
 
 // TestTuiAqueductRow_LabelRowAboveArch verifies that:
-// - lines[2] is the label row (shows only the active step name, not all steps)
+// - lines[2] is the label row (shows full pipeline with all step names and →)
 // - lines[3] is the first mipmap row (animated wave for active aqueducts)
 func TestTuiAqueductRow_LabelRowAboveArch(t *testing.T) {
 	m := newDashboardTUIModel("", "")
@@ -859,16 +859,13 @@ func TestTuiAqueductRow_LabelRowAboveArch(t *testing.T) {
 		t.Fatalf("expected at least 4 lines, got %d", len(lines))
 	}
 
-	// lines[2] is the label row — shows only the active step name.
+	// lines[2] is the label row — shows the full pipeline.
 	labelRow := stripANSITest(lines[2])
 	if !strings.Contains(labelRow, "review") {
 		t.Errorf("label row %q should contain active step name 'review'", labelRow)
 	}
-	// Non-active steps must not appear (label is single-step only).
-	for _, step := range []string{"implement", "merge"} {
-		if strings.Contains(labelRow, step) {
-			t.Errorf("label row %q should NOT contain non-active step %q", labelRow, step)
-		}
+	if !strings.Contains(labelRow, "→") {
+		t.Errorf("label row %q should contain pipeline separator '→'", labelRow)
 	}
 
 	// lines[3] is the first mipmap row; for an active aqueduct it shows animated wave chars.

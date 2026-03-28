@@ -625,21 +625,20 @@ func TestSelectArchMipmap_EachLevelReturnsDistinctContent(t *testing.T) {
 
 // --- Fix 1: label line tests ---
 
-// TestTuiAqueductRow_LblLine_ShowsActiveStepOnly verifies that when an aqueduct
-// has an active droplet, lines[2] (the label line) contains the active step name
-// and does NOT contain the names of other steps.
+// TestTuiAqueductRow_LblLine_ShowsFullPipeline verifies that the label line shows
+// the full pipeline (all steps joined with →), with the active step present.
 //
 // Given: a CataractaeInfo with 3 steps, active on "review"
 // When:  tuiAqueductRow is called
-// Then:  lines[2] contains "review" and does not contain "implement" or "merge"
-func TestTuiAqueductRow_LblLine_ShowsActiveStepOnly(t *testing.T) {
+// Then:  lines[2] contains all step names and "→"
+func TestTuiAqueductRow_LblLine_ShowsFullPipeline(t *testing.T) {
 	ch := CataractaeInfo{
 		Name:      "virgo",
 		DropletID: "ci-abc12",
 		Step:      "review",
 		Steps:     []string{"implement", "review", "merge"},
 	}
-	m := dashboardTUIModel{}
+	m := dashboardTUIModel{width: 80}
 	rows := m.tuiAqueductRow(ch, 0)
 
 	if len(rows) < 3 {
@@ -650,11 +649,11 @@ func TestTuiAqueductRow_LblLine_ShowsActiveStepOnly(t *testing.T) {
 	if !strings.Contains(lblLine, "review") {
 		t.Errorf("label line should contain active step 'review', got: %q", lblLine)
 	}
-	if strings.Contains(lblLine, "implement") {
-		t.Errorf("label line should NOT contain non-active step 'implement', got: %q", lblLine)
+	if !strings.Contains(lblLine, "implement") {
+		t.Errorf("label line should contain 'implement', got: %q", lblLine)
 	}
-	if strings.Contains(lblLine, "merge") {
-		t.Errorf("label line should NOT contain non-active step 'merge', got: %q", lblLine)
+	if !strings.Contains(lblLine, "→") {
+		t.Errorf("label line should contain '→', got: %q", lblLine)
 	}
 }
 
@@ -686,14 +685,13 @@ func TestTuiAqueductRow_LblLine_ShowsPipelineWhenIdle(t *testing.T) {
 	}
 }
 
-// TestTuiAqueductRow_LblLine_FitsArchWidth verifies that the label line does not
-// exceed archPillarW characters of visual content (after stripping ANSI and
-// the leading indent). This ensures the label fits within one arch column.
+// TestTuiAqueductRow_LblLine_TruncatesAtTerminalWidth verifies that a long pipeline
+// label is truncated to fit within the terminal width.
 //
-// Given: a CataractaeInfo with many steps (7) and one active
+// Given: a CataractaeInfo with 7 steps and terminal width 80
 // When:  tuiAqueductRow is called
-// Then:  the label line's visual width does not exceed archPillarW + a small indent
-func TestTuiAqueductRow_LblLine_FitsArchWidth(t *testing.T) {
+// Then:  the label line's visual width does not exceed 80
+func TestTuiAqueductRow_LblLine_TruncatesAtTerminalWidth(t *testing.T) {
 	ch := CataractaeInfo{
 		Name:      "virgo",
 		DropletID: "ci-abc12",
@@ -708,12 +706,9 @@ func TestTuiAqueductRow_LblLine_FitsArchWidth(t *testing.T) {
 	}
 
 	lblLine := stripANSI(rows[2])
-	// Visual width: small indent + archPillarW at most.
-	// Allow up to archPillarW + 4 for indent (generous bound).
-	maxWidth := archPillarW + 4
-	if len([]rune(lblLine)) > maxWidth {
-		t.Errorf("label line visual width %d exceeds max %d (archPillarW=%d): %q",
-			len([]rune(lblLine)), maxWidth, archPillarW, lblLine)
+	if len([]rune(lblLine)) > 80 {
+		t.Errorf("label line visual width %d exceeds terminal width 80: %q",
+			len([]rune(lblLine)), lblLine)
 	}
 }
 

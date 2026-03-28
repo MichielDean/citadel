@@ -760,21 +760,38 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string
 		archLines[len(archLines)-1] = ansiTruncVisual(archLines[len(archLines)-1], trimTo) + wfExit
 	}
 
-	// Label line: single archPillarW-wide label.
-	// Active aqueduct: the active step name, bold+green.
-	// Idle aqueduct: a compact pipeline indicator ("step1 → step2 → …"), dim.
-	var lblContent string
-	if activeIdx >= 0 {
-		lbl := steps[activeIdx]
-		if len([]rune(lbl)) > archPillarW {
-			lbl = string([]rune(lbl)[:archPillarW-1]) + "…"
-		}
-		lblContent = g.Bold(true).Render(padOrTruncCenter(lbl, archPillarW))
-	} else {
-		pipeline := strings.Join(steps, " → ")
-		lblContent = dim.Render(padOrTruncCenter(pipeline, archPillarW))
+	// Label line: full pipeline shown as "step1 → step2 → step3 → …"
+	// Active step is bold+green; others are dim. Truncated to terminal width.
+	var lblSB strings.Builder
+	lblSB.WriteString(indent)
+	effectiveWidth := m.width
+	if effectiveWidth <= 0 {
+		effectiveWidth = 80
 	}
-	lblLine := indent + lblContent
+	maxLblW := effectiveWidth - len([]rune(indent))
+	usedW := 0
+	for i, step := range steps {
+		sep := ""
+		if i > 0 {
+			sep = " → "
+		}
+		part := sep + step
+		partW := len([]rune(part))
+		if usedW+partW > maxLblW {
+			lblSB.WriteString(dim.Render("…"))
+			break
+		}
+		if i == activeIdx {
+			if i > 0 {
+				lblSB.WriteString(dim.Render(" → "))
+			}
+			lblSB.WriteString(g.Bold(true).Render(step))
+		} else {
+			lblSB.WriteString(dim.Render(part))
+		}
+		usedW += partW
+	}
+	lblLine := lblSB.String()
 
 	// Return order: name → info → label → mipmap arch rows (with animated water trough for active).
 	result := []string{nameLine, infoLine, lblLine}
