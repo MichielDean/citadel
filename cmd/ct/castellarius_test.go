@@ -5,8 +5,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/MichielDean/cistern/internal/aqueduct"
+	"github.com/MichielDean/cistern/internal/castellarius"
 	"github.com/MichielDean/cistern/internal/cistern"
 )
 
@@ -497,3 +499,32 @@ func TestRepoQueueSummary_ZeroFlowing_NoParenthetical(t *testing.T) {
 		t.Errorf("expected no parenthetical when 0 flowing; got %q", got)
 	}
 }
+
+// --- formatLastTick tests ---
+
+// TestFormatLastTick_WhenHealthFilePresent_ShowsAgeAgo verifies that a valid
+// HealthFile produces a string ending in " ago".
+func TestFormatLastTick_WhenHealthFilePresent_ShowsAgeAgo(t *testing.T) {
+	hf := &castellarius.HealthFile{
+		LastTickAt:      time.Now().Add(-5 * time.Second),
+		PollIntervalSec: 10,
+	}
+	got := formatLastTick(hf, nil)
+	if !strings.HasSuffix(got, " ago") {
+		t.Errorf("expected string ending in ' ago', got %q", got)
+	}
+	if strings.Contains(got, "unknown") {
+		t.Errorf("expected no 'unknown' in result, got %q", got)
+	}
+}
+
+// TestFormatLastTick_WhenErrorOccurred_ShowsUnknownWarning verifies that any
+// error from ReadHealthFile produces the missing-file warning string.
+func TestFormatLastTick_WhenErrorOccurred_ShowsUnknownWarning(t *testing.T) {
+	got := formatLastTick(nil, os.ErrNotExist)
+	if got != "unknown (health file missing)" {
+		t.Errorf("got %q, want %q", got, "unknown (health file missing)")
+	}
+}
+
+

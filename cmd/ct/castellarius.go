@@ -208,8 +208,22 @@ var castellariusStatusCmd = &cobra.Command{
 		for _, repo := range cfg.Repos {
 			fmt.Printf("  %s\n", repoQueueSummary(repo.Name, allItems))
 		}
+
+		hf, hErr := castellarius.ReadHealthFile(filepath.Dir(dbPath))
+		fmt.Printf("\nlast tick: %s\n", formatLastTick(hf, hErr))
 		return nil
 	},
+}
+
+// formatLastTick returns the health display string for ct castellarius status.
+// If the health file is readable, it returns the age of the last tick (e.g. "5s ago").
+// If err is non-nil, it returns the missing-file warning.
+func formatLastTick(hf *castellarius.HealthFile, err error) string {
+	if err != nil {
+		return "unknown (health file missing)"
+	}
+	age := time.Since(hf.LastTickAt).Round(time.Second)
+	return age.String() + " ago"
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

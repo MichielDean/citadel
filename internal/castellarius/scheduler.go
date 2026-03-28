@@ -703,6 +703,8 @@ func (s *Castellarius) tick(ctx context.Context) {
 		}
 	}
 	s.wasDrought = isDrought
+
+	s.writeHealthFile()
 }
 
 // observeRepo routes all in_progress items that have signaled an outcome.
