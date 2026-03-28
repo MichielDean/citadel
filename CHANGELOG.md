@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Dashboard TUI: replace arch/mipmap with water-gradient progress bar (ci-huu18)
+- All mipmap, photo, and pixel-art arch rendering has been dropped in favour of a clean native lipgloss-only layout — no external tools (chafa), no embedded pixel maps
+- **Active aqueducts**: each flowing aqueduct renders a two-line block — a header (`name  repo  droplet-id  step  elapsed`) followed by a water-gradient progress bar (deep teal `#1a7a96` → bright cyan `#a8eeff`) with a `N/M` step counter, and the full pipeline label below with the active step highlighted in bold green
+- **Animated leading edge**: the fill boundary cycles through ░▒▓ on each frame tick, giving a subtle ripple effect without any external rendering
+- **Drought state**: a simple centered `◈  drought  ◈` label replaces the idle arch — no arch rendered when no droplets are flowing
+- **Aqueduct list always visible**: all configured aqueducts are listed below the progress bar(s); names were previously dimmed to invisibility and are now rendered at full brightness
+- Intermediate steps during this session (hand-drawn block-character arch at 20×7, chafa mipmap resize, mipmap source crop) were all superseded by the final gradient bar approach
+
 ### Dashboard TUI: fix layout for compact multi-aqueduct view and correct terminal sizing (ci-p28rl)
 - The dashboard TUI now correctly sizes aqueduct arch blocks to fit within terminal width limits, fixing layout overflow issues when multiple aqueducts are displayed simultaneously or when aqueduct titles are non-empty
 - **All aqueducts now always visible**: Previously only active aqueducts showed the full arch diagram; idle aqueducts displayed only as compact text rows below. Now all configured aqueducts display consistently with the same compact arch format, with active aqueducts showing animated water and idle aqueducts showing static, dimmed mipmaps
