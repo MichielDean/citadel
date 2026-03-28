@@ -2,17 +2,11 @@ package castellarius
 
 import (
 	"encoding/json"
-	"io"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 )
-
-func newDiscardLogger() *slog.Logger {
-	return slog.New(slog.NewTextHandler(io.Discard, nil))
-}
 
 // TestWriteHealthFile_CreatesFileWithCorrectSchema verifies that after writeHealthFile
 // is called, a valid JSON health file exists at {dbDir}/castellarius.health with the
@@ -22,7 +16,7 @@ func TestWriteHealthFile_CreatesFileWithCorrectSchema(t *testing.T) {
 	s := &Castellarius{
 		dbPath:       filepath.Join(dir, "cistern.db"),
 		pollInterval: 10 * time.Second,
-		logger:       newDiscardLogger(),
+		logger:       discardLogger(),
 	}
 
 	before := time.Now().UTC().Add(-time.Second)
@@ -55,7 +49,7 @@ func TestWriteHealthFile_OverwritesPreviousFile(t *testing.T) {
 	s := &Castellarius{
 		dbPath:       filepath.Join(dir, "cistern.db"),
 		pollInterval: 30 * time.Second,
-		logger:       newDiscardLogger(),
+		logger:       discardLogger(),
 	}
 
 	s.writeHealthFile()
@@ -82,7 +76,7 @@ func TestWriteHealthFile_NoTmpFileLeftBehind(t *testing.T) {
 	s := &Castellarius{
 		dbPath:       filepath.Join(dir, "cistern.db"),
 		pollInterval: 5 * time.Second,
-		logger:       newDiscardLogger(),
+		logger:       discardLogger(),
 	}
 
 	s.writeHealthFile()
@@ -99,7 +93,7 @@ func TestWriteHealthFile_EmptyDBPath_DoesNotPanic(t *testing.T) {
 	s := &Castellarius{
 		dbPath:       "",
 		pollInterval: 10 * time.Second,
-		logger:       newDiscardLogger(),
+		logger:       discardLogger(),
 	}
 	// Should not panic; errors are logged and swallowed.
 	s.writeHealthFile()

@@ -526,5 +526,3 @@ func TestFormatLastTick_WhenErrorOccurred_ShowsUnknownWarning(t *testing.T) {
 		t.Errorf("got %q, want %q", got, "unknown (health file missing)")
 	}
 }
-
-
