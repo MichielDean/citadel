@@ -1148,25 +1148,27 @@ func TestInferLLMProviderFromPreset_KnownPresets(t *testing.T) {
 
 // --- claudeAuthStatusFn (claude CLI authenticated) tests ---
 
-func TestClaudeAuthenticated_ExitZero_ReturnsNil(t *testing.T) {
+func TestClaudeAuthenticated_ExitZero_PassesCheck(t *testing.T) {
 	orig := claudeAuthStatusFn
 	t.Cleanup(func() { claudeAuthStatusFn = orig })
 	claudeAuthStatusFn = func() error { return nil }
 
-	if err := claudeAuthStatusFn(); err != nil {
-		t.Errorf("expected nil error when claude auth status exits 0, got: %v", err)
+	got := checkWithFix("claude CLI authenticated", claudeAuthStatusFn, nil)
+	if !got {
+		t.Error("expected checkWithFix to return true when claude auth status exits 0")
 	}
 }
 
-func TestClaudeAuthenticated_NonZeroExit_ReturnsError(t *testing.T) {
+func TestClaudeAuthenticated_NonZeroExit_FailsCheck(t *testing.T) {
 	orig := claudeAuthStatusFn
 	t.Cleanup(func() { claudeAuthStatusFn = orig })
 	claudeAuthStatusFn = func() error {
 		return fmt.Errorf("Not logged in")
 	}
 
-	if err := claudeAuthStatusFn(); err == nil {
-		t.Error("expected error when claude auth status exits non-zero")
+	got := checkWithFix("claude CLI authenticated", claudeAuthStatusFn, nil)
+	if got {
+		t.Error("expected checkWithFix to return false when claude auth status exits non-zero")
 	}
 }
 
