@@ -287,7 +287,7 @@ Requirements:
 - `gh` CLI authenticated (`gh auth login`)
 - `git`, `tmux`
 
-The Castellarius automatically refreshes the Claude OAuth access token before each agent spawn when it is expired or within 5 minutes of expiry. If the refresh fails (e.g. the refresh token itself has expired), the spawn fails with a clear error directing you to run `claude` interactively to re-authenticate. Run `ct doctor --fix` to refresh the token on demand and reload the systemd service.
+The Castellarius automatically refreshes the Claude OAuth access token before each agent spawn when it is expired or within 5 minutes of expiry. If the refresh fails (e.g. the refresh token itself has expired), the spawn fails with a clear error directing you to run `claude` interactively to re-authenticate. `ct doctor` verifies that the `claude` CLI is authenticated; `ct doctor --fix` can create the `~/.cistern/env` credential file if missing.
 
 ## Credentials
 
@@ -323,7 +323,7 @@ chmod 600 ~/.cistern/env
 
 `ct init` creates `~/.cistern/env` automatically with the correct permissions (600). The file is added to `~/.cistern/.gitignore` so it is never accidentally committed.
 
-`ct doctor` checks both credential sources: it verifies that `~/.claude/.credentials.json` tokens are fresh (and prompts to refresh if expired), and validates any `ANTHROPIC_API_KEY` in `~/.cistern/env`. `ct doctor --fix` can refresh expired OAuth tokens automatically or prompt for missing API keys.
+`ct doctor` verifies that the `claude` CLI is authenticated (via `claude auth status`) and checks that `~/.cistern/env` exists with required credential variables. `ct doctor --fix` can create and populate `~/.cistern/env` for missing credentials.
 
 ## Configuration
 
@@ -549,7 +549,7 @@ ct skills remove <name>              Remove a skill
 
 # Utilities
 ct doctor                      Full health check (prerequisites, config, instructions file integrity, skills)
-ct doctor --fix                Auto-repair common issues (includes OAuth token refresh)
+ct doctor --fix                Auto-repair common issues
 ct version                     Print version string
 ct version --json              Machine-readable: {"version":"...","commit":"..."}
 ct update                      Pull latest main and rebuild ct in-place; warns if Castellarius is running
