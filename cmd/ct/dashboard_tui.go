@@ -677,6 +677,8 @@ func animateTroughLine(line string, frame, width int) string {
 // Idle aqueducts (no active droplet) show a static mipmap with no water animation.
 func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string {
 	const nameW = 10
+	// archBlockW matches the per-slot column budget used by viewAqueductArches.
+	const archBlockW = archPillarW + 2
 
 	g   := tuiStyleGreen
 	dim := tuiStyleDim
@@ -687,9 +689,9 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string
 	}
 
 	// indent is the shared left padding for info and label rows.
-	// Kept minimal (2 chars) so each arch block fits within archPillarW+2 columns,
+	// Kept minimal (2 chars) so each arch block fits within archBlockW columns,
 	// enabling horizontal side-by-side tiling in an 80-column terminal.
-	indent := "  "
+	const indent = "  "
 
 	// Name line: aqueduct name + repo name on the same line.
 	repoLabel := ch.RepoName
@@ -704,7 +706,7 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string
 		infoBase := ch.DropletID + "  " + formatElapsed(ch.Elapsed)
 		// indent visual width: 2 chars (the compact indent).
 		const indentW = 2
-		titleW := (archPillarW + 2) - indentW - len([]rune(infoBase)) - 2
+		titleW := archBlockW - indentW - len([]rune(infoBase)) - 2
 		if titleW > 0 && ch.Title != "" {
 			title := ch.Title
 			if len([]rune(title)) > titleW {
@@ -727,10 +729,6 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string
 	// Waterfall is visible only when the droplet is on the final step.
 	isLastStep := activeIdx >= 0 && activeIdx == len(steps)-1
 
-	// Waterfall brightness rotates with frame so ▓ appears to fall.
-	wfAccent := []lipgloss.Style{archRoleWaterBright, archRoleWaterMid, archRoleWaterDim}[frame%3]
-	wfExit := archRoleWaterDim.Render("░") + archRoleWaterMid.Render("▒") + wfAccent.Render("▓▓")
-
 	// Mipmap arch: select the mipmap that fits within one pillar slot (archPillarW).
 	// The arch is left-aligned at the indent position so that each arch block is
 	// exactly indent+mipmapW columns wide, enabling horizontal tiling in viewAqueductArches.
@@ -752,11 +750,14 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string
 	}
 
 	// Waterfall exit: replace the last wfW visual chars of the last mipmap row with
-	// wfExit, keeping the arch line within archBlockW (archPillarW+2).
+	// wfExit, keeping the arch line within archBlockW.
 	// ansiTruncVisual preserves 24-bit pixel-art colours in the retained prefix.
 	if isLastStep && len(archLines) > 0 {
 		const wfW = 4 // visual width of wfExit (░▒▓▓)
-		const trimTo = (archPillarW + 2) - wfW
+		const trimTo = archBlockW - wfW
+		// Waterfall brightness rotates with frame so ▓ appears to fall.
+		wfAccent := []lipgloss.Style{archRoleWaterBright, archRoleWaterMid, archRoleWaterDim}[frame%3]
+		wfExit := archRoleWaterDim.Render("░") + archRoleWaterMid.Render("▒") + wfAccent.Render("▓▓")
 		archLines[len(archLines)-1] = ansiTruncVisual(archLines[len(archLines)-1], trimTo) + wfExit
 	}
 
