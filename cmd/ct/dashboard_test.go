@@ -889,16 +889,16 @@ func TestViewAqueductProgress_PipelineContainsAllSteps(t *testing.T) {
 	}
 }
 
-// TestViewAqueductProgress_SluiceGates verifies open/closed gate rendering.
-// Layout is now 4 rows: header, labels, top (raised gates), bottom (channel fill).
+// TestViewAqueductProgress_SluiceGates verifies gate rendering with the two-row layout.
 //
-// Gate between implement (complete) and review (active):
-//   - top row: ][ raised marker
-//   - bottom row: seamless █ fill (no wall, no ═╪)
+// Gate is always ][ — position (top vs bottom row) indicates state:
+//   - Raised (upstream complete): ][ on top row; bottom row seamless fill through that position.
+//   - Closed (not yet reached):   ][ on bottom row in-channel; top row blank there.
 //
-// Gate between review (active) and deliver (future):
-//   - top row: spaces
-//   - bottom row: ═╪ closed gate
+// Given: 3 steps, active=review (implement complete, deliver pending)
+// Expected:
+//   - top row (rows[2]):    exactly 1 ][ at the implement→review boundary
+//   - bottom row (rows[3]): exactly 1 ][ at the review→deliver boundary
 func TestViewAqueductProgress_SluiceGates(t *testing.T) {
 	m := newDashboardTUIModel("", "")
 	m.width = 80
@@ -912,21 +912,21 @@ func TestViewAqueductProgress_SluiceGates(t *testing.T) {
 	result := m.viewAqueductProgress(ch)
 	stripped := stripANSITest(result)
 	rows := strings.Split(stripped, "\n")
-	// rows[0] = header, rows[1] = labels, rows[2] = top (raised gates), rows[3] = bottom (channel)
+	// rows[0]=header, rows[1]=labels, rows[2]=top (raised gates), rows[3]=bottom (channel)
 	topRow := rows[2]
 	botRow := rows[3]
 
-	// Top row: exactly one ][ raised gate (implement→review is complete).
+	// Top row: exactly one raised ][ (implement→review gate raised).
 	if strings.Count(topRow, "][") != 1 {
-		t.Errorf("top row: expected exactly 1 raised gate (][), got: %q", topRow)
+		t.Errorf("top row: expected exactly 1 raised gate (][), got %q", topRow)
 	}
-	// Bottom row: exactly one ═╪ closed gate (review→deliver not yet reached).
-	if strings.Count(botRow, "═╪") != 1 {
-		t.Errorf("bottom row: expected exactly 1 closed gate (═╪), got: %q", botRow)
+	// Bottom row: exactly one closed ][ (review→deliver gate closed).
+	if strings.Count(botRow, "][") != 1 {
+		t.Errorf("bottom row: expected exactly 1 closed gate (][), got %q", botRow)
 	}
-	// Raised gate (][) must appear before the closed gate (═╪) positionally.
-	if strings.Index(topRow, "][") < 0 || strings.Index(botRow, "═╪") < 0 {
-		t.Errorf("gate positions unexpected: top=%q bot=%q", topRow, botRow)
+	// Top ][ must be left of the bottom ][ (raised gate precedes closed gate).
+	if strings.Index(topRow, "][") >= strings.Index(botRow, "][") {
+		t.Errorf("raised gate should appear left of closed gate: top=%q bot=%q", topRow, botRow)
 	}
 }
 
