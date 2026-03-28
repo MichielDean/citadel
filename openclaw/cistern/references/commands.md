@@ -111,6 +111,29 @@ journalctl --user -u cistern-castellarius -f   # Live log tail
 cat ~/.cistern/castellarius.log                # Log file
 ```
 
+### `ct castellarius status` Output
+
+Displays the health and flow of all configured aqueducts:
+
+```
+4 of 4 aqueducts flowing
+
+  repo-1 (queue: 2 open, 1 active)
+  repo-2 (queue: 0 open, 0 active)
+  repo-3 (queue: 5 open, 2 active)
+  repo-4 (queue: 0 open, 0 active)
+
+last tick: 5s ago
+```
+
+- **Active aqueducts**: Shows how many of your configured aqueducts have a droplet currently flowing
+- **Per-repo summaries**: Lists each repo with queue depth (open droplets waiting) and active session count (droplets currently being processed)
+- **Last tick**: Time since the Castellarius last completed a full poll cycle
+  - `last tick: 5s ago` — Castellarius is healthy and actively polling
+  - `last tick: unknown (health file missing)` — Health file not yet written (startup) or removed unexpectedly
+
+The health file is written atomically to `~/.cistern/castellarius.health` after each poll cycle completes.
+
 ## Cataractae (Pipeline Stages)
 
 ```bash

@@ -24,6 +24,16 @@
 **New drought hook param structure:**
 - `RunDroughtHooks` signature changed from many positional args to `DroughtHookParams` struct for clarity and forward compatibility
 
+### Write lastTickAt to castellarius.health file after each tick (ci-t6wk9)
+
+- Castellarius now writes a JSON health file to `~/.cistern/castellarius.health` after each poll cycle completes
+- Health file schema: `{"lastTickAt": "<RFC3339>", "pollIntervalSec": <int>}`
+- Atomic write pattern: write to `.tmp` sibling, then rename to ensure consistency on failures
+- `ct castellarius status` now displays `last tick: <age> ago` (e.g., `5s ago`) showing how recently the Castellarius completed a poll cycle
+- If the health file is absent or unreadable, `ct castellarius status` displays `last tick: unknown (health file missing)` as a warning
+- Useful for monitoring: external scripts can read the health file to detect Castellarius stalls or check polling activity
+- Write errors are logged but do not fail the tick—Castellarius continues even if the health file write fails
+
 ### Update docs and CHANGELOG for complexity renumbering breaking change (ci-9f2js)
 - Removed remaining `trivial` references from user-facing documentation (README CLI reference)
 - Added migration guide and `**BREAKING CHANGE**` marker to the ci-9mbco CHANGELOG entry

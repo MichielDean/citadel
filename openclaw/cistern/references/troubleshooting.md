@@ -11,6 +11,27 @@ systemctl --user start cistern-castellarius
 journalctl --user -u cistern-castellarius -f
 ```
 
+### Castellarius Health File Missing
+
+If `ct castellarius status` displays `last tick: unknown (health file missing)`:
+
+```bash
+# This can occur at startup (file is created on first poll cycle) or if the file was removed
+# The warning does not indicate an error — check if Castellarius is running:
+ct castellarius status
+
+# If Castellarius is running, the health file will be created within the configured
+# poll interval (typically 10-30 seconds):
+ls -la ~/.cistern/castellarius.health  # Check if file exists
+cat ~/.cistern/castellarius.health     # View the raw health data
+```
+
+The health file is written after each poll cycle completes. If you see persistent "health file missing" warnings after waiting for several poll intervals, check the Castellarius logs:
+
+```bash
+journalctl --user -u cistern-castellarius -f | grep -i "health"
+```
+
 ## Droplet Stuck in a Stage
 
 ```bash
