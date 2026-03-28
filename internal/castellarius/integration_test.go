@@ -58,14 +58,25 @@ func buildFakeagent(t *testing.T) string {
 // integrationRunner spawns real tmux sessions running fakeagent.
 // It creates a minimal CONTEXT.md in a temp workdir so fakeagent can read the
 // droplet ID and signal pass via `ct droplet pass <id>`.
+//
+// Session names follow the production convention (repo-aqueduct) so that
+// isTmuxAlive checks in the heartbeat goroutine behave correctly.
 type integrationRunner struct {
+	t        *testing.T
 	agentBin string            // absolute path to the fakeagent binary
 	dbPath   string            // SQLite database path forwarded as CT_DB
 	logDir   string            // directory for session output logs
 	extraEnv map[string]string // additional env vars injected into the session
 
-	mu       sync.Mutex
-	sessions []string // tmux session IDs for cleanup
+	// spawnModes is an optional per-spawn FAKEAGENT_MODE sequence.
+	// spawnModes[n] is used for the n-th Spawn call (0-indexed).
+	// If n >= len(spawnModes), the last element repeats.
+	// An empty string means no FAKEAGENT_MODE override (extraEnv applies).
+	spawnModes []string
+
+	mu         sync.Mutex
+	sessions   []string // tmux session names for cleanup
+	spawnCount int      // incremented on each Spawn call, protected by mu
 }
 
 // intShellQuote wraps s in single quotes, escaping any single quotes within.
@@ -75,23 +86,42 @@ func intShellQuote(s string) string {
 
 // Spawn creates a workdir, writes CONTEXT.md, and starts a tmux session running
 // fakeagent. Returns immediately (non-blocking).
+//
+// The session is named <repo>-<aqueduct> (matching the production convention)
+// so that isTmuxAlive checks in heartbeatRepo see accurate liveness.
 func (r *integrationRunner) Spawn(_ context.Context, req castellarius.CataractaeRequest) error {
 	dir, err := os.MkdirTemp("", "cistern-inttest-*")
 	if err != nil {
 		return fmt.Errorf("integrationRunner: mkdir: %w", err)
 	}
+	r.t.Cleanup(func() { os.RemoveAll(dir) })
 
 	// Write a minimal CONTEXT.md so fakeagent can extract the droplet ID.
 	contextMD := fmt.Sprintf("# Context\n\n## Item: %s\n\nIntegration test droplet.\n", req.Item.ID)
 	if err := os.WriteFile(filepath.Join(dir, "CONTEXT.md"), []byte(contextMD), 0o644); err != nil {
-		os.RemoveAll(dir)
 		return fmt.Errorf("integrationRunner: write CONTEXT.md: %w", err)
 	}
 
-	sessionID := "inttest-" + req.Item.ID
+	// Session name matches the production convention so isTmuxAlive works.
+	sessionID := req.RepoConfig.Name + "-" + req.AqueductName
 	r.mu.Lock()
 	r.sessions = append(r.sessions, sessionID)
+	n := r.spawnCount
+	r.spawnCount++
 	r.mu.Unlock()
+
+	// Determine FAKEAGENT_MODE for this spawn (spawnModes overrides extraEnv).
+	mode := ""
+	if len(r.spawnModes) > 0 {
+		idx := n
+		if idx >= len(r.spawnModes) {
+			idx = len(r.spawnModes) - 1
+		}
+		mode = r.spawnModes[idx]
+	}
+	if mode == "" {
+		mode = r.extraEnv["FAKEAGENT_MODE"]
+	}
 
 	// Build the fakeagent command.  The agent runs in interactive mode
 	// (no --print flag), reads CONTEXT.md, then calls `ct droplet pass <id>`.
@@ -113,7 +143,13 @@ func (r *integrationRunner) Spawn(_ context.Context, req castellarius.Cataractae
 		args = append(args, "-e", "PATH="+path)
 	}
 	for k, v := range r.extraEnv {
+		if k == "FAKEAGENT_MODE" {
+			continue // handled separately via mode variable
+		}
 		args = append(args, "-e", k+"="+v)
+	}
+	if mode != "" {
+		args = append(args, "-e", "FAKEAGENT_MODE="+mode)
 	}
 	args = append(args, agentCmd)
 
@@ -124,7 +160,7 @@ func (r *integrationRunner) Spawn(_ context.Context, req castellarius.Cataractae
 	return nil
 }
 
-// sessionIDs returns a snapshot of spawned tmux session IDs.
+// sessionIDs returns a snapshot of spawned tmux session names.
 func (r *integrationRunner) sessionIDs() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -229,6 +265,7 @@ func TestIntegration_HappyPath_FakeAgentDeliversDroplet(t *testing.T) {
 	defer client.Close()
 
 	runner := &integrationRunner{
+		t:        t,
 		agentBin: fakeagentPath,
 		dbPath:   dbPath,
 		logDir:   t.TempDir(),
@@ -256,14 +293,15 @@ func TestIntegration_HappyPath_FakeAgentDeliversDroplet(t *testing.T) {
 	}
 }
 
-// TestIntegration_DeadSession_RecoverInProgress_RedeliversDroplet verifies that a
-// droplet left in_progress with no outcome (simulating an agent that died before
-// signaling) is recovered and eventually delivered:
+// TestIntegration_StartupRecovery_OrphanedDroplet_RedeliversDroplet verifies
+// that a droplet left in_progress with no outcome before the Castellarius
+// started (simulating an agent that died in a previous process run) is reset
+// at startup and eventually delivered:
 //
-//	Given: a droplet is in_progress/no-outcome when the Castellarius starts
-//	When:  recoverInProgress resets it to open; Castellarius dispatches it
+//	Given: a droplet is in_progress/no-outcome when Castellarius starts
+//	When:  recoverInProgress (startup path) resets it to open; Castellarius dispatches it
 //	Then:  fakeagent signals pass and the droplet reaches 'delivered' within 20s
-func TestIntegration_DeadSession_RecoverInProgress_RedeliversDroplet(t *testing.T) {
+func TestIntegration_StartupRecovery_OrphanedDroplet_RedeliversDroplet(t *testing.T) {
 	checkIntegrationPrereqs(t)
 	fakeagentPath := buildFakeagent(t)
 
@@ -275,6 +313,7 @@ func TestIntegration_DeadSession_RecoverInProgress_RedeliversDroplet(t *testing.
 	defer client.Close()
 
 	runner := &integrationRunner{
+		t:        t,
 		agentBin: fakeagentPath,
 		dbPath:   dbPath,
 		logDir:   t.TempDir(),
@@ -325,6 +364,58 @@ func TestIntegration_DeadSession_RecoverInProgress_RedeliversDroplet(t *testing.
 	}
 }
 
+// TestIntegration_HeartbeatRecovery_DeadSession_RedeliversDroplet verifies
+// that a droplet whose agent session dies at runtime (without signaling) is
+// detected by the heartbeat goroutine and reset to open for re-dispatch:
+//
+//	Given: a droplet is dispatched to a fakeagent that exits without signaling
+//	When:  the heartbeat fires, confirms the tmux session is dead, and resets to open
+//	Then:  a new fakeagent is dispatched, signals pass, and the droplet is delivered
+func TestIntegration_HeartbeatRecovery_DeadSession_RedeliversDroplet(t *testing.T) {
+	checkIntegrationPrereqs(t)
+	fakeagentPath := buildFakeagent(t)
+
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	client, err := cistern.New(dbPath, "it")
+	if err != nil {
+		t.Fatalf("cistern.New: %v", err)
+	}
+	defer client.Close()
+
+	// First spawn uses no_signal mode (exits without calling ct droplet pass).
+	// Subsequent spawns use normal mode (signals pass and delivers the droplet).
+	// logDir is intentionally empty: without the bash/tee wrapper the tmux
+	// session terminates the moment fakeagent exits, making the timing reliable.
+	runner := &integrationRunner{
+		t:          t,
+		agentBin:   fakeagentPath,
+		dbPath:     dbPath,
+		spawnModes: []string{"no_signal", ""},
+	}
+	t.Cleanup(runner.cleanup)
+
+	sched := newIntScheduler(client, runner)
+
+	droplet, err := client.Add("myrepo", "heartbeat recovery test", "desc", 1, 3)
+	if err != nil {
+		t.Fatalf("client.Add: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	go sched.Run(ctx) //nolint:errcheck
+
+	if !waitDelivered(ctx, client, droplet.ID) {
+		d, _ := client.Get(droplet.ID)
+		status := "unknown"
+		if d != nil {
+			status = d.Status
+		}
+		t.Fatalf("droplet %s was not re-delivered after dead-session heartbeat recovery (status: %s)",
+			droplet.ID, status)
+	}
+}
+
 // TestIntegration_EnvHygiene_APIKeyNotForwardedToSession verifies that
 // ANTHROPIC_API_KEY is NOT present in the environment of a spawned tmux session
 // when it is not set in the Castellarius's own environment:
@@ -348,6 +439,7 @@ func TestIntegration_EnvHygiene_APIKeyNotForwardedToSession(t *testing.T) {
 	// The runner explicitly only forwards CT_DB, PATH, and FAKEAGENT_MODE —
 	// ANTHROPIC_API_KEY is intentionally excluded even if the caller sets it.
 	runner := &integrationRunner{
+		t:        t,
 		agentBin: fakeagentPath,
 		dbPath:   dbPath,
 		logDir:   logDir,

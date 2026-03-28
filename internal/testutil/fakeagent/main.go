@@ -131,6 +131,11 @@ func main() {
 	}
 	dropletID := string(m[1])
 
+	// no_signal mode: exit without signaling — used for dead-session recovery tests.
+	if os.Getenv("FAKEAGENT_MODE") == "no_signal" {
+		os.Exit(0)
+	}
+
 	// Simulate work.
 	time.Sleep(200 * time.Millisecond)
 
