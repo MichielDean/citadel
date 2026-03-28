@@ -10,6 +10,29 @@ git add go.mod go.sum -- ':!CONTEXT.md' && git commit -m "chore: go mod tidy"
 ```
 If go build fails: fix it before touching git. A broken build should not reach a PR.
 
+## Step 0.5 — Check for zero-commit branch
+
+```bash
+git fetch origin main
+FETCH_EXIT=$?
+```
+
+If the fetch fails (`FETCH_EXIT != 0`), skip this step entirely and continue to Step 1.
+
+If the fetch succeeds:
+
+```bash
+COMMIT_COUNT=$(git log origin/main..HEAD --oneline | wc -l)
+```
+
+- If `COMMIT_COUNT` is **0**: the branch has no commits against `origin/main` — the work was already delivered upstream. Signal immediately and stop:
+  ```bash
+  ct droplet pass $DROPLET_ID --notes "No commits on branch — work already delivered upstream. Signaling pass without PR."
+  ```
+  Do not proceed further.
+
+- If `COMMIT_COUNT` is **non-zero**: continue to Step 1 normally.
+
 ## Step 1 — Extract droplet ID and branch
 
 ```bash
