@@ -480,77 +480,76 @@ func (m dashboardTUIModel) viewStatusBar() string {
 	return fmt.Sprintf("  %s  %s  %s  %s", flowing, queued, done, ts)
 }
 
-// viewAqueductArches renders all configured aqueducts as compact arch blocks,
-// arranged horizontally when the terminal is wide enough, stacked vertically
-// otherwise. Active aqueducts show animated water; idle ones show the static
-// mipmap with an "idle" label below.
+// viewAqueductArches renders the dashboard aqueduct section.
 //
-// Each arch block is archPillarW+2 columns wide (36+2=38), so two blocks fit
-// side by side in an 80-column terminal.
+// Active aqueducts (flowing droplet): full arch diagram each, stacked vertically.
+// Drought (all idle): one centered arch with "drought" label above it.
+// In both cases, a compact list of all aqueduct names and their status is shown below.
 func (m dashboardTUIModel) viewAqueductArches() []string {
 	if len(m.data.Cataractae) == 0 {
 		return []string{tuiStyleDim.Render("  No aqueducts configured")}
 	}
 
-	// archBlockW is the column width per arch slot for horizontal tiling.
-	const archBlockW = archPillarW + 2
-
-	archsPerRow := m.width / archBlockW
-	if archsPerRow < 1 {
-		archsPerRow = 1
-	}
-
-	// Render every aqueduct as a block. Idle ones get an "idle" label appended.
-	blocks := make([][]string, len(m.data.Cataractae))
-	for i, ch := range m.data.Cataractae {
-		rows := m.tuiAqueductRow(ch, m.frame)
-		if ch.DropletID == "" {
-			rows = append(rows, tuiStyleDim.Render(padOrTruncCenter("idle", archPillarW)))
-		}
-		blocks[i] = rows
-	}
-
-	// Group blocks into horizontal rows and join each group side by side.
+	active := activeAqueducts(m.data.Cataractae)
 	var lines []string
-	for start := 0; start < len(blocks); start += archsPerRow {
-		end := start + archsPerRow
-		if end > len(blocks) {
-			end = len(blocks)
-		}
-		group := blocks[start:end]
 
-		if start > 0 {
-			lines = append(lines, "")
-		}
-
-		// Find the tallest block in this group.
-		height := 0
-		for _, b := range group {
-			if len(b) > height {
-				height = len(b)
+	if len(active) == 0 {
+		// Drought: one centered arch, no water animation.
+		lines = append(lines, m.viewDroughtArch()...)
+	} else {
+		// Active: one arch per flowing aqueduct, stacked.
+		for i, ch := range active {
+			if i > 0 {
+				lines = append(lines, "")
 			}
+			lines = append(lines, m.tuiAqueductRow(ch, m.frame)...)
 		}
+	}
 
-		// Zip blocks: for each row index, concatenate lines from all blocks.
-		for row := 0; row < height; row++ {
-			var sb strings.Builder
-			for gi, b := range group {
-				var cell string
-				if row < len(b) {
-					cell = b[row]
-				}
-				// Pad all but the last block to archBlockW so the next block
-				// starts at a consistent column.
-				if gi < len(group)-1 {
-					cell = padToVisualWidth(cell, archBlockW)
-				}
-				sb.WriteString(cell)
-			}
-			lines = append(lines, sb.String())
-		}
+	// Compact list of all aqueducts below the arch(es).
+	lines = append(lines, "")
+	for _, ch := range m.data.Cataractae {
+		lines = append(lines, m.viewIdleAqueductRow(ch))
 	}
 
 	return lines
+}
+
+// viewDroughtArch renders a single centered arch for the drought state.
+func (m dashboardTUIModel) viewDroughtArch() []string {
+	mipmap := selectArchMipmap(archPillarW)
+	mipmapLines := strings.Split(strings.TrimRight(mipmap, "\n"), "\n")
+
+	leftPad := (m.width - archPillarW) / 2
+	if leftPad < 0 {
+		leftPad = 0
+	}
+	indent := strings.Repeat(" ", leftPad)
+
+	droughtLabel := tuiStyleDim.Render(tuiPadCenter("drought", m.width))
+	lines := make([]string, 0, len(mipmapLines)+1)
+	lines = append(lines, droughtLabel)
+	for _, line := range mipmapLines {
+		lines = append(lines, indent+line)
+	}
+	return lines
+}
+
+// viewIdleAqueductRow renders a single aqueduct as a compact status line.
+func (m dashboardTUIModel) viewIdleAqueductRow(ch CataractaeInfo) string {
+	const nameW = 12
+	const repoW = 18
+	name := padRight(ch.Name, nameW)
+	repo := padRight(ch.RepoName, repoW)
+	status := "·  idle"
+	if ch.DropletID != "" {
+		status = tuiStyleGreen.Render("▶  " + ch.Step)
+	}
+	return fmt.Sprintf("  %s  %s  %s",
+		tuiStyleDim.Render(name),
+		tuiStyleDim.Render(repo),
+		tuiStyleDim.Render(status),
+	)
 }
 
 // viewPeekSelectOverlay renders a centered picker overlay listing every active aqueduct.
