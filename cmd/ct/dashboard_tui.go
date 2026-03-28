@@ -576,6 +576,8 @@ func (m dashboardTUIModel) viewAqueductProgress(ch CataractaeInfo) string {
 	}
 
 	// Label row: step names centered over their segments.
+	// The active step also shows the elapsed time: "review 3m"
+	elapsed := formatElapsed(ch.Elapsed)
 	var lblRow strings.Builder
 	lblRow.WriteString(indent)
 	for i, s := range steps {
@@ -583,6 +585,9 @@ func (m dashboardTUIModel) viewAqueductProgress(ch CataractaeInfo) string {
 			lblRow.WriteString(strings.Repeat(" ", gateW))
 		}
 		lbl := s
+		if i == activeIdx && elapsed != "" {
+			lbl = s + " " + elapsed
+		}
 		if len([]rune(lbl)) > segW {
 			lbl = string([]rune(lbl)[:segW-1]) + "…"
 		}
@@ -678,8 +683,7 @@ func (m dashboardTUIModel) viewAqueductProgress(ch CataractaeInfo) string {
 
 	const nameW = 10
 	name := g.Render(padRight(ch.Name, nameW))
-	elapsed := formatElapsed(ch.Elapsed)
-	header := fmt.Sprintf("%s%s  %s  %s", indent, name, ch.DropletID, elapsed)
+	header := fmt.Sprintf("%s%s  %s", indent, name, ch.DropletID)
 
 	return header + "\n" + lblRow.String() + "\n" + topRow.String() + "\n" + botRow.String()
 }
