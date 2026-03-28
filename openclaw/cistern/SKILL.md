@@ -29,65 +29,52 @@ Cistern is an agentic workflow orchestrator. It routes units of work called **dr
 
 **Direct** — when requirements are already clear and well-specified:
 ```bash
+export ANTHROPIC_API_KEY=$(pass anthropic/claude)
 ct droplet add \
   --title "Short imperative description" \
   --repo <repo-name> \
   --complexity standard \
-  --priority 2 \
-  --description "What, why, acceptance criteria"
+  --description "What, why, acceptance criteria" \
+  --yes
 ```
 
-**Filtered** — when the idea is rough, vague, or complex enough to benefit from LLM decomposition. Filtration calls the LLM, clarifies scope, and may split the idea into multiple well-specified droplets:
+**Filtered** — when the idea is rough or complex. Filtration is a **conversation**, not a batch pass. The filtering agent reads the idea, asks clarifying questions, and iterates with you until the spec is tight.
+
+### Filtration workflow (always use this for non-trivial droplets)
+
+**Step 1 — Start a filter session:**
 ```bash
-ct droplet add \
-  --repo <repo-name> \
-  --filter \
-  --title "Rough idea title" \
-  --description "Rough description of what you want"
+export ANTHROPIC_API_KEY=$(pass anthropic/claude)
+ct filter --repo <repo> --title "Rough idea" --description "Intent..."
 ```
+This prints a refined draft + a `session_id`. The agent may ask clarifying questions in its output.
 
-Filtration requires a TTY. Run it in a tmux session:
+**Step 2 — Resume with answers/context:**
 ```bash
-tmux new-session -d -s filtration
-tmux send-keys -t filtration "ANTHROPIC_API_KEY=\$(cat ~/.cistern/env | grep ANTHROPIC_API_KEY | cut -d= -f2) PATH=\$HOME/go/bin:\$HOME/.local/bin:\$PATH ct droplet add --repo <repo> --filter --title '...' --description '...'" Enter
-# Then watch: tmux attach -t filtration
+ct filter --resume <session-id> "Here are my answers: ..."
 ```
+Continue until the spec feels complete. Typically 2-4 rounds.
 
-Or write the command to a script and run it in tmux to avoid shell quoting issues with multiline descriptions.
-
-### `ct filter` — Non-Persistent Refinement
-
-If you want to **iterate and refine an idea without immediately filing a droplet**, use `ct filter` instead:
-
+**Step 3 — File when satisfied:**
 ```bash
-# Start a refinement session
-ct filter --title "Rough idea" --description "Some context"
-
-# Continue refining (copy the session-id from output)
-ct filter --resume <session-id> "Here's my feedback..."
-
-# When ready, persist the final result
 ct filter --resume <session-id> --file --repo <repo>
 ```
+This files the final version. Only run this after confirming with the user.
 
-This lets you **converge on a good idea iteratively** before committing anything to the pipeline. When you use `--file`, the refined title and description become a real droplet.
-
-For scripting, use `--output-format json` to get structured output (session_id + proposals).
-
-**When to use `ct filter` vs `ct droplet add --filter`:**
-- Use `ct filter` when you want to **iterate safely** without filing a droplet yet
-- Use `ct droplet add --filter` when you're ready to **file immediately after refinement**
+**Rules:**
+- Never use `ct droplet add --filter` — that fires-and-forgets with no conversation
+- Always show the user a **single summary** of how the description improved across iterations — not a message per round
+- Get explicit user confirmation before running `--file`
+- Minimum 3 iterations unless the user says it's ready sooner
 
 **When to use filtration:**
-- The idea is exploratory or spans multiple concerns
-- You're not sure of the right complexity or decomposition
-- The description is a few sentences of intent, not a spec
-- The user says something like "plan this out" or "figure out what we need"
+- The idea spans multiple files or concerns
+- The description is intent, not a spec
+- The user says "plan this out" or "figure out what we need"
 
 **When to file directly:**
-- Requirements are already clear and specific
-- It's a small, well-understood fix
-- The user already described it in detail
+- Requirements are already fully specified
+- It's a small, well-understood fix (typo, config change)
 
 ### Complexity
 
