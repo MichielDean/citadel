@@ -454,20 +454,18 @@ func (m dashboardTUIModel) viewAqueductArches() []string {
 	var lines []string
 
 	if len(active) == 0 {
-		// Drought: one centered arch, no water animation.
-		lines = append(lines, m.viewDroughtArch()...)
+		// Drought: centered label
+		lines = append(lines, tuiStyleDim.Render(tuiPadCenter("◈  drought  ◈", m.width)))
+		lines = append(lines, "")
 	} else {
-		// Active: one arch per flowing aqueduct, stacked.
-		for i, ch := range active {
-			if i > 0 {
-				lines = append(lines, "")
-			}
-			lines = append(lines, m.tuiAqueductRow(ch, m.frame)...)
+		// Active aqueducts: progress bar per flowing aqueduct
+		for _, ch := range active {
+			lines = append(lines, m.viewAqueductProgress(ch))
+			lines = append(lines, "")
 		}
 	}
 
-	// Compact list of all aqueducts below the arch(es).
-	lines = append(lines, "")
+	// Compact list of all aqueducts
 	for _, ch := range m.data.Cataractae {
 		lines = append(lines, m.viewIdleAqueductRow(ch))
 	}
@@ -475,24 +473,120 @@ func (m dashboardTUIModel) viewAqueductArches() []string {
 	return lines
 }
 
-// viewDroughtArch renders a single centered arch for the drought state.
-func (m dashboardTUIModel) viewDroughtArch() []string {
-	mipmap := selectArchMipmap(archPillarW)
-	mipmapLines := strings.Split(strings.TrimRight(mipmap, "\n"), "\n")
+// viewAqueductProgress renders an active aqueduct as a progress bar row.
+// Layout:
+//
+//	  virgo  cistern  ci-abc12  implement  5m 23s
+//	  [████████████░░░░░░░░░░░░░░░░░░░░░░░░░]  3/7
+func (m dashboardTUIModel) viewAqueductProgress(ch CataractaeInfo) string {
+	g := tuiStyleGreen
+	dim := tuiStyleDim
 
-	leftPad := (m.width - archPillarW) / 2
-	if leftPad < 0 {
-		leftPad = 0
-	}
-	indent := strings.Repeat(" ", leftPad)
+	// Water gradient: deep teal → bright cyan
+	const waterA = "#1a7a96" // deep water (empty)
+	const waterB = "#a8eeff" // bright surface (filled)
 
-	droughtLabel := tuiStyleDim.Render(tuiPadCenter("drought", m.width))
-	lines := make([]string, 0, len(mipmapLines)+1)
-	lines = append(lines, droughtLabel)
-	for _, line := range mipmapLines {
-		lines = append(lines, indent+line)
+	w := m.width - 4 // 4 = left indent
+	if w < 20 {
+		w = 20
 	}
-	return lines
+
+	// Header line: name  repo  droplet  step  elapsed
+	const nameW = 10
+	const repoW = 10
+	name := g.Render(padRight(ch.Name, nameW))
+	repo := dim.Render(padRight(ch.RepoName, repoW))
+	elapsed := dim.Render(formatElapsed(ch.Elapsed))
+	step := g.Bold(true).Render(ch.Step)
+	header := fmt.Sprintf("  %s  %s  %s  %s  %s", name, repo, dim.Render(ch.DropletID), step, elapsed)
+
+	// Progress bar: water colors, fills to active step fraction
+	barW := w - 8 // leave room for " N/M" suffix
+	if barW < 10 {
+		barW = 10
+	}
+	total := ch.TotalCataractae
+	if total <= 0 {
+		total = len(ch.Steps)
+	}
+	if total <= 0 {
+		total = 1
+	}
+	pct := float64(ch.CataractaeIndex) / float64(total)
+	if pct > 1 {
+		pct = 1
+	}
+
+	// Build bar manually with water gradient chars
+	filled := int(pct * float64(barW))
+	var bar strings.Builder
+	bar.WriteString("  ")
+	for i := 0; i < barW; i++ {
+		if i < filled {
+			// Gradient: interpolate from waterA to waterB
+			t := float64(i) / float64(barW)
+			color := interpolateHex(waterA, waterB, t)
+			bar.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render("█"))
+		} else if i == filled {
+			// Animated leading edge — cycles ░▒▓ with frame
+			edge := []string{"░", "▒", "▓"}[m.frame%3]
+			bar.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(waterA)).Render(edge))
+		} else {
+			bar.WriteString(dim.Render("░"))
+		}
+	}
+	bar.WriteString(fmt.Sprintf("  %s", dim.Render(fmt.Sprintf("%d/%d", ch.CataractaeIndex, total))))
+
+	// Pipeline steps: all steps, active one highlighted
+	effW := m.width - 2
+	if effW <= 0 {
+		effW = 80
+	}
+	var lblSB strings.Builder
+	lblSB.WriteString("  ")
+	usedW := 2
+	for i, s := range ch.Steps {
+		sep := ""
+		if i > 0 {
+			sep = " → "
+		}
+		part := sep + s
+		partW := len([]rune(part))
+		if usedW+partW > effW {
+			lblSB.WriteString(dim.Render("…"))
+			break
+		}
+		if s == ch.Step && ch.DropletID != "" {
+			if i > 0 {
+				lblSB.WriteString(dim.Render(" → "))
+			}
+			lblSB.WriteString(g.Bold(true).Render(s))
+		} else {
+			lblSB.WriteString(dim.Render(part))
+		}
+		usedW += partW
+	}
+
+	return header + "\n" + bar.String() + "\n" + lblSB.String()
+}
+
+// interpolateHex linearly interpolates between two hex colors (#rrggbb) at t in [0,1].
+func interpolateHex(a, b string, t float64) string {
+	ar, ag, ab_ := hexToRGB(a)
+	br, bg, bb_ := hexToRGB(b)
+	r := uint8(float64(ar) + t*float64(int(br)-int(ar)))
+	g2 := uint8(float64(ag) + t*float64(int(bg)-int(ag)))
+	blu := uint8(float64(ab_) + t*float64(int(bb_)-int(ab_)))
+	return fmt.Sprintf("#%02x%02x%02x", r, g2, blu)
+}
+
+func hexToRGB(h string) (uint8, uint8, uint8) {
+	if len(h) == 7 && h[0] == '#' {
+		h = h[1:]
+	}
+	var r, g, b uint8
+	fmt.Sscanf(h, "%02x%02x%02x", &r, &g, &b)
+	return r, g, b
 }
 
 // viewIdleAqueductRow renders a single aqueduct as a compact status line.
@@ -512,8 +606,6 @@ func (m dashboardTUIModel) viewIdleAqueductRow(ch CataractaeInfo) string {
 	)
 }
 
-// viewPeekSelectOverlay renders a centered picker overlay listing every active aqueduct.
-// The user navigates with Up/Down, confirms with Enter, and cancels with Esc or q.
 func (m dashboardTUIModel) viewPeekSelectOverlay() string {
 	if m.data == nil {
 		return "  Loading…\n"
@@ -554,213 +646,6 @@ func (m dashboardTUIModel) viewPeekSelectOverlay() string {
 		h = 24
 	}
 	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, box)
-}
-
-// ansiTruncVisual truncates s to at most width visible rune-columns while
-// preserving all ANSI escape sequences (CSI: \x1b[…m) within the retained
-// portion. A reset (\x1b[0m) is appended when ANSI codes were present so that
-// subsequent styled output (e.g. wfExit) starts from a clean colour state.
-func ansiTruncVisual(s string, width int) string {
-	var sb strings.Builder
-	visual := 0
-	hasANSI := false
-	runes := []rune(s)
-	i := 0
-	for i < len(runes) && visual < width {
-		if runes[i] == '\x1b' && i+1 < len(runes) && runes[i+1] == '[' {
-			// CSI escape sequence: \x1b[ params final-byte (0x40–0x7E).
-			hasANSI = true
-			sb.WriteRune(runes[i]) // \x1b
-			i++
-			sb.WriteRune(runes[i]) // [
-			i++
-			for i < len(runes) {
-				sb.WriteRune(runes[i])
-				if runes[i] >= 0x40 && runes[i] <= 0x7E {
-					i++
-					break
-				}
-				i++
-			}
-			continue
-		}
-		sb.WriteRune(runes[i])
-		visual++
-		i++
-	}
-	if hasANSI {
-		sb.WriteString("\x1b[0m")
-	}
-	return sb.String()
-}
-
-// animateTroughLine post-processes a single ANSI-encoded mipmap row for water
-// animation. For each visible (non-space) character in the row it substitutes a
-// cycling wave character from the pattern (░▒▓≈▒░) based on column position and
-// frame. Space characters are preserved so arch walls or blank sky areas remain
-// untouched. width is the expected visual column count of the row.
-func animateTroughLine(line string, frame, width int) string {
-	stripped := []rune(stripANSI(line))
-
-	type waveCell struct {
-		ch  string
-		sty lipgloss.Style
-	}
-	const waveViz = 6
-	waveCells := [waveViz]waveCell{
-		{"░", archRoleWaterDim}, {"▒", archRoleWaterMid}, {"▓", archRoleWaterBright},
-		{"≈", archRoleWaterMid}, {"▒", archRoleWaterMid}, {"░", archRoleWaterDim},
-	}
-
-	var sb strings.Builder
-	for col, r := range stripped {
-		if r == ' ' {
-			sb.WriteRune(' ')
-		} else {
-			cell := waveCells[((col-frame)%waveViz+waveViz)%waveViz]
-			sb.WriteString(cell.sty.Render(cell.ch))
-		}
-	}
-	// Pad to width if the stripped content was shorter.
-	for col := len(stripped); col < width; col++ {
-		sb.WriteRune(' ')
-	}
-	return sb.String()
-}
-
-// tuiAqueductRow renders a single aqueduct as a pixel art arch diagram.
-// Layout (top to bottom): name → info → step labels → mipmap arch.
-// Total lines: 3 header rows + mipmap height (12/22/30/37 depending on terminal width).
-//
-// Water is animated inside the mipmap trough (top 2 mipmap rows) for active aqueducts.
-// Idle aqueducts (no active droplet) show a static mipmap with no water animation.
-func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string {
-	const nameW = 10
-	// archBlockW matches the per-slot column budget used by viewAqueductArches.
-	const archBlockW = archPillarW + 2
-
-	g   := tuiStyleGreen
-	dim := tuiStyleDim
-
-	steps := ch.Steps
-	if len(steps) == 0 {
-		steps = []string{"—"}
-	}
-
-	// indent is the shared left padding for info and label rows.
-	// Kept minimal (2 chars) so each arch block fits within archBlockW columns,
-	// enabling horizontal side-by-side tiling in an 80-column terminal.
-	const indent = "  "
-
-	// Name line: aqueduct name + repo name on the same line.
-	repoLabel := ch.RepoName
-	if len([]rune(repoLabel)) > nameW {
-		repoLabel = string([]rune(repoLabel)[:nameW-1]) + "…"
-	}
-	nameLine := "  " + g.Render(padRight(ch.Name, nameW)) + "  " + dim.Render(repoLabel)
-
-	// Info line: droplet ID, elapsed time, and title — shown only when active.
-	var infoLine string
-	if ch.DropletID != "" {
-		infoBase := ch.DropletID + "  " + formatElapsed(ch.Elapsed)
-		// Info line uses full terminal width, not the arch block width.
-		const indentW = 2
-		availW := m.width
-		if availW <= 0 {
-			availW = 80
-		}
-		titleW := availW - indentW - len([]rune(infoBase)) - 2
-		if titleW > 0 && ch.Title != "" {
-			title := ch.Title
-			if len([]rune(title)) > titleW {
-				title = string([]rune(title)[:titleW-1]) + "…"
-			}
-			infoLine = indent + g.Render(infoBase) + "  " + dim.Render(title)
-		} else {
-			infoLine = indent + g.Render(infoBase)
-		}
-	}
-	// Find active step index (0-based); -1 if none.
-	activeIdx := -1
-	for i, step := range steps {
-		if step == ch.Step && ch.DropletID != "" {
-			activeIdx = i
-			break
-		}
-	}
-
-	// Waterfall is visible only when the droplet is on the final step.
-	isLastStep := activeIdx >= 0 && activeIdx == len(steps)-1
-
-	// Mipmap arch: select the mipmap that fits within one pillar slot (archPillarW).
-	// The arch is left-aligned at the indent position so that each arch block is
-	// exactly indent+mipmapW columns wide, enabling horizontal tiling in viewAqueductArches.
-	mipmapW := archMipmapWidth(archPillarW)
-	mipmap := selectArchMipmap(archPillarW)
-	mipmapLines := strings.Split(strings.TrimRight(mipmap, "\n"), "\n")
-
-	var archLines []string
-	for _, line := range mipmapLines {
-		archLines = append(archLines, indent+line)
-	}
-
-	// For active aqueducts, animate the trough: post-process the top 2 mipmap rows
-	// by replacing each visible (non-space) character with a cycling wave character.
-	// Space positions (arch walls, blank sky) are preserved unchanged.
-	if activeIdx >= 0 && len(archLines) >= 2 {
-		archLines[0] = indent + animateTroughLine(mipmapLines[0], frame, mipmapW)
-		archLines[1] = indent + animateTroughLine(mipmapLines[1], frame, mipmapW)
-	}
-
-	// Waterfall exit: replace the last wfW visual chars of the last mipmap row with
-	// wfExit, keeping the arch line within archBlockW.
-	// ansiTruncVisual preserves 24-bit pixel-art colours in the retained prefix.
-	if isLastStep && len(archLines) > 0 {
-		const wfW = 4 // visual width of wfExit (░▒▓▓)
-		const trimTo = archBlockW - wfW
-		// Waterfall brightness rotates with frame so ▓ appears to fall.
-		wfAccent := []lipgloss.Style{archRoleWaterBright, archRoleWaterMid, archRoleWaterDim}[frame%3]
-		wfExit := archRoleWaterDim.Render("░") + archRoleWaterMid.Render("▒") + wfAccent.Render("▓▓")
-		archLines[len(archLines)-1] = ansiTruncVisual(archLines[len(archLines)-1], trimTo) + wfExit
-	}
-
-	// Label line: full pipeline shown as "step1 → step2 → step3 → …"
-	// Active step is bold+green; others are dim. Truncated to terminal width.
-	var lblSB strings.Builder
-	lblSB.WriteString(indent)
-	effectiveWidth := m.width
-	if effectiveWidth <= 0 {
-		effectiveWidth = 80
-	}
-	maxLblW := effectiveWidth - len([]rune(indent))
-	usedW := 0
-	for i, step := range steps {
-		sep := ""
-		if i > 0 {
-			sep = " → "
-		}
-		part := sep + step
-		partW := len([]rune(part))
-		if usedW+partW > maxLblW {
-			lblSB.WriteString(dim.Render("…"))
-			break
-		}
-		if i == activeIdx {
-			if i > 0 {
-				lblSB.WriteString(dim.Render(" → "))
-			}
-			lblSB.WriteString(g.Bold(true).Render(step))
-		} else {
-			lblSB.WriteString(dim.Render(part))
-		}
-		usedW += partW
-	}
-	lblLine := lblSB.String()
-
-	// Return order: name → info → label → mipmap arch rows (with animated water trough for active).
-	result := []string{nameLine, infoLine, lblLine}
-	result = append(result, archLines...)
-	return result
 }
 
 // tuiFlowGraphRow renders a single aqueduct as a styled flow graph row.

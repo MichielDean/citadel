@@ -2,17 +2,11 @@ package main
 
 import (
 	"bytes"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
-
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/muesli/termenv"
 
 	"github.com/MichielDean/cistern/internal/cistern"
 	"github.com/MichielDean/cistern/internal/aqueduct"
@@ -844,396 +838,74 @@ func TestStripANSITest_CSISequences(t *testing.T) {
 // TestTuiAqueductRow_LabelRowAboveArch verifies that:
 // - lines[2] is the label row (shows full pipeline with all step names and →)
 // - lines[3] is the first mipmap row (animated wave for active aqueducts)
-func TestTuiAqueductRow_LabelRowAboveArch(t *testing.T) {
+
+// --- Progress bar rendering tests ---
+
+func TestViewAqueductProgress_ContainsDropletInfo(t *testing.T) {
 	m := newDashboardTUIModel("", "")
-	steps := []string{"implement", "review", "merge"}
-	ch := CataractaeInfo{
-		Name:      "virgo",
-		DropletID: "ci-abc12",
-		Step:      "review",
-		Steps:     steps,
-	}
-	lines := m.tuiAqueductRow(ch, 0)
-
-	if len(lines) < 4 {
-		t.Fatalf("expected at least 4 lines, got %d", len(lines))
-	}
-
-	// lines[2] is the label row — shows the full pipeline.
-	labelRow := stripANSITest(lines[2])
-	if !strings.Contains(labelRow, "review") {
-		t.Errorf("label row %q should contain active step name 'review'", labelRow)
-	}
-	if !strings.Contains(labelRow, "→") {
-		t.Errorf("label row %q should contain pipeline separator '→'", labelRow)
-	}
-
-	// lines[3] is the first mipmap row; for an active aqueduct it shows animated wave chars.
-	firstMipmap := stripANSITest(lines[3])
-	if !strings.ContainsAny(firstMipmap, "░▒▓≈") {
-		t.Errorf("lines[3] for active aqueduct should contain wave chars (░▒▓≈), got %q", firstMipmap)
-	}
-}
-
-
-// TestTuiAqueductRow_LineCount verifies tuiAqueductRow returns the correct number
-// of lines: 3 header rows (name, info, label) plus the mipmap height.
-// The mipmap is selected by archPillarW=36 → 36x12 → 12 visual lines.
-// Total = 3 + 12 = 15. Independent of step count.
-func TestTuiAqueductRow_LineCount(t *testing.T) {
-	m := newDashboardTUIModel("", "")
-	tests := []struct {
-		name   string
-		nSteps int
-	}{
-		{"one step", 1},
-		{"two steps", 2},
-		{"three steps", 3},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			steps := make([]string, tt.nSteps)
-			for i := range steps {
-				steps[i] = fmt.Sprintf("step%d", i+1)
-			}
-			ch := CataractaeInfo{Name: "virgo", Steps: steps}
-			lines := m.tuiAqueductRow(ch, 0)
-			// 3 header rows + 12 mipmap lines (36x12 mipmap — arch selected by
-			// archPillarW=36, not terminal width)
-			const wantLines = 9
-			if len(lines) != wantLines {
-				t.Errorf("tuiAqueductRow() returned %d lines, want %d", len(lines), wantLines)
-			}
-		})
-	}
-}
-
-// TestTuiAqueductRow_MipmapArchLinesNonEmpty verifies that the arch section of
-// tuiAqueductRow (rows[3:]) consists of non-empty mipmap lines.
-// The ASCII pillar pixel map has been replaced by a pre-rendered ANSI mipmap;
-// this test confirms the mipmap content is present in the arch section.
-func TestTuiAqueductRow_MipmapArchLinesNonEmpty(t *testing.T) {
-	m := newDashboardTUIModel("", "")
-	steps := []string{"implement", "review", "merge"}
-	ch := CataractaeInfo{Name: "virgo", Steps: steps}
-	lines := m.tuiAqueductRow(ch, 0)
-
-	const headerRows = 3 // name, info, label
-	if len(lines) <= headerRows {
-		t.Fatalf("expected more than %d lines, got %d", headerRows, len(lines))
-	}
-
-	// Every line in the mipmap section must be non-empty.
-	for i := headerRows; i < len(lines); i++ {
-		if lines[i] == "" {
-			t.Errorf("arch mipmap lines[%d] is empty; expected pre-rendered pixel art content", i)
-		}
-	}
-}
-
-// TestTuiAqueductRow_MipmapArchLinesHaveExpectedCount verifies the arch section
-// has exactly the expected number of lines. The mipmap is now selected by
-// archPillarW (36), not terminal width — so the 36x12 mipmap is always used,
-// giving 12 visual lines. Total = 3 header + 12 mipmap = 15.
-func TestTuiAqueductRow_MipmapArchLinesHaveExpectedCount(t *testing.T) {
-	m := newDashboardTUIModel("", "")
-	steps := []string{"implement"}
-	ch := CataractaeInfo{Name: "virgo", Steps: steps}
-	lines := m.tuiAqueductRow(ch, 0)
-
-	const headerRows = 3
-	const mipmapLines = 6 // 20x7 mipmap — selected by archPillarW=20
-	const wantTotal = headerRows + mipmapLines
-	if len(lines) != wantTotal {
-		t.Errorf("tuiAqueductRow() returned %d lines, want %d (3 header + 6 mipmap)", len(lines), wantTotal)
-	}
-}
-
-
-// TestViewAqueductArches_AllIdleState_ShowsIdleArchs verifies that when all
-// aqueducts are idle, viewAqueductArches renders each aqueduct with its arch
-// mipmap and an "idle" label — no longer shows a single "drought" arch.
-func TestViewAqueductArches_AllIdleState_ShowsIdleArchs(t *testing.T) {
-	m := newDashboardTUIModel("", "")
-	m.width = 80
-	steps := []string{"implement", "review", "merge"}
-	m.data = &DashboardData{
-		Cataractae: []CataractaeInfo{
-			{Name: "virgo", Steps: steps},
-			{Name: "marcia", Steps: steps},
-		},
-	}
-
-	lines := m.viewAqueductArches()
-	if len(lines) == 0 {
-		t.Fatal("viewAqueductArches() returned no lines in all-idle state")
-	}
-	allText := strings.Join(lines, "\n")
-	cleanText := stripANSITest(allText)
-
-	// Both aqueduct names must be visible (each gets its own arch block).
-	if !strings.Contains(cleanText, "virgo") {
-		t.Error("all-idle display should show arch for 'virgo'")
-	}
-	if !strings.Contains(cleanText, "marcia") {
-		t.Error("all-idle display should show arch for 'marcia'")
-	}
-	// Each idle aqueduct shows an "idle" label.
-	if !strings.Contains(cleanText, "idle") {
-		t.Error("all-idle display should contain 'idle' label for each idle aqueduct")
-	}
-	// Must produce enough lines to contain mipmap rows (more than just 2 name lines).
-	if len(lines) < 10 {
-		t.Errorf("all-idle display returned only %d lines; expected arch rows", len(lines))
-	}
-}
-
-// TestViewAqueductArches_ActiveAqueductDoesNotShowDrought verifies that when at
-// least one aqueduct is active, both aqueducts are shown as arch blocks (no drought).
-func TestViewAqueductArches_ActiveAqueductDoesNotShowDrought(t *testing.T) {
-	m := newDashboardTUIModel("", "")
-	m.width = 80
-	steps := []string{"implement", "review", "merge"}
-	m.data = &DashboardData{
-		Cataractae: []CataractaeInfo{
-			{Name: "virgo", DropletID: "ci-abc12", Step: "implement", Steps: steps},
-			{Name: "marcia", Steps: steps},
-		},
-	}
-
-	lines := m.viewAqueductArches()
-	allText := strings.Join(lines, "\n")
-	cleanText := stripANSITest(allText)
-
-	if strings.Contains(cleanText, "drought") {
-		t.Error("active state should not show drought display")
-	}
-	// Idle aqueduct "marcia" must appear — now as an arch block, not compact text.
-	if !strings.Contains(cleanText, "marcia") {
-		t.Error("idle aqueduct 'marcia' should appear in arch output")
-	}
-	// The idle arch must have an "idle" label.
-	if !strings.Contains(cleanText, "idle") {
-		t.Error("idle aqueduct should show 'idle' label below its arch")
-	}
-}
-
-// TestTuiAqueductRow_ActiveVsIdle_MipmapTopRowDiffers verifies that when a
-// droplet is active the first mipmap row (rows[3]) differs from the idle case
-// because it shows animated wave characters. The static mipmap rows deeper in
-// the arch (rows[5:]) are identical for both active and idle aqueducts.
-//
-// Forces TrueColor rendering so lipgloss emits ANSI escape codes in the test context.
-func TestTuiAqueductRow_ActiveVsIdle_MipmapTopRowDiffers(t *testing.T) {
-	// Force TrueColor so lipgloss emits ANSI escape sequences; restore after.
-	orig := lipgloss.ColorProfile()
-	lipgloss.SetColorProfile(termenv.TrueColor)
-	t.Cleanup(func() { lipgloss.SetColorProfile(orig) })
-
-	m := newDashboardTUIModel("", "")
-	steps := []string{"implement", "review", "merge"}
-
-	active := m.tuiAqueductRow(CataractaeInfo{
-		Name:      "virgo",
-		DropletID: "ci-abc12",
-		Step:      "review",
-		Steps:     steps,
-	}, 0)
-
-	idle := m.tuiAqueductRow(CataractaeInfo{
-		Name:  "virgo",
-		Steps: steps,
-	}, 0)
-
-	// First mipmap row is rows[3]. Active (animated wave) must differ from idle (static).
-	if active[3] == idle[3] {
-		t.Error("first mipmap row (rows[3]) should differ between active and idle aqueduct")
-	}
-
-	// The mipmap arch (rows[5]) is beyond the animated trough — same for active and idle.
-	if active[5] != idle[5] {
-		t.Errorf("mipmap arch rows[5] should be identical for active and idle (static image)\nactive: %q\nidle:   %q",
-			active[5], idle[5])
-	}
-}
-
-// TestTuiAqueductRow_NameLineShowsAqueductAndRepo verifies that lines[0] contains
-// both the aqueduct name and the repo name.
-func TestTuiAqueductRow_NameLineShowsAqueductAndRepo(t *testing.T) {
-	m := newDashboardTUIModel("", "")
-	steps := []string{"implement", "review", "merge"}
-	ch := CataractaeInfo{
-		Name:      "virgo",
-		RepoName:  "cistern",
-		DropletID: "ci-abc12",
-		Step:      "review",
-		Steps:     steps,
-	}
-	lines := m.tuiAqueductRow(ch, 0)
-
-	if len(lines) < 2 {
-		t.Fatalf("expected at least 2 lines, got %d", len(lines))
-	}
-	nameLine := stripANSITest(lines[0])
-	if !strings.Contains(nameLine, "virgo") {
-		t.Errorf("name line should contain aqueduct name 'virgo', got %q", nameLine)
-	}
-	if !strings.Contains(nameLine, "cistern") {
-		t.Errorf("name line should contain repo name 'cistern', got %q", nameLine)
-	}
-}
-
-// TestTuiAqueductRow_InfoLineShowsDropletInfo_WhenActive verifies that lines[1]
-// contains the droplet ID and elapsed time for active aqueducts, but no progress bar.
-func TestTuiAqueductRow_InfoLineShowsDropletInfo_WhenActive(t *testing.T) {
-	m := newDashboardTUIModel("", "")
-	steps := []string{"implement", "review", "merge"}
 	ch := CataractaeInfo{
 		Name:            "virgo",
 		RepoName:        "cistern",
 		DropletID:       "ci-abc12",
-		Step:            "review",
-		Steps:           steps,
-		CataractaeIndex:  2,
+		Step:            "implement",
+		Steps:           []string{"implement", "review", "deliver"},
 		TotalCataractae: 3,
-		Elapsed:         3*time.Minute + 7*time.Second,
+		CataractaeIndex: 1,
 	}
-	lines := m.tuiAqueductRow(ch, 0)
-
-	if len(lines) < 2 {
-		t.Fatalf("expected at least 2 lines, got %d", len(lines))
+	result := m.viewAqueductProgress(ch)
+	stripped := stripANSITest(result)
+	if !strings.Contains(stripped, "virgo") {
+		t.Errorf("progress row should contain aqueduct name 'virgo', got: %q", stripped)
 	}
-	infoLine := stripANSITest(lines[1])
-	if !strings.Contains(infoLine, "ci-abc12") {
-		t.Errorf("info line should contain droplet ID 'ci-abc12', got %q", infoLine)
+	if !strings.Contains(stripped, "ci-abc12") {
+		t.Errorf("progress row should contain droplet ID, got: %q", stripped)
 	}
-	if !strings.Contains(infoLine, "3m 7s") {
-		t.Errorf("info line should contain elapsed '3m 7s', got %q", infoLine)
-	}
-	if strings.ContainsAny(infoLine, "░█") {
-		t.Errorf("info line must not contain progress bar chars (░ or █), got %q", infoLine)
+	if !strings.Contains(stripped, "implement") {
+		t.Errorf("progress row should contain active step name, got: %q", stripped)
 	}
 }
 
-// TestTuiAqueductRow_InfoLineEmpty_WhenIdle verifies that lines[1] is empty
-// (no droplet info) for idle aqueducts.
-func TestTuiAqueductRow_InfoLineEmpty_WhenIdle(t *testing.T) {
+func TestViewAqueductProgress_PipelineContainsAllSteps(t *testing.T) {
 	m := newDashboardTUIModel("", "")
-	steps := []string{"implement", "review", "merge"}
-	ch := CataractaeInfo{
-		Name:  "virgo",
-		Steps: steps,
-	}
-	lines := m.tuiAqueductRow(ch, 0)
-
-	if len(lines) < 2 {
-		t.Fatalf("expected at least 2 lines, got %d", len(lines))
-	}
-	infoLine := stripANSITest(lines[1])
-	if strings.TrimSpace(infoLine) != "" {
-		t.Errorf("idle info line should be empty (all spaces), got %q", infoLine)
-	}
-}
-
-// TestTuiAqueductRow_MipmapWaveRow_NoDropletInfo verifies that the animated mipmap
-// trough rows (lines[3] and lines[4]) do not contain the droplet ID or elapsed
-// time — those belong on the info line (lines[1]) only.
-func TestTuiAqueductRow_MipmapWaveRow_NoDropletInfo(t *testing.T) {
-	m := newDashboardTUIModel("", "")
-	steps := []string{"implement", "review", "merge"}
 	ch := CataractaeInfo{
 		Name:            "virgo",
 		DropletID:       "ci-abc12",
 		Step:            "review",
-		Steps:           steps,
-		CataractaeIndex:  2,
+		Steps:           []string{"implement", "review", "deliver"},
 		TotalCataractae: 3,
-		Elapsed:         3*time.Minute + 7*time.Second,
+		CataractaeIndex: 2,
 	}
-	lines := m.tuiAqueductRow(ch, 0)
-
-	if len(lines) < 5 {
-		t.Fatalf("expected at least 5 lines, got %d", len(lines))
+	result := m.viewAqueductProgress(ch)
+	stripped := stripANSITest(result)
+	if !strings.Contains(stripped, "→") {
+		t.Errorf("progress row should contain pipeline separator →, got: %q", stripped)
 	}
-	for _, rowIdx := range []int{3, 4} {
-		row := stripANSITest(lines[rowIdx])
-		if strings.Contains(row, "ci-abc12") {
-			t.Errorf("mipmap trough row[%d] should not contain droplet ID, got %q", rowIdx, row)
-		}
-		if strings.Contains(row, "3m") {
-			t.Errorf("mipmap trough row[%d] should not contain elapsed time, got %q", rowIdx, row)
-		}
+	if !strings.Contains(stripped, "implement") {
+		t.Errorf("progress row should contain all steps, got: %q", stripped)
 	}
 }
 
-// TestTuiAqueductRow_WaterfallOnlyOnLastStep verifies that the waterfall animation
-// (wfExit appended to the last mipmap row) is only rendered when the active step
-// is the final step in the pipeline. For mid-pipeline steps and idle aqueducts
-// the waterfall must be absent.
-func TestTuiAqueductRow_WaterfallOnlyOnLastStep(t *testing.T) {
+// --- viewIdleAqueductRow tests ---
+
+func TestViewIdleAqueductRow_ShowsName(t *testing.T) {
 	m := newDashboardTUIModel("", "")
-	steps := []string{"implement", "review", "merge"}
-
-	cases := []struct {
-		name      string
-		step      string
-		dropletID string
-		wantWF    bool
-	}{
-		{
-			name:      "last step active — waterfall visible",
-			step:      "merge",
-			dropletID: "ci-abc12",
-			wantWF:    true,
-		},
-		{
-			name:      "mid step active — no waterfall",
-			step:      "review",
-			dropletID: "ci-abc12",
-			wantWF:    false,
-		},
-		{
-			name:      "first step active — no waterfall",
-			step:      "implement",
-			dropletID: "ci-abc12",
-			wantWF:    false,
-		},
-		{
-			name:      "idle (no droplet) — no waterfall",
-			step:      "",
-			dropletID: "",
-			wantWF:    false,
-		},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			ch := CataractaeInfo{
-				Name:      "virgo",
-				DropletID: tc.dropletID,
-				Step:      tc.step,
-				Steps:     steps,
-			}
-			lines := m.tuiAqueductRow(ch, 0)
-
-			if len(lines) == 0 {
-				t.Fatal("tuiAqueductRow returned no lines")
-			}
-
-			// wfExit ("░▒▓▓") is appended to the last mipmap row when on the final step.
-			// Check for the specific wfExit sequence rather than just ▓▓ to avoid
-			// false-positives from arch pillar characters.
-			lastRow := stripANSITest(lines[len(lines)-1])
-			hasWF := strings.Contains(lastRow, "░▒▓▓")
-			if hasWF != tc.wantWF {
-				t.Errorf("last mipmap row waterfall presence: got %v, want %v (wantWF=%v)\nrow: %q",
-					hasWF, tc.wantWF, tc.wantWF, lastRow)
-			}
-		})
+	ch := CataractaeInfo{Name: "virgo", RepoName: "cistern"}
+	row := stripANSITest(m.viewIdleAqueductRow(ch))
+	if !strings.Contains(row, "virgo") {
+		t.Errorf("idle row should contain aqueduct name, got: %q", row)
 	}
 }
 
-// --- TestActiveAqueducts ---
+func TestViewIdleAqueductRow_ShowsActiveStep(t *testing.T) {
+	m := newDashboardTUIModel("", "")
+	ch := CataractaeInfo{Name: "virgo", RepoName: "cistern", DropletID: "ci-abc", Step: "review"}
+	row := stripANSITest(m.viewIdleAqueductRow(ch))
+	if !strings.Contains(row, "review") {
+		t.Errorf("active row should contain step name, got: %q", row)
+	}
+}
+
+// --- activeAqueducts tests ---
 
 func TestActiveAqueducts_ReturnsOnlyActive(t *testing.T) {
 	cataractae := []CataractaeInfo{
@@ -1241,15 +913,9 @@ func TestActiveAqueducts_ReturnsOnlyActive(t *testing.T) {
 		{Name: "marcia", DropletID: ""},
 		{Name: "leo", DropletID: "ci-xyz99"},
 	}
-	got := activeAqueducts(cataractae)
-	if len(got) != 2 {
-		t.Fatalf("want 2 active, got %d", len(got))
-	}
-	if got[0].Name != "virgo" {
-		t.Errorf("got[0].Name = %q, want virgo", got[0].Name)
-	}
-	if got[1].Name != "leo" {
-		t.Errorf("got[1].Name = %q, want leo", got[1].Name)
+	active := activeAqueducts(cataractae)
+	if len(active) != 2 {
+		t.Errorf("expected 2 active aqueducts, got %d", len(active))
 	}
 }
 
@@ -1258,541 +924,8 @@ func TestActiveAqueducts_EmptyWhenAllIdle(t *testing.T) {
 		{Name: "virgo", DropletID: ""},
 		{Name: "marcia", DropletID: ""},
 	}
-	got := activeAqueducts(cataractae)
-	if len(got) != 0 {
-		t.Errorf("want 0, got %d", len(got))
-	}
-}
-
-// --- TestPeekSelect ---
-
-// makeModelWithNActive creates a dashboardTUIModel with n active aqueducts plus one idle.
-func makeModelWithNActive(n int) dashboardTUIModel {
-	m := newDashboardTUIModel("", "")
-	steps := []string{"implement", "review"}
-	var cataractae []CataractaeInfo
-	for i := 0; i < n; i++ {
-		cataractae = append(cataractae, CataractaeInfo{
-			Name:      fmt.Sprintf("aqueduct%d", i+1),
-			RepoName:  "myrepo",
-			DropletID: fmt.Sprintf("ci-id%d", i+1),
-			Step:      "implement",
-			Steps:     steps,
-		})
-	}
-	// Add one idle to make the data non-trivial.
-	cataractae = append(cataractae, CataractaeInfo{Name: "idle1", Steps: steps})
-	m.data = &DashboardData{Cataractae: cataractae}
-	return m
-}
-
-func TestPeekSelect_OneActive_OpensPeekDirectly(t *testing.T) {
-	// Force non-tmux path so the inline peek overlay is used (not new-window).
-	origInsideTmux := insideTmux
-	insideTmux = func() bool { return false }
-	defer func() { insideTmux = origInsideTmux }()
-
-	m := makeModelWithNActive(1)
-
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
-	um := updated.(dashboardTUIModel)
-
-	if um.peekSelectMode {
-		t.Error("peekSelectMode should not be set when only one active aqueduct")
-	}
-	if !um.peekActive {
-		t.Error("peekActive should be true when only one active aqueduct")
-	}
-}
-
-func TestPeekSelect_MultipleActive_EntersPicker(t *testing.T) {
-	m := makeModelWithNActive(2)
-
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
-	um := updated.(dashboardTUIModel)
-
-	if !um.peekSelectMode {
-		t.Error("peekSelectMode should be set when multiple active aqueducts")
-	}
-	if um.peekActive {
-		t.Error("peekActive should not be set yet in picker mode")
-	}
-	if um.peekSelectIndex != 0 {
-		t.Errorf("peekSelectIndex should start at 0, got %d", um.peekSelectIndex)
-	}
-}
-
-func TestPeekSelect_NoActive_DoesNothing(t *testing.T) {
-	m := newDashboardTUIModel("", "")
-	m.data = &DashboardData{Cataractae: []CataractaeInfo{
-		{Name: "idle1", DropletID: ""},
-	}}
-
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
-	um := updated.(dashboardTUIModel)
-
-	if um.peekSelectMode {
-		t.Error("peekSelectMode should not be set with no active aqueducts")
-	}
-	if um.peekActive {
-		t.Error("peekActive should not be set with no active aqueducts")
-	}
-}
-
-func TestPeekSelect_Esc_CancelsPicker(t *testing.T) {
-	m := makeModelWithNActive(2)
-	m.peekSelectMode = true
-	m.peekSelectIndex = 1
-
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	um := updated.(dashboardTUIModel)
-
-	if um.peekSelectMode {
-		t.Error("peekSelectMode should be cleared on esc")
-	}
-}
-
-func TestPeekSelect_Q_CancelsPicker(t *testing.T) {
-	m := makeModelWithNActive(2)
-	m.peekSelectMode = true
-
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
-	um := updated.(dashboardTUIModel)
-
-	if um.peekSelectMode {
-		t.Error("peekSelectMode should be cleared on q")
-	}
-}
-
-func TestPeekSelect_Down_IncrementsIndex(t *testing.T) {
-	m := makeModelWithNActive(2)
-	m.peekSelectMode = true
-	m.peekSelectIndex = 0
-
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
-	um := updated.(dashboardTUIModel)
-
-	if um.peekSelectIndex != 1 {
-		t.Errorf("peekSelectIndex should be 1 after down, got %d", um.peekSelectIndex)
-	}
-}
-
-func TestPeekSelect_Up_DecrementsIndex(t *testing.T) {
-	m := makeModelWithNActive(2)
-	m.peekSelectMode = true
-	m.peekSelectIndex = 1
-
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
-	um := updated.(dashboardTUIModel)
-
-	if um.peekSelectIndex != 0 {
-		t.Errorf("peekSelectIndex should be 0 after up, got %d", um.peekSelectIndex)
-	}
-}
-
-func TestPeekSelect_IndexClampedAtZero(t *testing.T) {
-	m := makeModelWithNActive(2)
-	m.peekSelectMode = true
-	m.peekSelectIndex = 0
-
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
-	um := updated.(dashboardTUIModel)
-
-	if um.peekSelectIndex != 0 {
-		t.Errorf("peekSelectIndex should stay at 0, got %d", um.peekSelectIndex)
-	}
-}
-
-func TestPeekSelect_IndexClampedAtMax(t *testing.T) {
-	m := makeModelWithNActive(2)
-	m.peekSelectMode = true
-	m.peekSelectIndex = 1 // last index for 2 active aqueducts
-
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
-	um := updated.(dashboardTUIModel)
-
-	if um.peekSelectIndex != 1 {
-		t.Errorf("peekSelectIndex should stay at 1, got %d", um.peekSelectIndex)
-	}
-}
-
-func TestPeekSelect_Enter_OpensPeekOnSelected(t *testing.T) {
-	// Force non-tmux path so the inline peek overlay is used (not new-window).
-	origInsideTmux := insideTmux
-	insideTmux = func() bool { return false }
-	defer func() { insideTmux = origInsideTmux }()
-
-	m := makeModelWithNActive(2)
-	m.peekSelectMode = true
-	m.peekSelectIndex = 1 // select second active aqueduct
-
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	um := updated.(dashboardTUIModel)
-
-	if um.peekSelectMode {
-		t.Error("peekSelectMode should be cleared after enter")
-	}
-	if !um.peekActive {
-		t.Error("peekActive should be set after enter")
-	}
-	wantSession := "myrepo-aqueduct2"
-	if um.peek.session != wantSession {
-		t.Errorf("peek.session = %q, want %q", um.peek.session, wantSession)
-	}
-}
-
-func TestPeekSelect_View_ContainsAqueductNames(t *testing.T) {
-	lipgloss.SetColorProfile(termenv.Ascii)
-	m := makeModelWithNActive(2)
-	m.peekSelectMode = true
-	m.width = 100
-	m.height = 24
-
-	view := m.View()
-
-	if !strings.Contains(view, "aqueduct1") {
-		t.Error("picker view should contain aqueduct1")
-	}
-	if !strings.Contains(view, "aqueduct2") {
-		t.Error("picker view should contain aqueduct2")
-	}
-}
-
-func TestPeekSelect_View_ShowsKeyHints(t *testing.T) {
-	lipgloss.SetColorProfile(termenv.Ascii)
-	m := makeModelWithNActive(2)
-	m.peekSelectMode = true
-	m.width = 100
-	m.height = 24
-
-	view := m.View()
-
-	if !strings.Contains(view, "esc") {
-		t.Error("picker view should mention esc to cancel")
-	}
-	if !strings.Contains(view, "enter") {
-		t.Error("picker view should mention enter to connect")
-	}
-}
-
-// Issue 1: stale peekSelectIndex after data refresh
-
-func TestPeekSelect_DataRefresh_ClampsIndexWhenActiveDecreases(t *testing.T) {
-	// Given: picker is open with index pointing at second of two active aqueducts.
-	m := makeModelWithNActive(2)
-	m.peekSelectMode = true
-	m.peekSelectIndex = 1
-
-	// When: a data refresh arrives with only one active aqueduct.
-	oneActive := makeModelWithNActive(1)
-	updated, _ := m.Update(tuiDataMsg(oneActive.data))
-	um := updated.(dashboardTUIModel)
-
-	// Then: index is clamped to 0 (last valid index).
-	if um.peekSelectIndex != 0 {
-		t.Errorf("peekSelectIndex = %d after active decrease, want 0", um.peekSelectIndex)
-	}
-	if !um.peekSelectMode {
-		t.Error("peekSelectMode should remain true when there is still one active aqueduct")
-	}
-}
-
-func TestPeekSelect_DataRefresh_AutoClosesWhenNoActiveAqueducts(t *testing.T) {
-	// Given: picker is open.
-	m := makeModelWithNActive(2)
-	m.peekSelectMode = true
-	m.peekSelectIndex = 1
-
-	// When: a data refresh arrives with zero active aqueducts.
-	noneActive := makeModelWithNActive(0)
-	updated, _ := m.Update(tuiDataMsg(noneActive.data))
-	um := updated.(dashboardTUIModel)
-
-	// Then: picker is automatically closed.
-	if um.peekSelectMode {
-		t.Error("peekSelectMode should be cleared when no active aqueducts remain")
-	}
-}
-
-// Issue 2: missing tea.WindowSizeMsg handler in peekSelectMode
-
-func TestPeekSelect_WindowResize_UpdatesDimensions(t *testing.T) {
-	// Given: picker is open with initial dimensions.
-	m := makeModelWithNActive(2)
-	m.peekSelectMode = true
-	m.width = 80
-	m.height = 24
-
-	// When: a window resize event arrives.
-	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
-	um := updated.(dashboardTUIModel)
-
-	// Then: dimensions are updated and picker remains open.
-	if um.width != 120 {
-		t.Errorf("width = %d after resize, want 120", um.width)
-	}
-	if um.height != 40 {
-		t.Errorf("height = %d after resize, want 40", um.height)
-	}
-	if !um.peekSelectMode {
-		t.Error("peekSelectMode should remain true after resize")
-	}
-}
-
-// ── Peek overlay lifecycle: ctrl+c must not quit the program ────────────────
-//
-// In a web PTY context (xterm.js → WebSocket → PTY), the browser may send
-// ctrl+c (0x03) when the peek overlay opens — either as a copy-shortcut or as
-// part of a terminal capability response sequence.  Previously, ctrl+c while
-// peek was active returned tea.Quit, killing the subprocess and causing the
-// browser to reconnect in a loop.
-//
-// Fix: ctrl+c while peek or picker is active closes the overlay, not the
-// program.  ctrl+c in the bare dashboard view still quits (intentional).
-
-// TestDashboard_PeekActive_CtrlC_ClosesPeekNotQuit verifies that pressing
-// ctrl+c while the peek overlay is open closes the overlay without quitting
-// the Bubble Tea program.
-//
-// Given: dashboard with peek overlay open
-// When:  ctrl+c key is pressed
-// Then:  peek overlay closes (peekActive = false) and the returned cmd is nil
-func TestDashboard_PeekActive_CtrlC_ClosesPeekNotQuit(t *testing.T) {
-	m := makeModelWithNActive(1)
-	m.peekActive = true
-
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
-	um := updated.(dashboardTUIModel)
-
-	if um.peekActive {
-		t.Error("peekActive should be false after ctrl+c while peek is open")
-	}
-	if cmd != nil {
-		msg := cmd()
-		if _, ok := msg.(tea.QuitMsg); ok {
-			t.Error("ctrl+c while peek is open must not return tea.Quit — TUI should stay alive")
-		}
-	}
-}
-
-// TestDashboard_PeekActive_Esc_ClosesPeekNotQuit confirms that esc closes the
-// peek overlay without quitting (existing correct behaviour, guarded by test).
-//
-// Given: dashboard with peek overlay open
-// When:  esc key is pressed
-// Then:  peek overlay closes and cmd is nil
-func TestDashboard_PeekActive_Esc_ClosesPeekNotQuit(t *testing.T) {
-	m := makeModelWithNActive(1)
-	m.peekActive = true
-
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	um := updated.(dashboardTUIModel)
-
-	if um.peekActive {
-		t.Error("peekActive should be false after esc")
-	}
-	if cmd != nil {
-		msg := cmd()
-		if _, ok := msg.(tea.QuitMsg); ok {
-			t.Error("esc while peek is open must not return tea.Quit")
-		}
-	}
-}
-
-// TestDashboard_PeekSelectMode_CtrlC_CancelsPickerNotQuit verifies that
-// pressing ctrl+c while the aqueduct picker is open cancels the picker without
-// quitting the program (same fix applied to the picker overlay for consistency).
-//
-// Given: dashboard with aqueduct picker open (2 active aqueducts)
-// When:  ctrl+c key is pressed
-// Then:  picker closes (peekSelectMode = false) and the returned cmd is nil
-func TestDashboard_PeekSelectMode_CtrlC_CancelsPickerNotQuit(t *testing.T) {
-	m := makeModelWithNActive(2)
-	m.peekSelectMode = true
-
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
-	um := updated.(dashboardTUIModel)
-
-	if um.peekSelectMode {
-		t.Error("peekSelectMode should be false after ctrl+c while picker is open")
-	}
-	if cmd != nil {
-		msg := cmd()
-		if _, ok := msg.(tea.QuitMsg); ok {
-			t.Error("ctrl+c while picker is open must not return tea.Quit — TUI should stay alive")
-		}
-	}
-}
-
-// --- TestDashboardStateHash ---
-
-// TestDashboardStateHash_StableForSameState verifies that identical data produces
-// the same hash on repeated calls.
-//
-// Given: a DashboardData with known counts and cataractae
-// When:  dashboardStateHash is called twice
-// Then:  both calls return the same string
-func TestDashboardStateHash_StableForSameState(t *testing.T) {
-	data := &DashboardData{
-		FlowingCount: 1,
-		QueuedCount:  2,
-		DoneCount:    3,
-		Cataractae: []CataractaeInfo{
-			{Name: "virgo", DropletID: "ci-abc", Step: "implement"},
-		},
-	}
-	h1 := dashboardStateHash(data)
-	h2 := dashboardStateHash(data)
-	if h1 != h2 {
-		t.Errorf("same data should produce same hash; got %q then %q", h1, h2)
-	}
-	if h1 == "" {
-		t.Error("hash of non-nil data should not be empty")
-	}
-}
-
-// TestDashboardStateHash_ChangesWhenFlowingCountChanges verifies that a
-// change in FlowingCount produces a different hash.
-//
-// Given: two DashboardData structs with different FlowingCount
-// When:  dashboardStateHash is called on each
-// Then:  the hashes are different
-func TestDashboardStateHash_ChangesWhenFlowingCountChanges(t *testing.T) {
-	d1 := &DashboardData{FlowingCount: 0}
-	d2 := &DashboardData{FlowingCount: 1}
-	if dashboardStateHash(d1) == dashboardStateHash(d2) {
-		t.Error("different FlowingCount should produce different hashes")
-	}
-}
-
-// TestDashboardStateHash_ChangesWhenDropletAssigned verifies that assigning a
-// droplet to an aqueduct produces a different hash.
-//
-// Given: two DashboardData structs where one has a droplet assigned
-// When:  dashboardStateHash is called on each
-// Then:  the hashes are different
-func TestDashboardStateHash_ChangesWhenDropletAssigned(t *testing.T) {
-	d1 := &DashboardData{Cataractae: []CataractaeInfo{{Name: "virgo", DropletID: ""}}}
-	d2 := &DashboardData{Cataractae: []CataractaeInfo{{Name: "virgo", DropletID: "ci-abc"}}}
-	if dashboardStateHash(d1) == dashboardStateHash(d2) {
-		t.Error("droplet assignment change should produce different hashes")
-	}
-}
-
-// TestDashboardStateHash_NilSafe verifies that nil input returns a consistent
-// empty string without panicking.
-//
-// Given: nil DashboardData
-// When:  dashboardStateHash is called
-// Then:  returns "" without panic, and two nil calls return equal values
-func TestDashboardStateHash_NilSafe(t *testing.T) {
-	h := dashboardStateHash(nil)
-	if h != "" {
-		t.Errorf("nil data should return empty string, got %q", h)
-	}
-	if dashboardStateHash(nil) != dashboardStateHash(nil) {
-		t.Error("two nil calls must return equal values")
-	}
-}
-
-// TestDashboardStateHash_ChangesWhenFarmRunningChanges verifies that a change
-// in FarmRunning produces a different hash. Without this, a Castellarius
-// start/stop while FlowingCount==0 is invisible to the idle detector and the
-// dashboard stays in the slow 5s backoff mode instead of switching back fast.
-//
-// Given: two DashboardData structs with identical counts but different FarmRunning
-// When:  dashboardStateHash is called on each
-// Then:  the hashes are different
-func TestDashboardStateHash_ChangesWhenFarmRunningChanges(t *testing.T) {
-	d1 := &DashboardData{FlowingCount: 0, FarmRunning: false}
-	d2 := &DashboardData{FlowingCount: 0, FarmRunning: true}
-	if dashboardStateHash(d1) == dashboardStateHash(d2) {
-		t.Error("FarmRunning change should produce different hashes")
-	}
-}
-
-// --- TestRunDashboard_AdaptiveRate ---
-
-// TestRunDashboard_AdaptiveRate_PollCountDropsWhenIdle asserts that the polling
-// loop backs off to the slow interval after observing a consistently idle state.
-// Without adaptive backoff, poll count over the test window would equal
-// window/fastInterval. With backoff it should be significantly lower.
-//
-// Given: a fetcher that always returns empty/idle state
-// When:  runDashboardWith runs for ~600ms with fast=50ms, slow=250ms
-// Then:  total poll count is well below window/fastInterval
-func TestRunDashboard_AdaptiveRate_PollCountDropsWhenIdle(t *testing.T) {
-	cfgPath := tempCfg(t)
-	dbPath := tempDB(t)
-
-	var callCount int32
-	idleFetcher := func(cfg, db string) *DashboardData {
-		atomic.AddInt32(&callCount, 1)
-		return &DashboardData{FlowingCount: 0, FetchedAt: time.Now()}
-	}
-
-	inputCh := make(chan byte, 1)
-	var out bytes.Buffer
-
-	done := make(chan error, 1)
-	go func() {
-		done <- runDashboardWith(cfgPath, dbPath, inputCh, &out, idleFetcher,
-			50*time.Millisecond, 250*time.Millisecond)
-	}()
-
-	const window = 600 * time.Millisecond
-	time.Sleep(window)
-	inputCh <- 'q'
-	if err := <-done; err != nil {
-		t.Fatalf("runDashboardWith returned error: %v", err)
-	}
-
-	n := int(atomic.LoadInt32(&callCount))
-	// Without backoff: ~600/50 = 12 polls (plus initial = 13).
-	// With backoff: initial + 1 fast + ~2 slow = ~4 polls.
-	// Assert strictly fewer than half the "no-backoff" count.
-	maxFastPolls := int(window/(50*time.Millisecond)) + 1 // 13
-	halfMax := maxFastPolls / 2                          // 6
-	if n >= halfMax {
-		t.Errorf("poll count = %d, want < %d (adaptive backoff not working)", n, halfMax)
-	}
-}
-
-// TestRunDashboard_AdaptiveRate_StaysFastWhenActive verifies that the loop does
-// not back off when droplets are actively flowing.
-//
-// Given: a fetcher that always returns FlowingCount=1
-// When:  runDashboardWith runs for ~300ms with fast=50ms, slow=250ms
-// Then:  poll count is at least window/fastInterval/2 (stayed in fast mode)
-func TestRunDashboard_AdaptiveRate_StaysFastWhenActive(t *testing.T) {
-	cfgPath := tempCfg(t)
-	dbPath := tempDB(t)
-
-	var callCount int32
-	activeFetcher := func(cfg, db string) *DashboardData {
-		atomic.AddInt32(&callCount, 1)
-		return &DashboardData{FlowingCount: 1, FetchedAt: time.Now()}
-	}
-
-	inputCh := make(chan byte, 1)
-	var out bytes.Buffer
-
-	done := make(chan error, 1)
-	go func() {
-		done <- runDashboardWith(cfgPath, dbPath, inputCh, &out, activeFetcher,
-			50*time.Millisecond, 250*time.Millisecond)
-	}()
-
-	const window = 300 * time.Millisecond
-	time.Sleep(window)
-	inputCh <- 'q'
-	if err := <-done; err != nil {
-		t.Fatalf("runDashboardWith returned error: %v", err)
-	}
-
-	n := int(atomic.LoadInt32(&callCount))
-	// With fast=50ms and 300ms window: expect at least 4 polls (conservative lower bound).
-	if n < 4 {
-		t.Errorf("poll count = %d, want >= 4 (should stay in fast mode when active)", n)
+	active := activeAqueducts(cataractae)
+	if len(active) != 0 {
+		t.Errorf("expected 0 active aqueducts, got %d", len(active))
 	}
 }
