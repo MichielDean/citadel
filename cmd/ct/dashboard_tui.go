@@ -52,7 +52,7 @@ var (
 	tuiStyleGreen  = lipgloss.NewStyle().Foreground(lipgloss.Color("#4bb96e"))
 	tuiStyleYellow = lipgloss.NewStyle().Foreground(lipgloss.Color("#f0c86b"))
 	tuiStyleRed    = lipgloss.NewStyle().Foreground(lipgloss.Color("#e06c75"))
-	tuiStyleDim    = lipgloss.NewStyle().Foreground(lipgloss.Color("#46465a"))
+	tuiStyleDim    = lipgloss.NewStyle().Foreground(lipgloss.Color("#8a8a9a"))
 	tuiStyleHeader = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#9db1db"))
 	tuiStyleFooter = lipgloss.NewStyle().Foreground(lipgloss.Color("#36364a"))
 )
@@ -645,14 +645,14 @@ func (m dashboardTUIModel) viewIdleAqueductRow(ch CataractaeInfo) string {
 	const repoW = 18
 	name := padRight(ch.Name, nameW)
 	repo := padRight(ch.RepoName, repoW)
-	status := "·  idle"
+	status := tuiStyleDim.Render("·  idle")
 	if ch.DropletID != "" {
 		status = tuiStyleGreen.Render("▶  " + ch.Step)
 	}
 	return fmt.Sprintf("  %s  %s  %s",
 		name,
 		tuiStyleDim.Render(repo),
-		tuiStyleDim.Render(status),
+		status,
 	)
 }
 
