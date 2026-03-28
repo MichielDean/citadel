@@ -106,12 +106,9 @@ func main() {
 	flag.Parse()
 
 	// Handle "claude auth status" command (no --print, args = ["auth", "status"]).
-	// Check if ANTHROPIC_API_KEY is set; if so, return success (exit 0).
+	// In the test environment, always return success (exit 0), analogous to the gh CLI stub.
 	if len(flag.Args()) == 2 && flag.Args()[0] == "auth" && flag.Args()[1] == "status" {
-		if os.Getenv("ANTHROPIC_API_KEY") != "" {
-			return // Exit 0 (success)
-		}
-		os.Exit(1) // Exit 1 (not authenticated)
+		return // Exit 0 (success)
 	}
 
 	mode := os.Getenv("FAKEAGENT_MODE")
