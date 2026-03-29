@@ -161,6 +161,26 @@ ct dashboard                     # Launch TUI (requires active tmux session)
 
 Web dashboard (if configured): `http://<host>:5737`
 
+### TUI Dashboard
+
+The terminal UI dashboard (`ct dashboard`) provides two views:
+
+**Droplets List (default)**
+- Shows all active droplets with ID, status, current step, and title
+- Navigate: `↑↓` or `jk` to move cursor, `q` to quit
+- Open detail: Press `enter` or `d` to view full droplet details
+
+**Detail View**
+- **Header**: Droplet ID and title
+- **Meta**: Repo name, status (colored: green=in_progress, yellow=open, red=stagnant), current pipeline step
+- **Pipeline**: Visual indicator of your workflow steps with current step highlighted
+  - Example: `implement → **review** → qa → delivery`
+- **Notes Timeline**: Chronological list of all cataractae notes with timestamps and author attribution
+  - Timestamps in local time
+  - Multi-line note content with continuation line indentation
+  - Scrollable: use `↑↓` or `jk` to scroll, `g` for top, `G` for bottom
+  - Press `esc` to return to Droplets list
+
 ## Status & Health
 
 ```bash
