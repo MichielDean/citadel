@@ -243,3 +243,66 @@ func TestGracefulShutdown_Timeout_ForcesExit(t *testing.T) {
 		t.Errorf("unexpected 'drain complete' log in timeout path: %q", output)
 	}
 }
+
+// TestDrainInFlight_SessionDrainUsesRemainingBudget verifies that the session
+// drain timer uses the time remaining from drainTimeout after the architecti
+// drain completes, rather than a fresh drainTimeout.  Without the fix, the two
+// drains each consume a full drainTimeout and total shutdown can reach
+// 2×drainTimeout.  With the fix the total is bounded to approximately one
+// drainTimeout.
+//
+// drainTimeout = 3s, architecti goroutine takes 1.2s → remaining = 1.8s.
+// The test asserts total elapsed < drainTimeout + 500ms (3.5s).  Without the
+// fix the total would be ~4.2s (1.4×), which exceeds the threshold.
+func TestDrainInFlight_SessionDrainUsesRemainingBudget(t *testing.T) {
+	const (
+		drainTimeout      = 3 * time.Second
+		architectiDelay   = 1200 * time.Millisecond
+		maxAllowedElapsed = drainTimeout + 500*time.Millisecond
+	)
+
+	client := newMockClient()
+	br := newBlockingRunner()
+	// No log buffer needed; we are only measuring elapsed time.
+	sched := newDrainScheduler(client, br, drainTimeout, nil)
+
+	// Queue one session that will never signal an outcome.
+	client.readyItems = []*cistern.Droplet{{ID: "stuck-budget-test", Title: "stuck"}}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- sched.Run(ctx) }()
+
+	// Wait until the item is dispatched and in_progress.
+	if !waitBlockingCall(br, time.Second) {
+		t.Fatal("timed out waiting for dispatch")
+	}
+
+	// Inject an in-flight architecti goroutine that holds the WaitGroup for
+	// architectiDelay.  This simulates the architecti drain consuming part of
+	// the shared budget before the session drain starts.
+	sched.architectiWg.Add(1)
+	go func() {
+		time.Sleep(architectiDelay)
+		sched.architectiWg.Done()
+	}()
+
+	start := time.Now()
+	cancel()
+
+	select {
+	case err := <-done:
+		elapsed := time.Since(start)
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context.Canceled, got %v", err)
+		}
+		// With fix: total ≈ drainTimeout (architecti drain + remaining session drain).
+		// Without fix: total ≈ architectiDelay + drainTimeout ≈ 1.4×drainTimeout.
+		if elapsed > maxAllowedElapsed {
+			t.Errorf("drain took %v, exceeds %v — architecti and session drains appear to double-count drainTimeout",
+				elapsed.Round(time.Millisecond), maxAllowedElapsed)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for drain to complete")
+	}
+}

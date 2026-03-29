@@ -160,6 +160,22 @@ type LLMConfig struct {
 	APIKeyEnv string `yaml:"api_key_env,omitempty"`
 }
 
+// ArchitectiConfig configures the Architecti autonomous diagnosis agent that
+// examines stagnant or blocked droplets.
+type ArchitectiConfig struct {
+	// Enabled activates the architecti trigger. When false, no goroutines are
+	// spawned and all other fields are ignored at runtime. Validation of field
+	// values still applies when the struct is present.
+	Enabled bool `yaml:"enabled"`
+	// ThresholdMinutes is the minimum duration (in minutes) a droplet must
+	// remain in stagnant or blocked state before architecti is invoked.
+	// Must not be negative.
+	ThresholdMinutes int `yaml:"threshold_minutes"`
+	// MaxFilesPerRun caps the number of files architecti may examine per
+	// invocation. Must be > 0.
+	MaxFilesPerRun int `yaml:"max_files_per_run"`
+}
+
 // AqueductConfig is the top-level configuration for a Cistern instance.
 type AqueductConfig struct {
 	Repos                 []RepoConfig     `yaml:"repos"`
@@ -200,4 +216,8 @@ type AqueductConfig struct {
 	// DashboardFontFamily is the CSS font-family string used by the Cistern
 	// dashboard UI. Defaults to a monospace stack when empty.
 	DashboardFontFamily string `yaml:"dashboard_font_family,omitempty"`
+
+	// Architecti configures the autonomous diagnosis agent that examines
+	// stagnant or blocked droplets. Omit to disable.
+	Architecti *ArchitectiConfig `yaml:"architecti,omitempty"`
 }
