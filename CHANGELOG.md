@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+### Dashboard: add stagnant droplets section to TUI (ci-lru8d)
+
+The flow dashboard (`ct dashboard`) now displays a dedicated **Stagnant** section showing all escalated droplets that require intervention.
+
+**Key changes:**
+- **New Stagnant section**: displays all droplets with stagnant status in the main dashboard view
+- **Section visibility**: Always visible — shows "Stagnant: 0" when count is zero, expands to full list when droplets are present
+- **Droplet details**: Each stagnant droplet shows ID, time since last state change, and title
+- **Consistent styling**: Uses the same visual style and layout as the existing Cistern section
+- **Automatic refresh**: Updates on the same 2-second cycle as the rest of the dashboard (backs off to 5 seconds during idle periods)
+
+**Dashboard layout** (in order):
+1. Aqueduct Arches — ASCII diagram of configured aqueducts
+2. Current Flow — droplets actively in progress
+3. Cistern — queued droplets waiting to start
+4. **Stagnant** — escalated droplets needing intervention (NEW)
+5. Recent Flow — recently completed or escalated droplets
+
+**Example output:**
+```
+  STAGNANT
+  ✗  droplet-1  5m23s  Fix authentication bug
+  ✗  droplet-2  2h10m  Update database schema
+```
+
 ### Add --flagged-by filter to ct droplet issue list (ci-u8l1e)
 
 The `ct droplet issue list` command now supports a `--flagged-by` flag to filter issues by the cataractae that filed them.

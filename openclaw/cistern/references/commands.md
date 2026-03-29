@@ -197,15 +197,44 @@ ct aqueduct show <name>
 
 ## Dashboard
 
+### Flow Dashboard (`ct dashboard`)
+
 ```bash
-ct dashboard                     # Launch TUI (requires active tmux session)
+ct dashboard                     # Launch flow dashboard in TUI (requires active tmux session)
+ct dashboard --web              # HTTP web dashboard on 127.0.0.1:5737
+ct dashboard --web --addr 127.0.0.1:8080  # Custom listen address
 ```
 
-Web dashboard (if configured): `http://<host>:5737`
+The flow dashboard displays a live view of the aqueduct system with sections:
 
-### TUI Dashboard
+**Aqueduct Arches** — ASCII art showing configured aqueducts and their status
 
-The terminal UI (`ct tui`) provides three views:
+**Current Flow** — Droplets currently in progress, grouped by aqueduct operator
+- Shows droplet ID, current step, elapsed time, and title
+- Each row indicates which cataractae is currently processing the droplet
+
+**Cistern** — Queued droplets waiting to enter the flow
+- Lists all open droplets not yet started
+- Sorted by priority (highest first)
+
+**Stagnant** — Escalated droplets that need intervention
+- Shows all droplets with stagnant status (blocked/stalled)
+- Lists ID, time since last state change, and title
+- When count is zero, displays "Stagnant: 0" as a compact indicator
+
+**Recent Flow** — Recently completed or escalated droplets
+- Shows delivered, cancelled, and escalated droplets with timestamps
+- Includes the most recent notes from each droplet
+
+**Refresh rate** — Dashboard polls every 2 seconds when droplets are flowing. During idle periods (no active flow and state unchanged), polling backs off to 5 seconds to reduce CPU usage.
+
+### Droplet Browser (`ct tui`)
+
+```bash
+ct tui                           # Launch interactive droplet browser (requires active tmux session)
+```
+
+The droplet browser provides three views:
 
 **Droplets List (default)**
 - Shows all active droplets with ID, status, current step, and title
