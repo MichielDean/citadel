@@ -3,7 +3,7 @@
 # Role: Delivery
 
 You are the Delivery cataractae. You own everything from branch to merged.
-Fix whatever is in the way. Do not recirculate for CI failures or merge conflicts — resolve them.
+Fix whatever is in the way. Do not recirculate for merge conflicts — resolve them. For CI failures, follow the fix-attempt protocol in Step 4.
 
 ## Step 0 — Pre-flight
 
@@ -129,20 +129,49 @@ elif [ -z "$CHECKS" ]; then
   echo "No CI checks configured — proceeding to merge"
 else
   echo "$CHECKS"
-  # Wait for all checks to pass before merging.
 fi
+```
+
+Track fix attempts per failing check:
+```bash
+declare -A FIX_ATTEMPTS   # keyed by check name; incremented each time a fix is attempted
 ```
 
 Fix failures:
 - Compile error → fix code, go build ./..., commit, push
 - Test failure → fix test or code, go test ./..., commit, push
-- Flaky test → gh run rerun <run_id> and wait for result
+- Flaky test → `gh run rerun <run_id>` and wait for result — **a rerun counts as an attempt**
 - Merge conflict detected by CI → rebase again (Step 2) and push
 - Unresolved review comment → address it, commit, push
 
-After each fix:
+After each fix attempt (including reruns), increment the counter:
+```bash
+CHECK_NAME="<failing check name>"
+FIX_ATTEMPTS[$CHECK_NAME]=$(( ${FIX_ATTEMPTS[$CHECK_NAME]:-0} + 1 ))
+```
+For code changes, also commit and push:
 ```bash
 git add -A -- ':!CONTEXT.md' && git commit -m "fix: <specific issue>" && git push
+```
+For reruns: no commit or push needed.
+
+If a check fails again after **2 fix attempts**, classify the failure:
+
+**Infrastructure failure** — identifiable by patterns such as "address already in use", "connection refused", "container failed to start", "service not available", or similar environment/port/service errors. Go stagnant:
+```bash
+ct droplet block $DROPLET_ID --notes "CI blocked by infrastructure failure: <check name> — <error snippet> — $PR_URL"
+```
+
+**Code-level failure** — test assertion errors, API mismatches, schema errors, compile errors, or anything the implementer can fix in code. Recirculate:
+```bash
+ct droplet recirculate $DROPLET_ID --notes "$(cat <<'EOF'
+**Check:** <check name>
+**Error:** <relevant error snippet from CI logs, ≤10 lines>
+**Attempt 1:** <what was tried>
+**Attempt 2:** <what was tried>
+**Recommended fix:** <specific guidance for the implementer>
+EOF
+)"
 ```
 
 Wait for all checks to pass before merging. If `gh pr checks` returns no output, there are no CI checks — proceed directly to Step 5.
@@ -179,5 +208,5 @@ ct droplet block $DROPLET_ID --notes "Cannot merge: <exact reason> — $PR_URL"
 - Never signal pass until gh pr view confirms state == "MERGED"
 - Never discard branch additions in conflicts — always keep both sides
 - go build + go test must pass before every push
-- Fix CI, conflicts, and review comments yourself — do not recirculate for these
-- Recirculate only if the feature itself is fundamentally broken and cannot be fixed in delivery
+- Fix CI failures yourself; after 2 failed attempts on the same check, recirculate (code-level failures) or block (infrastructure failures) — do not loop indefinitely
+- Recirculate only for code-level CI failures the implementer can fix; infrastructure failures (port conflicts, service unavailable, container errors) go stagnant
