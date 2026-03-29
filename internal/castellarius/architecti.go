@@ -217,24 +217,22 @@ func writeDropletTable(sb *strings.Builder, heading string, items []*cistern.Dro
 	if showOutcome {
 		sb.WriteString("| ID | Repo | Age | Cataractae | Assignee | Outcome |\n")
 		sb.WriteString("|---|---|---|---|---|---|\n")
-		for _, d := range items {
+	} else {
+		sb.WriteString("| ID | Repo | Age | Cataractae | Assignee |\n")
+		sb.WriteString("|---|---|---|---|---|\n")
+	}
+	for _, d := range items {
+		age := time.Since(d.UpdatedAt).Round(time.Minute)
+		if showOutcome {
 			outcome := d.Outcome
 			if outcome == "" {
 				outcome = "(none)"
 			}
 			sb.WriteString(fmt.Sprintf("| %s | %s | %s | %s | %s | %s |\n",
-				d.ID, d.Repo,
-				time.Since(d.UpdatedAt).Round(time.Minute),
-				d.CurrentCataractae, d.Assignee, outcome))
-		}
-	} else {
-		sb.WriteString("| ID | Repo | Age | Cataractae | Assignee |\n")
-		sb.WriteString("|---|---|---|---|---|\n")
-		for _, d := range items {
+				d.ID, d.Repo, age, d.CurrentCataractae, d.Assignee, outcome))
+		} else {
 			sb.WriteString(fmt.Sprintf("| %s | %s | %s | %s | %s |\n",
-				d.ID, d.Repo,
-				time.Since(d.UpdatedAt).Round(time.Minute),
-				d.CurrentCataractae, d.Assignee))
+				d.ID, d.Repo, age, d.CurrentCataractae, d.Assignee))
 		}
 	}
 	sb.WriteString("\n")
@@ -256,7 +254,7 @@ func parseArchitectiOutput(output []byte, maxFiles int) ([]architectiAction, err
 
 	// Enforce MaxFilesPerRun.
 	fileCount := 0
-	filtered := actions[:0]
+	var filtered []architectiAction
 	for _, a := range actions {
 		if a.Action == "file" {
 			fileCount++
@@ -454,9 +452,10 @@ func (s *Castellarius) architectiRestartCastellarius(action architectiAction) er
 		hf, err := ReadHealthFile(filepath.Dir(s.dbPath))
 		if err == nil {
 			maxAge := time.Duration(architectiRestartCastellariusFactor) * s.pollInterval
-			if time.Since(hf.LastTickAt) < maxAge {
+			lastTickAge := time.Since(hf.LastTickAt)
+			if lastTickAge < maxAge {
 				s.logger.Info("architecti: restart_castellarius skipped — scheduler is healthy",
-					"last_tick_age", time.Since(hf.LastTickAt).Round(time.Second),
+					"last_tick_age", lastTickAge.Round(time.Second),
 					"threshold", maxAge)
 				return nil
 			}
