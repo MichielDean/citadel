@@ -71,6 +71,30 @@ tmux send-keys -t filtration "/tmp/add-droplet.sh" Enter
 | full | 2 | No — auto-merges after delivery (default) |
 | critical | 3 | Yes — pauses for `ct droplet approve <id>` before delivery |
 
+### Droplet Issues (Structured Findings)
+
+Agents file specific findings as structured issues for tracking and resolution:
+
+```bash
+ct droplet issue add <id> "specific finding description"          # File a new issue
+ct droplet issue list <id>                                        # List all issues
+ct droplet issue list <id> --open                                 # List open issues
+ct droplet issue list <id> --flagged-by <cataractae-name>        # Issues filed by specific cataractae
+ct droplet issue list <id> --open --flagged-by <cataractae-name> # Combine filters
+```
+
+**Usage:**
+- `ct droplet issue add` files a structured issue that persists and tracks resolution
+- `--flagged-by` filters by the cataractae that filed the issue (e.g., `--flagged-by qa`, `--flagged-by reviewer`)
+- Use issues for specific, actionable findings that need tracking
+- Use `ct droplet note` (below) for narrative summaries only
+
+**Example:**
+```bash
+ct droplet issue add my-droplet "File system operations need integration test verification"
+ct droplet issue list my-droplet --flagged-by qa --open
+```
+
 ### Droplet Signaling (Terminal Outcomes)
 
 Agents use these commands to signal the outcome of their work:
@@ -88,6 +112,8 @@ ct droplet block <id> --notes "..."      # Include reason (e.g., "awaiting API k
 
 ct droplet cancel <id>                   # Cancel — won't be implemented
 ct droplet cancel <id> --notes "..."     # Include reason (e.g., "superseded by X")
+
+ct droplet note <id> "..."               # Add a narrative note (for summaries only)
 ```
 
 **Distinction:**

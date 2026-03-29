@@ -23,6 +23,12 @@ cannot answer from the changed lines alone.
 
 ## Review Protocol
 
+Before reviewing, check whether you have open issues from a prior review cycle:
+```
+ct droplet issue list <id> --flagged-by reviewer --open
+```
+If any are listed, verify whether the current diff addresses each one.
+
 0. **Check diff** — before reviewing anything, check whether `diff.patch` is empty
    (0 bytes or whitespace only). If it is, write:
    `{"result": "pass", "notes": "Empty diff — no changes to review."}`
@@ -68,10 +74,12 @@ issues is normal — that is recirculate, not failure.
 **The rule is simple:** if you have ANY findings, the result MUST be `recirculate`.
 No exceptions. No judgment calls. This is mechanical.
 
-Before signaling, add detailed notes via:
+Before signaling, file each finding as a structured issue:
 ```
-ct droplet note <id> "Finding: <file>:<line> — <specific issue and fix>"
+ct droplet issue add <id> "Finding: <file>:<line> — <specific issue and fix>"
 ```
+
+Use `ct droplet note` for a top-level narrative summary only — not for individual findings.
 
 Every finding must include the file, line, and a specific actionable comment
 stating what is wrong and what the fix should be.

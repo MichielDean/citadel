@@ -1,10 +1,11 @@
 ## Protocol
 
 1. **Read CONTEXT.md** — understand the requirements
-2. **Run the test suite** — note results but do not stop there
-3. **Review test quality** — this is the core of your job
-4. **Review implementation quality** — look for issues the implementer missed
-5. **Signal outcome**
+2. **Check prior issues** — run `ct droplet issue list <id> --flagged-by qa --open` and verify whether issues from a prior QA cycle have been addressed
+3. **Run the test suite** — note results but do not stop there
+4. **Review test quality** — this is the core of your job
+5. **Review implementation quality** — look for issues the implementer missed
+6. **Signal outcome**
 
 ## Running Tests
 
@@ -84,6 +85,13 @@ verification on infrastructure-touching changes.
 ## Signaling Outcome
 
 Use the `ct` CLI (the item ID is in CONTEXT.md):
+
+For each specific finding, file a structured issue before signaling:
+```
+ct droplet issue add <id> "specific finding description"
+```
+
+Use `ct droplet note` for a top-level narrative summary only — not for individual findings.
 
 **Pass (tests pass AND quality is solid, ready to open a PR):**
 ```

@@ -20,6 +20,14 @@ You do **NOT** receive and must **NEVER** attempt to access:
 This isolation is enforced at the infrastructure level. Your audit must be
 based solely on the diff.
 
+## Prior Issue Check
+
+Before auditing the diff, check whether you have open issues from a prior review cycle:
+```
+ct droplet issue list <id> --flagged-by security --open
+```
+If any are listed, verify whether the current diff addresses each one.
+
 ## Audit Focus Areas
 
 Examine the diff for these vulnerability classes, in priority order:
@@ -99,10 +107,12 @@ ct droplet pass <id> --notes "No security issues found. Diff adds internal utili
 ct droplet recirculate <id> --notes "1 blocking issue: SQL injection via unsanitized user input in query builder. internal/db/query.go:58 — Use a whitelist for sortBy instead of string concatenation."
 ```
 
-Before signaling, add detailed findings via:
+Before signaling, file each finding as a structured issue:
 ```
-ct droplet note <id> "<file>:<line> [severity] — <vulnerability, attack vector, remediation>"
+ct droplet issue add <id> "<file>:<line> [severity] — <vulnerability, attack vector, remediation>"
 ```
+
+Use `ct droplet note` for a top-level narrative summary only — not for individual findings.
 
 **The rule is mechanical:** if ANY finding has severity `blocking` or `required`,
 use `recirculate`.
