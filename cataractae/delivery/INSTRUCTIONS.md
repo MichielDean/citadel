@@ -133,17 +133,20 @@ declare -A FIX_ATTEMPTS   # keyed by check name; incremented each time a fix is 
 Fix failures:
 - Compile error → fix code, go build ./..., commit, push
 - Test failure → fix test or code, go test ./..., commit, push
-- Flaky test → `gh run rerun <run_id>` and wait for result — **a rerun counts as an attempt**; increment `FIX_ATTEMPTS[$CHECK_NAME]` immediately after issuing the rerun; if the check fails again after the rerun, that is attempt 2 — recirculate instead of rerunning a second time
+- Flaky test → `gh run rerun <run_id>` and wait for result — **a rerun counts as an attempt**
 - Merge conflict detected by CI → rebase again (Step 2) and push
 - Unresolved review comment → address it, commit, push
 
-After each fix attempt on a check (including reruns), increment its counter. For code changes:
+After each fix attempt (including reruns), increment the counter:
 ```bash
 CHECK_NAME="<failing check name>"
 FIX_ATTEMPTS[$CHECK_NAME]=$(( ${FIX_ATTEMPTS[$CHECK_NAME]:-0} + 1 ))
+```
+For code changes, also commit and push:
+```bash
 git add -A -- ':!CONTEXT.md' && git commit -m "fix: <specific issue>" && git push
 ```
-For reruns: increment `FIX_ATTEMPTS[$CHECK_NAME]` and await the result — no commit or push is needed, but the counter must be incremented.
+For reruns: no commit or push needed.
 
 If a check fails again after **2 fix attempts**, classify the failure:
 
