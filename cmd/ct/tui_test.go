@@ -1672,3 +1672,228 @@ func TestTabApp_Detail_ConfirmOverlay_UppercaseY_ClosesOverlayAndReturnsCmd(t *t
 		t.Error("expected non-nil cmd after 'Y' in confirm overlay, got nil")
 	}
 }
+
+// ── Peek tab ─────────────────────────────────────────────────────────────────
+
+// TestTabApp_Peek_PKeyFromDetail_SwitchesToPeekTab verifies that pressing 'p'
+// in the Detail tab switches to the Peek tab.
+//
+// Given: a model in Detail tab with a selected droplet
+// When:  'p' is pressed
+// Then:  tab becomes tabPeek
+func TestTabApp_Peek_PKeyFromDetail_SwitchesToPeekTab(t *testing.T) {
+	m := newTabAppModel("", "")
+	m.data = &DashboardData{}
+	m.tab = tabDetail
+	m.selectedID = "ci-aaa"
+	m.detailDroplet = &cistern.Droplet{ID: "ci-aaa", Title: "Task"}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	um := updated.(tabAppModel)
+
+	if um.tab != tabPeek {
+		t.Errorf("tab = %d, want tabPeek (%d) after 'p'", um.tab, tabPeek)
+	}
+}
+
+// TestTabApp_Peek_PKeyFromDetail_FlowingDroplet_SetsSession verifies that when
+// the selected droplet has a matching CataractaeInfo, the peek session name is
+// set to "<repo>-<aqueduct>".
+//
+// Given: a model in Detail tab with a flowing droplet (CataractaeInfo present)
+// When:  'p' is pressed
+// Then:  peek.session equals "myrepo-virgo"
+func TestTabApp_Peek_PKeyFromDetail_FlowingDroplet_SetsSession(t *testing.T) {
+	m := newTabAppModel("", "")
+	m.data = &DashboardData{
+		Cataractae: []CataractaeInfo{
+			{Name: "virgo", RepoName: "myrepo", DropletID: "ci-aaa", Step: "implement"},
+		},
+	}
+	m.tab = tabDetail
+	m.selectedID = "ci-aaa"
+	m.detailDroplet = &cistern.Droplet{ID: "ci-aaa", Status: "in_progress"}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	um := updated.(tabAppModel)
+
+	if um.peek.session != "myrepo-virgo" {
+		t.Errorf("peek.session = %q, want %q", um.peek.session, "myrepo-virgo")
+	}
+}
+
+// TestTabApp_Peek_PKeyFromDetail_NotFlowing_ShowsPlaceholder verifies that when
+// the selected droplet is not flowing (no matching CataractaeInfo), the Peek
+// tab opens with an empty session (placeholder view).
+//
+// Given: a model in Detail tab with a non-flowing droplet (no CataractaeInfo)
+// When:  'p' is pressed
+// Then:  tab becomes tabPeek and peek.session is empty
+func TestTabApp_Peek_PKeyFromDetail_NotFlowing_ShowsPlaceholder(t *testing.T) {
+	m := newTabAppModel("", "")
+	m.data = &DashboardData{Cataractae: nil}
+	m.tab = tabDetail
+	m.selectedID = "ci-aaa"
+	m.detailDroplet = &cistern.Droplet{ID: "ci-aaa", Status: "open"}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	um := updated.(tabAppModel)
+
+	if um.tab != tabPeek {
+		t.Errorf("tab = %d, want tabPeek (%d)", um.tab, tabPeek)
+	}
+	if um.peek.session != "" {
+		t.Errorf("peek.session = %q, want empty for non-flowing droplet", um.peek.session)
+	}
+}
+
+// TestTabApp_Peek_EscFromPeek_ReturnsToDetailTab verifies that pressing 'esc'
+// in the Peek tab returns to the Detail tab.
+//
+// Given: a model in Peek tab
+// When:  esc is pressed
+// Then:  tab becomes tabDetail
+func TestTabApp_Peek_EscFromPeek_ReturnsToDetailTab(t *testing.T) {
+	m := newTabAppModel("", "")
+	m.data = &DashboardData{}
+	m.tab = tabPeek
+	m.selectedID = "ci-aaa"
+	m.peek = newPeekModel(mockCapturer{}, "s", "hdr", 0)
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	um := updated.(tabAppModel)
+
+	if um.tab != tabDetail {
+		t.Errorf("tab = %d, want tabDetail (%d) after esc from Peek", um.tab, tabDetail)
+	}
+}
+
+// TestTabApp_Peek_QKey_Quits verifies that pressing 'q' in the Peek tab
+// returns a tea.Quit command.
+//
+// Given: a model in Peek tab
+// When:  'q' is pressed
+// Then:  returned cmd resolves to tea.QuitMsg
+func TestTabApp_Peek_QKey_Quits(t *testing.T) {
+	m := newTabAppModel("", "")
+	m.data = &DashboardData{}
+	m.tab = tabPeek
+	m.peek = newPeekModel(mockCapturer{}, "s", "hdr", 0)
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	if cmd == nil {
+		t.Fatal("expected quit cmd, got nil")
+	}
+	msg := cmd()
+	if _, ok := msg.(tea.QuitMsg); !ok {
+		t.Errorf("cmd() = %T, want tea.QuitMsg", msg)
+	}
+}
+
+// TestTabApp_Peek_PeekContentMsg_UpdatesPeekContent verifies that a
+// peekContentMsg arriving while on the Peek tab updates the peek content.
+//
+// Given: a model in Peek tab with a configured peek model
+// When:  peekContentMsg("agent output") arrives
+// Then:  m.peek.content is "agent output"
+func TestTabApp_Peek_PeekContentMsg_UpdatesPeekContent(t *testing.T) {
+	m := newTabAppModel("", "")
+	m.data = &DashboardData{}
+	m.tab = tabPeek
+	m.peek = newPeekModel(mockCapturer{hasSession: true}, "s", "hdr", 0)
+	m.peek.height = 24
+
+	updated, _ := m.Update(peekContentMsg("agent output"))
+	um := updated.(tabAppModel)
+
+	if um.peek.content != "agent output" {
+		t.Errorf("peek.content = %q, want %q", um.peek.content, "agent output")
+	}
+}
+
+// TestTabApp_Peek_WindowResize_PropagatesSizeToPeek verifies that a
+// WindowSizeMsg while on the Peek tab updates the peek model's dimensions,
+// reserving one row for the footer.
+//
+// Given: a model in Peek tab
+// When:  WindowSizeMsg{Width: 120, Height: 40} arrives
+// Then:  peek.width=120 and peek.height=39 (height-1 reserved for footer)
+func TestTabApp_Peek_WindowResize_PropagatesSizeToPeek(t *testing.T) {
+	m := newTabAppModel("", "")
+	m.data = &DashboardData{}
+	m.tab = tabPeek
+	m.peek = newPeekModel(mockCapturer{}, "s", "hdr", 0)
+
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	um := updated.(tabAppModel)
+
+	if um.peek.width != 120 {
+		t.Errorf("peek.width = %d, want 120", um.peek.width)
+	}
+	if um.peek.height != 39 {
+		t.Errorf("peek.height = %d, want 39 (height-1 for footer)", um.peek.height)
+	}
+}
+
+// TestTabApp_Peek_PeekTickMsg_ReturnsFetchCmd verifies that a peekTickMsg
+// arriving while on the Peek tab returns a non-nil fetch command.
+//
+// Given: a model in Peek tab with a valid peek model
+// When:  peekTickMsg arrives
+// Then:  a non-nil cmd is returned
+func TestTabApp_Peek_PeekTickMsg_ReturnsFetchCmd(t *testing.T) {
+	m := newTabAppModel("", "")
+	m.data = &DashboardData{}
+	m.tab = tabPeek
+	m.peek = newPeekModel(mockCapturer{hasSession: true}, "s", "hdr", 0)
+
+	_, cmd := m.Update(peekTickMsg{})
+	if cmd == nil {
+		t.Error("Update(peekTickMsg) should return a non-nil fetch Cmd")
+	}
+}
+
+// TestTabApp_Peek_ViewContainsHeader verifies that the Peek tab view renders
+// the peek model's header string.
+//
+// Given: a model in Peek tab with a configured header
+// When:  View() is called
+// Then:  view contains the header text
+func TestTabApp_Peek_ViewContainsHeader(t *testing.T) {
+	m := newTabAppModel("", "")
+	m.data = &DashboardData{}
+	m.tab = tabPeek
+	m.peek = newPeekModel(mockCapturer{}, "s", "[ci-abc] implement — flowing 3m", 0)
+	m.peek.width = 80
+	m.peek.height = 23
+	m.width = 80
+	m.height = 24
+
+	view := m.View()
+	if !strings.Contains(view, "[ci-abc] implement — flowing 3m") {
+		t.Errorf("View() missing peek header: %q", view)
+	}
+}
+
+// TestTabApp_Peek_NotFlowing_ViewShowsNoSession verifies that when the Peek tab
+// has no active session (empty content), the view shows a "session not active"
+// placeholder.
+//
+// Given: a model in Peek tab with no content (session inactive)
+// When:  View() is called
+// Then:  view contains "(session not active)"
+func TestTabApp_Peek_NotFlowing_ViewShowsNoSession(t *testing.T) {
+	m := newTabAppModel("", "")
+	m.data = &DashboardData{}
+	m.tab = tabPeek
+	m.peek = newPeekModel(mockCapturer{hasSession: false}, "", "[ci-aaa] — not flowing", 0)
+	m.peek.width = 80
+	m.peek.height = 23
+	m.width = 80
+	m.height = 24
+
+	view := m.View()
+	if !strings.Contains(view, "session not active") {
+		t.Errorf("View() should contain 'session not active' for no-session placeholder, got: %q", view)
+	}
+}

@@ -163,7 +163,7 @@ Web dashboard (if configured): `http://<host>:5737`
 
 ### TUI Dashboard
 
-The terminal UI dashboard (`ct dashboard`) provides two views:
+The terminal UI (`ct tui`) provides three views:
 
 **Droplets List (default)**
 - Shows all active droplets with ID, status, current step, and title
@@ -180,6 +180,12 @@ The terminal UI dashboard (`ct dashboard`) provides two views:
   - Multi-line note content with continuation line indentation
   - Scrollable: use `↑↓` or `jk` to scroll, `g` for top, `G` for bottom
   - Press `esc` to return to Droplets list
+- Press `p` to peek at the live agent session output for the selected droplet
+
+**Peek View**
+- Shows live terminal output captured from the agent session for the currently selected flowing droplet
+- Refreshed each tick; displays a placeholder if no flowing droplet is selected or no session is active
+- Press `esc` to return to the Detail panel
 
 **Detail View Actions** (dispatch directly without leaving the TUI)
 - `r` — **Restart** — Re-enter the pipeline at the start; prompts for optional reason

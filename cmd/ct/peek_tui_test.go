@@ -212,9 +212,10 @@ func TestPeekModel_WindowResize(t *testing.T) {
 // TestPeekModel_EscKey_DoesNotQuit verifies that pressing esc in the peek
 // model returns a nil cmd rather than tea.Quit.
 //
-// When embedded in the dashboard the parent already intercepts esc and sets
-// peekActive = false.  If the peekModel itself returned tea.Quit for esc that
-// command could propagate and kill the program in edge cases.
+// When embedded in a parent model the parent intercepts esc and closes the
+// peek overlay: dashboardTUIModel sets peekActive = false; tabAppModel sets
+// m.tab = tabDetail. If peekModel returned tea.Quit for esc, that command
+// could propagate and kill the program in edge cases.
 //
 // Given: a peek model
 // When:  esc key is pressed

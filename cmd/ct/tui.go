@@ -14,6 +14,7 @@ import (
 const (
 	tabDroplets = 0
 	tabDetail   = 1
+	tabPeek     = 2
 )
 
 // Overlay mode constants for action dispatch in the Detail panel.
@@ -52,7 +53,7 @@ type tuiActionResultMsg struct {
 }
 
 // tabAppModel is the root Bubble Tea model for `ct tui`.
-// It manages two views: the Droplets list and the Detail panel.
+// It manages three views: the Droplets list, the Detail panel, and the Peek panel.
 type tabAppModel struct {
 	cfgPath string
 	dbPath  string
@@ -60,7 +61,7 @@ type tabAppModel struct {
 	// Dashboard data — refreshed periodically via the standard tick chain.
 	data *DashboardData
 
-	// Active view: tabDroplets or tabDetail.
+	// Active view: tabDroplets, tabDetail, or tabPeek.
 	tab              int
 	cursor           int // cursor position in the Droplets list
 	dropletsScrollTop int // viewport line offset for the Droplets list
@@ -78,6 +79,9 @@ type tabAppModel struct {
 	overlayAction string // pending action (actionCancel, actionEscalate, …)
 	overlayInput  string // text being typed in overlayText mode
 	overlayErr    string // error message from the most recent action (empty = none)
+
+	// Peek tab state — populated when the Peek view opens from the Detail panel.
+	peek peekModel
 
 	width  int
 	height int
@@ -217,6 +221,47 @@ func (m tabAppModel) openDetail(dropletID string) (tabAppModel, tea.Cmd) {
 	return m, m.fetchDetailCmd(dropletID)
 }
 
+// openPeek switches to the Peek tab for the currently selected droplet.
+// If the droplet is flowing (has a matching CataractaeInfo), a live capture-pane
+// session is started. If not flowing, a placeholder peek model is created with an
+// empty session so the view shows "(session not active)" gracefully.
+func (m tabAppModel) openPeek() (tabAppModel, tea.Cmd) {
+	m.tab = tabPeek
+
+	// Find the CataractaeInfo for the selected droplet.
+	var ch *CataractaeInfo
+	if m.data != nil && m.selectedID != "" {
+		for i := range m.data.Cataractae {
+			if m.data.Cataractae[i].DropletID == m.selectedID {
+				ch = &m.data.Cataractae[i]
+				break
+			}
+		}
+	}
+
+	var session, header string
+	if ch == nil {
+		if m.selectedID == "" {
+			header = "(no droplet selected)"
+		} else {
+			header = fmt.Sprintf("[%s] — not flowing, no agent session", m.selectedID)
+		}
+	} else {
+		session = ch.RepoName + "-" + ch.Name
+		header = fmt.Sprintf("[%s] %s — flowing %s", ch.DropletID, ch.Step, formatElapsed(ch.Elapsed))
+	}
+
+	pk := newPeekModel(defaultCapturer, session, header, defaultPeekLines)
+	pk.width = m.width
+	pk.height = m.height - 1
+	m.peek = pk
+
+	if ch == nil {
+		return m, nil
+	}
+	return m, m.peek.Init()
+}
+
 // findDroplet locates a droplet by ID in the current DashboardData.
 func (m tabAppModel) findDroplet(id string) *cistern.Droplet {
 	if m.data == nil {
@@ -302,10 +347,14 @@ func (m tabAppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(m.fetchDataCmd(), m.fetchDetailCmd(m.selectedID))
 	}
-	if m.tab == tabDetail {
+	switch m.tab {
+	case tabDetail:
 		return m.updateDetail(msg)
+	case tabPeek:
+		return m.updatePeek(msg)
+	default:
+		return m.updateDroplets(msg)
 	}
-	return m.updateDroplets(msg)
 }
 
 func (m tabAppModel) updateDroplets(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -427,6 +476,9 @@ func (m tabAppModel) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Return to Droplets tab and clear selection.
 			m.tab = tabDroplets
 			m.selectedID = ""
+		case "p":
+			// Open Peek tab for the selected droplet.
+			return m.openPeek()
 		case "down", "j":
 			m.detailScrollY++
 		case "up", "k":
@@ -476,15 +528,58 @@ func (m tabAppModel) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// updatePeek handles messages while the Peek tab is active.
+// Peek-specific messages (peekTickMsg, peekContentMsg) are forwarded to the
+// embedded peekModel. Window resizes propagate size to the peek model,
+// reserving one row for the Peek tab's own footer. Esc returns to the Detail tab.
+func (m tabAppModel) updatePeek(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		// Reserve one row for the footer; set dimensions directly to avoid
+		// the peekModel overriding height with the raw terminal height.
+		m.peek.width = m.width
+		m.peek.height = m.height - 1
+		return m, nil
+
+	case tuiDataMsg:
+		m.data = (*DashboardData)(msg)
+		return m, tuiTickWithInterval(refreshInterval)
+
+	case tuiTickMsg:
+		return m, m.fetchDataCmd()
+
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "q", "Q", "ctrl+c":
+			return m, tea.Quit
+		case "esc":
+			m.tab = tabDetail
+			return m, nil
+		}
+	}
+
+	// Forward all other messages (peek-specific tick/content and unhandled keys)
+	// to the embedded model so the refresh loop and scroll controls keep working.
+	updated, cmd := m.peek.Update(msg)
+	m.peek = updated.(peekModel)
+	return m, cmd
+}
+
 // View dispatches to the active tab's renderer.
 func (m tabAppModel) View() string {
 	if m.data == nil {
 		return "  Loading…\n"
 	}
-	if m.tab == tabDetail {
+	switch m.tab {
+	case tabDetail:
 		return m.viewDetail()
+	case tabPeek:
+		return m.viewPeek()
+	default:
+		return m.viewDroplets()
 	}
-	return m.viewDroplets()
 }
 
 // scrollViewport slices lines to the viewH-line window starting at scrollTop,
@@ -618,7 +713,7 @@ func (m tabAppModel) viewDetail() string {
 		if m.overlayErr != "" {
 			footer = tuiStyleRed.Render("  error: " + m.overlayErr)
 		} else {
-			footer = tuiStyleFooter.Render("  esc back  jk scroll  g/G top  r restart  x cancel  e escalate  n note  s step")
+			footer = tuiStyleFooter.Render("  esc back  ↑↓/jk scroll  g/G top/bottom  p peek  r restart  x cancel  e escalate  n note  s step")
 		}
 	}
 
@@ -703,6 +798,18 @@ func (m tabAppModel) viewDetail() string {
 	return strings.Join(scrollViewport(lines, m.detailScrollY, viewH), "\n") + "\n" + footer
 }
 
+// viewPeek renders the Peek tab, delegating content to the embedded peekModel
+// and appending a pinned footer with navigation hints.
+func (m tabAppModel) viewPeek() string {
+	// Ensure peek model dimensions are current before rendering.
+	m.peek.width = m.width
+	if m.height > 1 {
+		m.peek.height = m.height - 1
+	}
+	footer := tuiStyleFooter.Render("  esc detail  space toggle-pin  ↑↓/jk scroll  q quit")
+	return m.peek.View() + "\n" + footer
+}
+
 // RunTabbedTUI launches the ct tui interactive panel using the alternate screen.
 func RunTabbedTUI(cfgPath, dbPath string) error {
 	m := newTabAppModel(cfgPath, dbPath)
@@ -718,7 +825,10 @@ var tuiCmd = &cobra.Command{
 
 Navigate the droplet list with ↑↓ (or j/k), press enter or d to open the
 Detail panel for a selected droplet. The Detail panel shows the full notes
-timeline and pipeline step indicator. Press esc to return to the list.`,
+timeline and pipeline step indicator. Press esc to return to the list.
+
+From the Detail panel, press p to peek at the live agent session output.
+Press esc to return.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfgPath := resolveConfigPath()
 		dbPath := resolveDBPath()
