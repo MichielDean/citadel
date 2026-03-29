@@ -166,7 +166,17 @@ func (s *Castellarius) recoverDispatchLoop(client CisternClient, item *cistern.D
 				// new-worktree path will create a fresh branch from origin/main.
 				s.logger.Warn("dispatch-loop recovery: feature branch missing from git — creating fresh branch from origin/main",
 					"droplet", item.ID, "branch", branch)
-				_ = os.RemoveAll(worktreePath)
+				if rmErr := os.RemoveAll(worktreePath); rmErr != nil {
+					reason := fmt.Sprintf("dispatch-loop recovery: could not remove stale worktree directory: %v", rmErr)
+					s.logger.Warn("dispatch-loop recovery: os.RemoveAll failed — skipping fresh-branch retry",
+						"droplet", item.ID, "branch", branch, "error", rmErr)
+					s.addNote(client, item.ID, "dispatch-loop", reason)
+					if escErr := client.Escalate(item.ID, reason); escErr != nil {
+						s.logger.Error("dispatch-loop recovery: escalate failed", "droplet", item.ID, "error", escErr)
+					}
+					s.dispatchLoop.reset(item.ID)
+					return
+				}
 				if _, err2 := prepareDropletWorktree(primaryDir, s.sandboxRoot, repo.Name, item.ID); err2 != nil {
 					reason := fmt.Sprintf("dispatch-loop recovery: branch %s missing, fresh-branch creation failed: %v", branch, err2)
 					s.addNote(client, item.ID, "dispatch-loop", reason)

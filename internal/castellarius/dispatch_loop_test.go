@@ -469,6 +469,75 @@ func TestRecoverDispatchLoop_PathspecError_FreshBranchSucceeds_NoEscalation(t *t
 	}
 }
 
+// TestRecoverDispatchLoop_PathspecError_RemoveAllFails_EscalatesImmediately verifies
+// that when os.RemoveAll fails on the stale worktree directory (after a pathspec
+// error), the recovery logs at WARN level, escalates immediately with a reason
+// containing "stale worktree directory", and does NOT attempt the fresh-branch retry.
+func TestRecoverDispatchLoop_PathspecError_RemoveAllFails_EscalatesImmediately(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("cannot simulate permission errors when running as root")
+	}
+
+	sandboxRoot := t.TempDir()
+	const repoName = "test-repo"
+	const itemID = "dl-pathspec-rmfail"
+
+	// Create a git repo at the worktree path with no feat/<itemID> branch.
+	// This causes the resume path in prepareDropletWorktree to fail with "pathspec did not match".
+	worktreeDir := filepath.Join(sandboxRoot, repoName, itemID)
+	makeWorktreeDirWithoutFeatureBranch(t, worktreeDir)
+
+	// Make the parent directory not writable so os.RemoveAll(worktreeDir) fails.
+	repoDir := filepath.Join(sandboxRoot, repoName)
+	if err := os.Chmod(repoDir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	// Restore permissions in cleanup so t.TempDir can remove the directory.
+	t.Cleanup(func() { _ = os.Chmod(repoDir, 0o755) })
+
+	var buf bytes.Buffer
+	client := newMockClient()
+	item := &cistern.Droplet{ID: itemID, CurrentCataractae: "implement", Status: "in_progress"}
+	client.items[itemID] = item
+
+	config := testConfig()
+	workflows := map[string]*aqueduct.Workflow{repoName: testWorkflow()}
+	clients := map[string]CisternClient{repoName: client}
+	runner := newMockRunner(client)
+	sched := NewFromParts(config, workflows, clients, runner,
+		WithSandboxRoot(sandboxRoot),
+		WithLogger(newTestLogger(&buf)),
+	)
+
+	sched.recoverDispatchLoop(client, item, config.Repos[0])
+
+	logOut := buf.String()
+
+	// WARN must be logged for the RemoveAll failure.
+	if !strings.Contains(logOut, "WARN") {
+		t.Errorf("expected WARN log when os.RemoveAll fails; got: %s", logOut)
+	}
+
+	client.mu.Lock()
+	defer client.mu.Unlock()
+
+	// Must escalate immediately with a reason mentioning the stale worktree directory.
+	reason, escalated := client.escalated[itemID]
+	if !escalated {
+		t.Error("expected client.Escalate to be called when os.RemoveAll fails")
+	}
+	if !strings.Contains(reason, "stale worktree") {
+		t.Errorf("expected escalation reason to mention 'stale worktree'; got: %q", reason)
+	}
+
+	// Must NOT have written a fresh-branch note (retry was skipped).
+	for _, n := range client.attached {
+		if n.id == itemID && (strings.Contains(n.notes, "fresh branch") || strings.Contains(n.notes, "origin/main")) {
+			t.Errorf("must not write fresh-branch note when RemoveAll fails; got note: %q", n.notes)
+		}
+	}
+}
+
 // TestRecoverDispatchLoop_AddNoteError_EscalationPath_LogsWarn verifies that
 // when AddNote returns an error during the escalation path (fixAttempt >
 // dispatchMaxSelfFix), the error is logged at Warn level rather than silently
