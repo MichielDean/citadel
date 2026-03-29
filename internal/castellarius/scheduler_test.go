@@ -1563,6 +1563,7 @@ func TestObserve_FirstPass(t *testing.T) {
 func TestObserve_ExternallyChangedStatus_FreesPoolSlot(t *testing.T) {
 	for _, extStatus := range []string{"cancelled", "stagnant"} {
 		t.Run(extStatus, func(t *testing.T) {
+			var logBuf bytes.Buffer
 			client := newMockClient()
 			item := &cistern.Droplet{
 				ID:                "ext-" + extStatus + "-1",
@@ -1574,7 +1575,11 @@ func TestObserve_ExternallyChangedStatus_FreesPoolSlot(t *testing.T) {
 			client.items[item.ID] = item
 
 			runner := newMockRunner(nil) // no auto-outcomes; agent is still "running"
-			sched := testScheduler(client, runner)
+			config := testConfig()
+			workflows := map[string]*aqueduct.Workflow{"test-repo": testWorkflow()}
+			clients := map[string]CisternClient{"test-repo": client}
+			sched := NewFromParts(config, workflows, clients, runner,
+				WithLogger(newTestLogger(&logBuf)))
 
 			// Inject a mock killSessionFn that records which sessions were killed.
 			var killedSessions []string
@@ -1603,6 +1608,11 @@ func TestObserve_ExternallyChangedStatus_FreesPoolSlot(t *testing.T) {
 			wantSession := "test-repo-alpha"
 			if !slices.Contains(killedSessions, wantSession) {
 				t.Errorf("expected session %q to be killed on external %s, killed sessions: %v", wantSession, extStatus, killedSessions)
+			}
+
+			// Verify that the INFO log line was emitted.
+			if !strings.Contains(logBuf.String(), "aqueduct freed") {
+				t.Errorf("expected INFO log containing 'aqueduct freed' on external %s, got: %s", extStatus, logBuf.String())
 			}
 		})
 	}
