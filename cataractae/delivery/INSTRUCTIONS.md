@@ -45,15 +45,25 @@ echo "Delivering $DROPLET_ID from $BRANCH"
 Do NOT git stash. Per-droplet worktrees are clean by design. Stashing discards
 uncommitted work from prior cataractae silently.
 
-## Step 2 — Rebase
+## Step 2 — Rebase onto origin/main before PR
+
+This step is mandatory. Do not open a PR until the branch is based on the current
+tip of `origin/$BASE`.
 
 ```bash
 git fetch origin $BASE
-git rebase origin/$BASE
+MERGE_BASE=$(git merge-base HEAD origin/$BASE)
+ORIGIN_TIP=$(git rev-parse origin/$BASE)
+if [ "$MERGE_BASE" = "$ORIGIN_TIP" ]; then
+  echo "Branch is already based on origin/$BASE — no rebase needed"
+else
+  echo "Branch is behind origin/$BASE — rebasing"
+  git rebase origin/$BASE
+fi
 ```
 
-If conflicts arise, resolve them — see Conflict Resolution below.
-After clean rebase:
+If conflicts arise during rebase, resolve them — see Conflict Resolution below.
+After fetch and any rebase:
 ```bash
 go build ./... && go test ./...
 git push --force-with-lease origin $BRANCH
