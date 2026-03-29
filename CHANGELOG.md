@@ -14,6 +14,18 @@ The delivery cataractae now checks whether a branch is already based on the late
 - **Conflict handling**: rebase conflicts abort cleanly and recirculate to implement; stashed worktree files (CONTEXT.md, .claude/) are restored in all paths
 - **Acceptance criteria**: (1) stale branch rebases cleanly and creates correct PR, (2) conflicted branch fails loudly with diagnostic instead of creating bad PR, (3) branch already on latest main is unaffected (no spurious rebase)
 
+### TUI Detail panel: in-dashboard action dispatch (ci-glyf0)
+
+Five action keybindings are now available in the detail panel view without leaving the dashboard:
+
+- `r` — **Restart** — Re-enter the pipeline from the first step; prompts for optional reason/comment
+- `x` — **Cancel** — Mark the droplet as cancelled; requires confirmation (`y` or `n`)
+- `e` — **Escalate** — Raise priority to stagnant status; requires confirmation (`y` or `n`)
+- `n` — **Add Note** — Append a manual note to the droplet; enter text and press Enter
+- `s` — **Set Step** — Jump to a different pipeline step; enter step name and press Enter
+
+All actions dispatch directly to `cistern.Client` methods without spawning CLI subcommands. After any action completes, the detail view re-fetches and displays updated droplet state. Destructive actions (cancel, escalate) show an inline confirmation overlay. Text-entry actions (restart, add-note, set-step) open a single-line text input overlay.
+
 ### Adversarial reviewer: full codebase access, orphaned code check (ci-hvskp)
 
 The adversarial reviewer cataractae now has full repository access to catch issues invisible from the diff alone. This enables checks for orphaned code, duplicate implementations, broken contracts, and pattern violations.

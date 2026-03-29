@@ -181,6 +181,15 @@ The terminal UI dashboard (`ct dashboard`) provides two views:
   - Scrollable: use `↑↓` or `jk` to scroll, `g` for top, `G` for bottom
   - Press `esc` to return to Droplets list
 
+**Detail View Actions** (dispatch directly without leaving the TUI)
+- `r` — **Restart** — Re-enter the pipeline at the start; prompts for optional reason
+- `x` — **Cancel** — Mark as cancelled (confirmation required: `y` or `n`)
+- `e` — **Escalate** — Raise priority to stagnant status (confirmation required: `y` or `n`)
+- `n` — **Add Note** — Append a manual note to the droplet; enter text and press Enter
+- `s` — **Set Step** — Jump to a different pipeline step; enter step name and press Enter
+
+All actions execute immediately through the cistern database. After any action completes, the detail view re-fetches and displays updated state.
+
 ## Status & Health
 
 ```bash
