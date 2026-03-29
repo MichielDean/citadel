@@ -64,15 +64,12 @@ func (e *Executor) PRCreate(ctx context.Context, bc DropletContext) (*StepOutcom
 		}
 	}()
 
-	// Check whether the branch needs rebasing. Skip the rebase when the branch
-	// is already based on the tip of origin/baseBranch to avoid spurious rebases.
-	needsRebase := true
+	// Rebase only when the branch has diverged from origin/baseBranch.
+	// If either check fails, fall back to rebasing unconditionally.
 	mergeBaseOut, mergeBaseErr := e.ExecFn(ctx, bc.WorkDir, "git", "merge-base", "HEAD", "origin/"+baseBranch)
 	originTipOut, originTipErr := e.ExecFn(ctx, bc.WorkDir, "git", "rev-parse", "origin/"+baseBranch)
-	if mergeBaseErr == nil && originTipErr == nil &&
-		strings.TrimSpace(string(mergeBaseOut)) == strings.TrimSpace(string(originTipOut)) {
-		needsRebase = false
-	}
+	needsRebase := mergeBaseErr != nil || originTipErr != nil ||
+		strings.TrimSpace(string(mergeBaseOut)) != strings.TrimSpace(string(originTipOut))
 
 	if needsRebase {
 		// Rebase onto base branch before pushing to avoid merge conflicts in the PR.
