@@ -404,7 +404,8 @@ func TestInvokeFilterResume_DefaultsToResumeFlag(t *testing.T) {
 
 // TestFilterCmd_NewSession_RequiresTitle verifies that ct filter without --title
 // and without --resume returns an error mentioning --title.
-func TestFilterCmd_NewSession_RequiresTitle(t *testing.T) {	err := execCmd(t, "filter")
+func TestFilterCmd_NewSession_RequiresTitle(t *testing.T) {
+	err := execCmd(t, "filter")
 	if err == nil {
 		t.Fatal("expected error when --title is missing, got nil")
 	}
@@ -418,7 +419,8 @@ func TestFilterCmd_NewSession_RequiresTitle(t *testing.T) {	err := execCmd(t, "f
 // Given ct filter --resume <id> with no positional arg and no --file,
 // When the command is executed,
 // Then an error mentioning "feedback" is returned.
-func TestFilterCmd_Resume_RequiresFeedbackOrFile(t *testing.T) {	err := execCmd(t, "filter", "--resume", "some-session-id")
+func TestFilterCmd_Resume_RequiresFeedbackOrFile(t *testing.T) {
+	err := execCmd(t, "filter", "--resume", "some-session-id")
 	if err == nil {
 		t.Fatal("expected error when --resume without feedback or --file, got nil")
 	}
@@ -429,7 +431,8 @@ func TestFilterCmd_Resume_RequiresFeedbackOrFile(t *testing.T) {	err := execCmd(
 
 // TestFilterCmd_ResumeFile_RequiresRepo verifies that ct filter --resume ... --file
 // without --repo returns an error mentioning --repo.
-func TestFilterCmd_ResumeFile_RequiresRepo(t *testing.T) {	err := execCmd(t, "filter", "--resume", "some-session-id", "--file")
+func TestFilterCmd_ResumeFile_RequiresRepo(t *testing.T) {
+	err := execCmd(t, "filter", "--resume", "some-session-id", "--file")
 	if err == nil {
 		t.Fatal("expected error when --file without --repo, got nil")
 	}
@@ -487,9 +490,9 @@ func TestPrintFilterResult_HumanFormat_MultipleProposals(t *testing.T) {
 // contains session_id, title, and description — the fields required for scripting.
 func TestFilterJSONOutput_HasRequiredFields(t *testing.T) {
 	type filterJSONOutput struct {
-		SessionID   string           `json:"session_id"`
-		Title       string           `json:"title,omitempty"`
-		Description string           `json:"description,omitempty"`
+		SessionID   string            `json:"session_id"`
+		Title       string            `json:"title,omitempty"`
+		Description string            `json:"description,omitempty"`
 		Proposals   []DropletProposal `json:"proposals,omitempty"`
 	}
 	out := filterJSONOutput{

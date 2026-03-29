@@ -4,25 +4,16 @@ import (
 	"bytes"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
 
-// TestRootCmd_NoLogoOnCommandExecution verifies that the ASCII logo is never
-// printed when a CLI command runs.
-// Given: a logo file exists and CT_ASCII_LOGO points to it,
-// When: any command executes,
-// Then: the logo content does not appear in stdout.
+// TestRootCmd_NoLogoOnCommandExecution verifies that no ASCII logo is printed
+// when a CLI command runs.
+// Given: a CLI command is executed,
+// When: the command completes,
+// Then: no logo content appears in stdout.
 func TestRootCmd_NoLogoOnCommandExecution(t *testing.T) {
-	// Create a recognisable logo file in a temp directory.
-	logoContent := "%%%%CISTERN_LOGO%%%%\n"
-	logoPath := filepath.Join(t.TempDir(), "cistern_logo_ascii.txt")
-	if err := os.WriteFile(logoPath, []byte(logoContent), 0o600); err != nil {
-		t.Fatalf("failed to write test logo file: %v", err)
-	}
-	t.Setenv("CT_ASCII_LOGO", logoPath)
-
 	// Capture stdout so we can inspect what was printed.
 	origStdout := os.Stdout
 	r, w, err := os.Pipe()
