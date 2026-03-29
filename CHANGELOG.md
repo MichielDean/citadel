@@ -27,6 +27,21 @@ The flow dashboard (`ct dashboard`) now displays a dedicated **Stagnant** sectio
   ✗  droplet-2  2h10m  Update database schema
 ```
 
+### Fix misleading 'Cistern dry' message when stagnant droplets exist (ci-i8mt8)
+
+The `ct droplet list` and `ct droplet search` commands now correctly handle the empty-result message:
+- **'Cistern dry.'** displays only when both flowing and stagnant droplet counts are zero
+- **'No flowing droplets. N droplet(s) stagnant.'** displays when there are no flowing droplets but stagnant droplets exist
+- **Silent** when flowing droplets exist (no empty message)
+
+**Before:** the empty-result handler would incorrectly emit 'Cistern dry.' even when stagnant droplets existed, or when no empty-result condition should have triggered output.
+
+**After:** all four branches are properly distinguished:
+1. Error retrieving stats → 'Cistern dry.'
+2. Flowing droplets exist → (silent, no message)
+3. No flowing droplets but stagnant droplets exist → 'No flowing droplets. N droplet(s) stagnant.'
+4. Both flowing and stagnant counts are zero → 'Cistern dry.'
+
 ### Add --flagged-by filter to ct droplet issue list (ci-u8l1e)
 
 The `ct droplet issue list` command now supports a `--flagged-by` flag to filter issues by the cataractae that filed them.

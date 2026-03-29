@@ -214,7 +214,7 @@ var dropletListCmd = &cobra.Command{
 			}
 
 			if len(active) == 0 && (!listAll || len(dimmed) == 0) {
-				fmt.Println("Cistern dry.")
+				printEmptyMessage(c)
 				return nil
 			}
 
@@ -370,6 +370,22 @@ func displayStatusForDroplet(item *cistern.Droplet) string {
 	return displayStatus(item.Status)
 }
 
+func printEmptyMessage(c *cistern.Client) {
+	stats, err := c.Stats()
+	if err != nil {
+		fmt.Println("Cistern dry.")
+		return
+	}
+	if stats.Flowing > 0 {
+		return
+	}
+	if stats.Stagnant > 0 {
+		fmt.Printf("No flowing droplets. %d droplet(s) stagnant.\n", stats.Stagnant)
+		return
+	}
+	fmt.Println("Cistern dry.")
+}
+
 // --- cistern search ---
 
 var (
@@ -410,7 +426,7 @@ var dropletSearchCmd = &cobra.Command{
 		}
 
 		if len(items) == 0 {
-			fmt.Println("Cistern dry.")
+			printEmptyMessage(c)
 			return nil
 		}
 
