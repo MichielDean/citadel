@@ -1798,6 +1798,91 @@ func TestDoctorEnvCheck_GeminiProvider_GeminiKeySet_Passes(t *testing.T) {
 	}
 }
 
+// --- Installer stubs regression test (ci-7isae) ---
+
+// TestRunDoctorExtendedChecks_DefaultWorkflow_InstallerStubs_Passes verifies that
+// the skills installed by _install_skill_stubs in tests/installer/run-tests.sh
+// are sufficient for runDoctorExtendedChecks to pass with the default workflow.
+//
+// If the default workflow (cmd/ct/assets/aqueduct/aqueduct.yaml) is updated to
+// add, rename, or remove a skill, this test will fail. You MUST then update:
+//   - installerStubs below
+//   - _install_skill_stubs in tests/installer/run-tests.sh
+func TestRunDoctorExtendedChecks_DefaultWorkflow_InstallerStubs_Passes(t *testing.T) {
+	home := t.TempDir()
+	cisternDir := filepath.Join(home, ".cistern")
+	aqueductDir := filepath.Join(cisternDir, "aqueduct")
+	cataractaeDir := filepath.Join(cisternDir, "cataractae")
+	skillsDir := filepath.Join(cisternDir, "skills")
+	for _, d := range []string{aqueductDir, cataractaeDir, skillsDir} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", d, err)
+		}
+	}
+
+	// Fake claude binary (default provider — no API key required).
+	setupFakeBinAndAPIKey(t, "claude", "")
+
+	// Write the default embedded workflow.
+	wfPath := filepath.Join(aqueductDir, "aqueduct.yaml")
+	if err := os.WriteFile(wfPath, defaultAqueductWorkflow, 0o644); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+
+	// Write a config that references the default workflow.
+	cfgContent := "repos:\n  - name: cistern\n    url: https://github.com/example/cistern\n    workflow_path: aqueduct/aqueduct.yaml\n    cataractae: 1\n    prefix: ct\nmax_cataractae: 1\n"
+	cfgPath := filepath.Join(cisternDir, "cistern.yaml")
+	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	// Generate CLAUDE.md files for all identities, mirroring what ct init does.
+	w, err := aqueduct.ParseWorkflowBytes(defaultAqueductWorkflow)
+	if err != nil {
+		t.Fatalf("parse default workflow: %v", err)
+	}
+	if err := initCataractaeDir(w, cataractaeDir); err != nil {
+		t.Fatalf("init cataractae dir: %v", err)
+	}
+	if _, err := aqueduct.GenerateCataractaeFiles(w, cataractaeDir, ""); err != nil {
+		t.Fatalf("generate CLAUDE.md files: %v", err)
+	}
+
+	// installerStubs mirrors _install_skill_stubs in tests/installer/run-tests.sh.
+	// Keep these two lists in sync — this test will fail if the default workflow
+	// requires a skill not present here, signalling that run-tests.sh needs updating.
+	installerStubs := []string{
+		"cistern-droplet-state",
+		"cistern-git",
+		"cistern-github",
+		"code-simplifier",
+		"critical-code-reviewer",
+		"reviewer",
+	}
+	for _, name := range installerStubs {
+		p := filepath.Join(skillsDir, name, "SKILL.md")
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatalf("mkdir skill %s: %v", name, err)
+		}
+		if err := os.WriteFile(p, []byte("# "+name+" stub\n"), 0o644); err != nil {
+			t.Fatalf("write skill stub %s: %v", name, err)
+		}
+	}
+
+	cfg, err := aqueduct.ParseAqueductConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("parse config: %v", err)
+	}
+
+	dbPath := filepath.Join(cisternDir, "cistern.db")
+	result := runDoctorExtendedChecks(cfg, cfgPath, home, dbPath)
+	if !result {
+		t.Error("expected runDoctorExtendedChecks to pass with installer stubs and default workflow; " +
+			"if the default workflow changed its required skills, update installerStubs above " +
+			"and _install_skill_stubs in tests/installer/run-tests.sh")
+	}
+}
+
 // TestDoctorEnvCheck_GeminiProvider_GeminiKeyMissing_Fails verifies that the
 // doctor env file check fails for a gemini setup when GEMINI_API_KEY is absent.
 func TestDoctorEnvCheck_GeminiProvider_GeminiKeyMissing_Fails(t *testing.T) {
