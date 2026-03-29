@@ -64,9 +64,10 @@ type DashboardData struct {
 	QueuedCount     int                `json:"queued_count"`
 	DoneCount       int                `json:"done_count"`
 	Cataractae      []CataractaeInfo   `json:"cataractae"`
-	CisternItems    []*cistern.Droplet `json:"cistern_items"`  // flowing + queued
-	RecentItems     []*cistern.Droplet `json:"recent_items"`   // recently closed/escalated
-	BlockedByMap    map[string]string  `json:"blocked_by_map"` // droplet ID -> first blocking dep ID
+	CisternItems    []*cistern.Droplet `json:"cistern_items"`   // flowing + queued
+	StagnantItems   []*cistern.Droplet `json:"stagnant_items"`  // all stagnant (escalated) droplets
+	RecentItems     []*cistern.Droplet `json:"recent_items"`    // recently closed/escalated
+	BlockedByMap    map[string]string  `json:"blocked_by_map"`  // droplet ID -> first blocking dep ID
 	FlowActivities  []FlowActivity     `json:"flow_activities"` // live narrative for in-progress droplets
 	FarmRunning     bool               `json:"farm_running"`
 	FetchedAt       time.Time          `json:"fetched_at"`
@@ -186,6 +187,16 @@ func fetchDashboardData(cfgPath, dbPath string) *DashboardData {
 		}
 	}
 
+	// Stagnant droplets: all items currently marked stagnant, newest first.
+	for _, item := range allItems {
+		if item.Status == "stagnant" {
+			data.StagnantItems = append(data.StagnantItems, item)
+		}
+	}
+	sort.Slice(data.StagnantItems, func(i, j int) bool {
+		return data.StagnantItems[i].UpdatedAt.After(data.StagnantItems[j].UpdatedAt)
+	})
+
 	// Recent flow: most recently updated delivered/stagnant items.
 	var recent []*cistern.Droplet
 	for _, item := range allItems {
@@ -237,7 +248,7 @@ func dashboardStateHash(d *DashboardData) string {
 		return ""
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "%d/%d/%d/%v", d.FlowingCount, d.QueuedCount, d.DoneCount, d.FarmRunning)
+	fmt.Fprintf(&b, "%d/%d/%d/%d/%v", d.FlowingCount, d.QueuedCount, d.DoneCount, len(d.StagnantItems), d.FarmRunning)
 	for _, ch := range d.Cataractae {
 		fmt.Fprintf(&b, "|%s:%s:%s", ch.Name, ch.DropletID, ch.Step)
 	}
@@ -567,6 +578,18 @@ func renderDashboard(data *DashboardData) string {
 			}
 			sb.WriteString(fmt.Sprintf("  ○ %-10s  %s  %s%s\n",
 				item.ID, formatElapsed(age), item.Title, blocked))
+		}
+	}
+	sb.WriteString(sep + "\n")
+
+	// Stagnant droplets.
+	sb.WriteString("  STAGNANT\n")
+	if len(data.StagnantItems) == 0 {
+		sb.WriteString("  Stagnant: 0\n")
+	} else {
+		for _, item := range data.StagnantItems {
+			elapsed := formatElapsed(time.Since(item.UpdatedAt))
+			sb.WriteString(fmt.Sprintf("  ✗  %-10s  %s  %s\n", item.ID, elapsed, item.Title))
 		}
 	}
 	sb.WriteString(sep + "\n")

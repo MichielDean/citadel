@@ -399,7 +399,12 @@ func (m dashboardTUIModel) View() string {
 	parts = append(parts, m.viewCistern()...)
 	parts = append(parts, sep)
 
-	// 6. Recent flow.
+	// 6. Stagnant droplets — dedicated panel, always visible.
+	parts = append(parts, tuiStyleHeader.Render("  STAGNANT"))
+	parts = append(parts, m.viewStagnant()...)
+	parts = append(parts, sep)
+
+	// 7. Recent flow.
 	parts = append(parts, tuiStyleHeader.Render("  RECENT FLOW"))
 	parts = append(parts, m.viewRecentFlow()...)
 	parts = append(parts, sep)
@@ -1001,6 +1006,41 @@ func (m dashboardTUIModel) viewCisternRow(item *cistern.Droplet) string {
 		statusStr,
 		title,
 	)
+}
+
+// viewStagnant renders the stagnant droplets panel.
+// When no stagnant droplets exist it renders a compact count label ("Stagnant: 0")
+// so the operator always knows the section is present. When droplets are present
+// the section expands to a full list showing ID, time since last state change, and title.
+func (m dashboardTUIModel) viewStagnant() []string {
+	if len(m.data.StagnantItems) == 0 {
+		return []string{"  " + tuiStyleDim.Render("Stagnant: 0")}
+	}
+	lines := make([]string, 0, len(m.data.StagnantItems))
+	for _, item := range m.data.StagnantItems {
+		lines = append(lines, m.viewStagnantRow(item))
+	}
+	return lines
+}
+
+func (m dashboardTUIModel) viewStagnantRow(item *cistern.Droplet) string {
+	icon := tuiStyleRed.Render("✗")
+	id := padRight(item.ID, 10)
+	elapsed := formatElapsed(time.Since(item.UpdatedAt))
+
+	// Truncate title to fit terminal width.
+	fixedW := 2 + 2 + 2 + 10 + 2 + 7 + 2
+	titleW := m.width - fixedW
+	if titleW < 8 {
+		titleW = 8
+	}
+	title := item.Title
+	r := []rune(title)
+	if len(r) > titleW {
+		title = string(r[:titleW-1]) + "…"
+	}
+
+	return fmt.Sprintf("  %s  %s  %s  %s", icon, id, elapsed, title)
 }
 
 func (m dashboardTUIModel) viewRecentFlow() []string {

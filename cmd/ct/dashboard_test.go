@@ -486,6 +486,168 @@ func TestRenderFlowGraphRow_PointerAligned(t *testing.T) {
 	}
 }
 
+// --- TestFetchDashboardData_StagnantItems ---
+
+// TestFetchDashboardData_StagnantItems_PopulatedCorrectly verifies that stagnant
+// droplets are collected into StagnantItems separately from RecentItems.
+//
+// Given: a database with one stagnant droplet and one delivered droplet
+// When:  fetchDashboardData is called
+// Then:  StagnantItems contains only the stagnant droplet
+func TestFetchDashboardData_StagnantItems_PopulatedCorrectly(t *testing.T) {
+	cfgPath := tempCfg(t)
+	dbPath := tempDB(t)
+
+	c, err := cistern.New(dbPath, "mr")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Add a stagnant item and a delivered item.
+	stagnant, _ := c.Add("myrepo", "Stuck Feature", "", 1, 2)
+	c.GetReady("myrepo")
+	c.Escalate(stagnant.ID, "test escalation")
+
+	delivered, _ := c.Add("myrepo", "Done Feature", "", 1, 2)
+	c.GetReady("myrepo")
+	c.CloseItem(delivered.ID)
+	c.Close()
+
+	data := fetchDashboardData(cfgPath, dbPath)
+
+	if len(data.StagnantItems) != 1 {
+		t.Errorf("StagnantItems len = %d, want 1", len(data.StagnantItems))
+	}
+	if len(data.StagnantItems) > 0 && data.StagnantItems[0].ID != stagnant.ID {
+		t.Errorf("StagnantItems[0].ID = %q, want %q", data.StagnantItems[0].ID, stagnant.ID)
+	}
+}
+
+// TestFetchDashboardData_StagnantItems_EmptyWhenNoneStagnant verifies that
+// StagnantItems is nil/empty when no droplets are stagnant.
+//
+// Given: a database with only delivered and open droplets
+// When:  fetchDashboardData is called
+// Then:  StagnantItems is empty
+func TestFetchDashboardData_StagnantItems_EmptyWhenNoneStagnant(t *testing.T) {
+	cfgPath := tempCfg(t)
+	dbPath := tempDB(t)
+
+	c, err := cistern.New(dbPath, "mr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	delivered, _ := c.Add("myrepo", "Done Feature", "", 1, 2)
+	c.GetReady("myrepo")
+	c.CloseItem(delivered.ID)
+	c.Close()
+
+	data := fetchDashboardData(cfgPath, dbPath)
+
+	if len(data.StagnantItems) != 0 {
+		t.Errorf("StagnantItems len = %d, want 0 when no stagnant droplets", len(data.StagnantItems))
+	}
+}
+
+// --- TestViewStagnant TUI section ---
+
+// TestViewStagnant_WhenEmpty_ShowsCompactLabel verifies that the stagnant panel
+// renders as a compact count label "Stagnant: 0" when no droplets are stagnant.
+//
+// Given: a TUI model with an empty StagnantItems list
+// When:  viewStagnant is called
+// Then:  the output contains "Stagnant: 0"
+func TestViewStagnant_WhenEmpty_ShowsCompactLabel(t *testing.T) {
+	m := newDashboardTUIModel("", "")
+	m.data = &DashboardData{StagnantItems: nil}
+
+	lines := m.viewStagnant()
+	out := strings.Join(lines, "\n")
+	stripped := stripANSITest(out)
+
+	if !strings.Contains(stripped, "Stagnant: 0") {
+		t.Errorf("viewStagnant (empty) should contain 'Stagnant: 0', got: %q", stripped)
+	}
+}
+
+// TestViewStagnant_WhenPresent_ShowsFullList verifies that the stagnant panel
+// expands to a full list showing ID, title, and elapsed time.
+//
+// Given: a TUI model with two stagnant droplets
+// When:  viewStagnant is called
+// Then:  both droplet IDs and titles appear in the output
+func TestViewStagnant_WhenPresent_ShowsFullList(t *testing.T) {
+	m := newDashboardTUIModel("", "")
+	m.width = 120
+	now := time.Now()
+	m.data = &DashboardData{
+		StagnantItems: []*cistern.Droplet{
+			{ID: "ci-stag1", Title: "Broken pipeline", Status: "stagnant", UpdatedAt: now.Add(-30 * time.Minute)},
+			{ID: "ci-stag2", Title: "Failing review", Status: "stagnant", UpdatedAt: now.Add(-2 * time.Hour)},
+		},
+	}
+
+	lines := m.viewStagnant()
+	out := strings.Join(lines, "\n")
+	stripped := stripANSITest(out)
+
+	for _, want := range []string{"ci-stag1", "ci-stag2", "Broken pipeline", "Failing review"} {
+		if !strings.Contains(stripped, want) {
+			t.Errorf("viewStagnant should contain %q, got: %q", want, stripped)
+		}
+	}
+	// Should NOT show the compact label when items are present.
+	if strings.Contains(stripped, "Stagnant: 0") {
+		t.Error("viewStagnant should not show 'Stagnant: 0' when droplets are present")
+	}
+}
+
+// TestViewStagnant_ShowsElapsedTime verifies that the time since last state
+// change is included in each stagnant row.
+//
+// Given: a stagnant droplet updated 45 seconds ago
+// When:  viewStagnant is called
+// Then:  the elapsed time ("45s") appears in the row
+func TestViewStagnant_ShowsElapsedTime(t *testing.T) {
+	m := newDashboardTUIModel("", "")
+	m.width = 120
+	m.data = &DashboardData{
+		StagnantItems: []*cistern.Droplet{
+			{ID: "ci-stag1", Title: "Stuck", Status: "stagnant", UpdatedAt: time.Now().Add(-45 * time.Second)},
+		},
+	}
+
+	lines := m.viewStagnant()
+	out := stripANSITest(strings.Join(lines, "\n"))
+
+	if !strings.Contains(out, "45s") {
+		t.Errorf("viewStagnant row should contain elapsed time '45s', got: %q", out)
+	}
+}
+
+// TestTUIView_ContainsStagnantSection verifies that the TUI View() output
+// includes the STAGNANT section header.
+//
+// Given: a TUI model with data loaded (no stagnant items)
+// When:  View() is called
+// Then:  the output contains "STAGNANT"
+func TestTUIView_ContainsStagnantSection(t *testing.T) {
+	m := newDashboardTUIModel("", "")
+	m.width = 120
+	m.height = 50
+	m.data = &DashboardData{
+		StagnantItems: nil,
+		FetchedAt:     time.Now(),
+	}
+
+	out := m.View()
+	stripped := stripANSITest(out)
+
+	if !strings.Contains(stripped, "STAGNANT") {
+		t.Errorf("TUI View should contain STAGNANT section header, got (first 500 chars): %q", stripped[:min(500, len(stripped))])
+	}
+}
+
 func TestRenderDashboard_AqueductsClosedWhenNoCataractae(t *testing.T) {
 	data := &DashboardData{
 		Cataractae:   []CataractaeInfo{},
