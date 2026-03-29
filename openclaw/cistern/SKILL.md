@@ -106,6 +106,36 @@ ct filter --resume <session-id> --file --repo <repo>
 - Get explicit "yes" before `--file`
 - File follow-up droplets with `--depends-on <id>` rather than injecting notes into flowing work
 
+### Telegram buttons during filtration
+
+When running on Telegram (`channel=telegram`), use inline buttons at decision points instead of waiting for typed responses. Send buttons with:
+
+```bash
+CHAT_ID=8569372105
+openclaw message send --channel telegram --target "$CHAT_ID" \
+  --message "<summary of current spec>" \
+  --buttons '<buttons-json>'
+```
+
+**After each filtration round** (present the updated spec, then):
+```json
+[ [{"text":"✅ File it","callback_data":"filter:file"},
+   {"text":"🔄 Another round","callback_data":"filter:continue"}],
+  [{"text":"❌ Cancel","callback_data":"filter:cancel"}] ]
+```
+
+**When the spec splits into multiple droplets** (list them, then):
+```json
+[ [{"text":"✅ File all","callback_data":"filter:file"},
+   {"text":"✏️ Revise","callback_data":"filter:continue"}],
+  [{"text":"❌ Cancel","callback_data":"filter:cancel"}] ]
+```
+
+Button click responses arrive as `callback_data: filter:file` etc. Map them:
+- `filter:file` → run `ct filter --resume <id> --file --repo <repo>`
+- `filter:continue` → ask what to refine, do another round
+- `filter:cancel` → confirm cancellation, do not file
+
 ## Key Commands
 
 ```bash
