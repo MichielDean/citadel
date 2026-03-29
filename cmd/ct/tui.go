@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 
 	"github.com/MichielDean/cistern/internal/cistern"
@@ -234,7 +233,8 @@ func (m tabAppModel) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "pgdown", "ctrl+d":
 			m.detailScrollY += m.height / 2
 		case "pgup", "ctrl+u":
-			if m.detailScrollY -= m.height / 2; m.detailScrollY < 0 {
+			m.detailScrollY -= m.height / 2
+			if m.detailScrollY < 0 {
 				m.detailScrollY = 0
 			}
 		}
@@ -274,10 +274,11 @@ func (m tabAppModel) viewDroplets() string {
 		parts = append(parts, "  (cistern is empty)")
 	} else {
 		for i, item := range items {
-			step := padRight(item.CurrentCataractae, 12)
-			if item.CurrentCataractae == "" {
-				step = padRight("—", 12)
+			stepName := item.CurrentCataractae
+			if stepName == "" {
+				stepName = "—"
 			}
+			step := padRight(stepName, 12)
 
 			fixedW := 2 + 10 + 2 + 7 + 2 + 12 + 2
 			titleW := w - fixedW
@@ -456,10 +457,6 @@ timeline and pipeline step indicator. Press esc to return to the list.`,
 		return RunTabbedTUI(cfgPath, dbPath)
 	},
 }
-
-// tuiStyleFooterDetail is an alias kept for clarity; detail footer uses the
-// same base style as the main footer.
-var tuiStyleFooterDetail = lipgloss.NewStyle()
 
 func init() {
 	rootCmd.AddCommand(tuiCmd)
