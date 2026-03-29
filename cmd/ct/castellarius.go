@@ -617,8 +617,7 @@ Use --droplet <id> to provide a specific droplet as trigger context.`,
 		// Use ArchitectiConfig from cistern.yaml if present; otherwise apply
 		// sensible defaults so the command works even without architecti configured.
 		archCfg := aqueduct.ArchitectiConfig{
-			MaxFilesPerRun:   10,
-			ThresholdMinutes: 30,
+			MaxFilesPerRun: 10,
 		}
 		if cfg.Architecti != nil {
 			archCfg = *cfg.Architecti
