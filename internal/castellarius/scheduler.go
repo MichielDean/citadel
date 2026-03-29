@@ -968,7 +968,16 @@ func (s *Castellarius) observeRepo(_ context.Context, repo aqueduct.RepoConfig) 
 			if w == nil || w.Status != AqueductFlowing || w.DropletID != item.ID {
 				continue
 			}
+			sessionID := repo.Name + "-" + item.Assignee
+			if err := s.killSessionFn(sessionID); err != nil {
+				s.logger.Warn("observe: kill session failed",
+					"droplet", item.ID, "session", sessionID, "error", err)
+			}
 			pool.Release(w)
+			if s.sandboxRoot != "" {
+				primaryDir := filepath.Join(s.sandboxRoot, repo.Name, "_primary")
+				removeDropletWorktree(primaryDir, s.sandboxRoot, repo.Name, item.ID)
+			}
 			s.logger.Info("aqueduct freed: droplet changed externally",
 				"aqueduct", item.Assignee, "droplet", item.ID, "status", extStatus)
 		}

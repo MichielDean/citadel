@@ -1557,7 +1557,8 @@ func TestObserve_FirstPass(t *testing.T) {
 
 // TestObserve_ExternallyChangedStatus_FreesPoolSlot verifies that when a droplet's
 // status is changed to 'cancelled' or 'stagnant' externally while in_progress (without
-// signaling an outcome), the observe phase detects it and releases the aqueduct pool slot.
+// signaling an outcome), the observe phase detects it, kills the agent session, and
+// releases the aqueduct pool slot.
 func TestObserve_ExternallyChangedStatus_FreesPoolSlot(t *testing.T) {
 	for _, extStatus := range []string{"cancelled", "stagnant"} {
 		t.Run(extStatus, func(t *testing.T) {
@@ -1574,6 +1575,13 @@ func TestObserve_ExternallyChangedStatus_FreesPoolSlot(t *testing.T) {
 			runner := newMockRunner(nil) // no auto-outcomes; agent is still "running"
 			sched := testScheduler(client, runner)
 
+			// Inject a mock killSessionFn that records which sessions were killed.
+			var killedSessions []string
+			sched.killSessionFn = func(sessionID string) error {
+				killedSessions = append(killedSessions, sessionID)
+				return nil
+			}
+
 			// Claim the pool slot to reflect the in-progress dispatch state.
 			pool := sched.pools["test-repo"]
 			w := pool.FindByName("alpha")
@@ -1588,6 +1596,19 @@ func TestObserve_ExternallyChangedStatus_FreesPoolSlot(t *testing.T) {
 
 			if pool.IsFlowing("alpha") {
 				t.Errorf("expected alpha aqueduct to be idle after external %s, got flowing", extStatus)
+			}
+
+			// Verify that the agent session was killed before the pool slot was freed.
+			wantSession := "test-repo-alpha"
+			found := false
+			for _, s := range killedSessions {
+				if s == wantSession {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("expected session %q to be killed on external %s, killed sessions: %v", wantSession, extStatus, killedSessions)
 			}
 		})
 	}
