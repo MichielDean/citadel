@@ -303,9 +303,7 @@ func (m tabAppModel) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "down", "j":
 			m.detailScrollY++
 		case "up", "k":
-			if m.detailScrollY > 0 {
-				m.detailScrollY--
-			}
+			m.detailScrollY--
 		case "home", "g":
 			m.detailScrollY = 0
 		case "end", "G":
@@ -314,11 +312,11 @@ func (m tabAppModel) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.detailScrollY += m.height / 2
 		case "pgup", "ctrl+u":
 			m.detailScrollY -= m.height / 2
-			if m.detailScrollY < 0 {
-				m.detailScrollY = 0
-			}
 		}
 		// Clamp to valid range after every scroll operation.
+		if m.detailScrollY < 0 {
+			m.detailScrollY = 0
+		}
 		if m.detailScrollY > maxScroll {
 			m.detailScrollY = maxScroll
 		}
