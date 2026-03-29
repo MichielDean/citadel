@@ -834,3 +834,534 @@ func TestTabApp_Detail_NotesFetchError_ShowsErrorIndicator(t *testing.T) {
 		t.Errorf("view should contain error indication, got:\n%s", view)
 	}
 }
+
+// ── Action dispatch overlay ──────────────────────────────────────────────────
+
+// helper for overlay tests: a model in Detail tab with a loaded droplet.
+func detailModelWithDroplet() tabAppModel {
+	m := newTabAppModel("", "")
+	m.data = &DashboardData{}
+	m.tab = tabDetail
+	m.selectedID = "ci-aaa"
+	m.detailDroplet = &cistern.Droplet{ID: "ci-aaa", Title: "Test task", Status: "in_progress"}
+	m.width = 120
+	m.height = 30
+	return m
+}
+
+// TestTabApp_Detail_R_Key_OpensTextOverlay_ForRestart verifies that pressing 'r'
+// in the Detail tab activates the text-entry overlay for the restart action.
+//
+// Given: a model in Detail tab with a loaded droplet
+// When:  'r' is pressed
+// Then:  overlayMode=overlayText, overlayAction=actionRestart
+func TestTabApp_Detail_R_Key_OpensTextOverlay_ForRestart(t *testing.T) {
+	m := detailModelWithDroplet()
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	um := updated.(tabAppModel)
+
+	if um.overlayMode != overlayText {
+		t.Errorf("overlayMode = %d, want overlayText (%d)", um.overlayMode, overlayText)
+	}
+	if um.overlayAction != actionRestart {
+		t.Errorf("overlayAction = %q, want %q", um.overlayAction, actionRestart)
+	}
+}
+
+// TestTabApp_Detail_X_Key_OpensConfirmOverlay_ForCancel verifies that pressing 'x'
+// activates the confirmation overlay for the cancel action.
+//
+// Given: a model in Detail tab with a loaded droplet
+// When:  'x' is pressed
+// Then:  overlayMode=overlayConfirm, overlayAction=actionCancel
+func TestTabApp_Detail_X_Key_OpensConfirmOverlay_ForCancel(t *testing.T) {
+	m := detailModelWithDroplet()
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	um := updated.(tabAppModel)
+
+	if um.overlayMode != overlayConfirm {
+		t.Errorf("overlayMode = %d, want overlayConfirm (%d)", um.overlayMode, overlayConfirm)
+	}
+	if um.overlayAction != actionCancel {
+		t.Errorf("overlayAction = %q, want %q", um.overlayAction, actionCancel)
+	}
+}
+
+// TestTabApp_Detail_E_Key_OpensConfirmOverlay_ForEscalate verifies that pressing 'e'
+// activates the confirmation overlay for the escalate action.
+//
+// Given: a model in Detail tab with a loaded droplet
+// When:  'e' is pressed
+// Then:  overlayMode=overlayConfirm, overlayAction=actionEscalate
+func TestTabApp_Detail_E_Key_OpensConfirmOverlay_ForEscalate(t *testing.T) {
+	m := detailModelWithDroplet()
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	um := updated.(tabAppModel)
+
+	if um.overlayMode != overlayConfirm {
+		t.Errorf("overlayMode = %d, want overlayConfirm (%d)", um.overlayMode, overlayConfirm)
+	}
+	if um.overlayAction != actionEscalate {
+		t.Errorf("overlayAction = %q, want %q", um.overlayAction, actionEscalate)
+	}
+}
+
+// TestTabApp_Detail_N_Key_OpensTextOverlay_ForAddNote verifies that pressing 'n'
+// activates the text-entry overlay for the add-note action.
+//
+// Given: a model in Detail tab with a loaded droplet
+// When:  'n' is pressed
+// Then:  overlayMode=overlayText, overlayAction=actionAddNote
+func TestTabApp_Detail_N_Key_OpensTextOverlay_ForAddNote(t *testing.T) {
+	m := detailModelWithDroplet()
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	um := updated.(tabAppModel)
+
+	if um.overlayMode != overlayText {
+		t.Errorf("overlayMode = %d, want overlayText (%d)", um.overlayMode, overlayText)
+	}
+	if um.overlayAction != actionAddNote {
+		t.Errorf("overlayAction = %q, want %q", um.overlayAction, actionAddNote)
+	}
+}
+
+// TestTabApp_Detail_S_Key_OpensTextOverlay_ForSetStep verifies that pressing 's'
+// activates the text-entry overlay for the set-step action.
+//
+// Given: a model in Detail tab with a loaded droplet
+// When:  's' is pressed
+// Then:  overlayMode=overlayText, overlayAction=actionSetStep
+func TestTabApp_Detail_S_Key_OpensTextOverlay_ForSetStep(t *testing.T) {
+	m := detailModelWithDroplet()
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	um := updated.(tabAppModel)
+
+	if um.overlayMode != overlayText {
+		t.Errorf("overlayMode = %d, want overlayText (%d)", um.overlayMode, overlayText)
+	}
+	if um.overlayAction != actionSetStep {
+		t.Errorf("overlayAction = %q, want %q", um.overlayAction, actionSetStep)
+	}
+}
+
+// TestTabApp_Detail_ActionKey_WithNilDroplet_IsNoOp verifies that action keys are
+// ignored when no droplet is loaded (detailDroplet == nil).
+//
+// Given: a model in Detail tab with no loaded droplet
+// When:  'x' is pressed
+// Then:  overlayMode remains overlayNone
+func TestTabApp_Detail_ActionKey_WithNilDroplet_IsNoOp(t *testing.T) {
+	m := newTabAppModel("", "")
+	m.data = &DashboardData{}
+	m.tab = tabDetail
+	m.detailDroplet = nil
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	um := updated.(tabAppModel)
+
+	if um.overlayMode != overlayNone {
+		t.Errorf("overlayMode = %d, want overlayNone (%d) when no droplet loaded", um.overlayMode, overlayNone)
+	}
+}
+
+// TestTabApp_Detail_TextOverlay_TypeChar_AppendsToInput verifies that pressing a
+// printable key while the text overlay is active appends to overlayInput.
+//
+// Given: a model with overlayText active and overlayInput=""
+// When:  'h', 'i' are pressed
+// Then:  overlayInput becomes "hi"
+func TestTabApp_Detail_TextOverlay_TypeChar_AppendsToInput(t *testing.T) {
+	m := detailModelWithDroplet()
+	m.overlayMode = overlayText
+	m.overlayAction = actionAddNote
+	m.overlayInput = ""
+
+	for _, ch := range []rune{'h', 'i'} {
+		raw, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{ch}})
+		m = raw.(tabAppModel)
+	}
+
+	if m.overlayInput != "hi" {
+		t.Errorf("overlayInput = %q, want %q", m.overlayInput, "hi")
+	}
+	if m.overlayMode != overlayText {
+		t.Errorf("overlayMode = %d, want overlayText (%d) — should stay open during typing", m.overlayMode, overlayText)
+	}
+}
+
+// TestTabApp_Detail_TextOverlay_Backspace_RemovesLastChar verifies that pressing
+// backspace in the text overlay removes the last rune from overlayInput.
+//
+// Given: a model with overlayText active and overlayInput="hello"
+// When:  backspace is pressed
+// Then:  overlayInput becomes "hell"
+func TestTabApp_Detail_TextOverlay_Backspace_RemovesLastChar(t *testing.T) {
+	m := detailModelWithDroplet()
+	m.overlayMode = overlayText
+	m.overlayAction = actionAddNote
+	m.overlayInput = "hello"
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	um := updated.(tabAppModel)
+
+	if um.overlayInput != "hell" {
+		t.Errorf("overlayInput = %q, want %q after backspace", um.overlayInput, "hell")
+	}
+}
+
+// TestTabApp_Detail_TextOverlay_Backspace_EmptyInput_IsNoOp verifies that backspace
+// on an empty overlayInput does not panic or produce a negative index.
+//
+// Given: a model with overlayText active and overlayInput=""
+// When:  backspace is pressed
+// Then:  overlayInput remains ""
+func TestTabApp_Detail_TextOverlay_Backspace_EmptyInput_IsNoOp(t *testing.T) {
+	m := detailModelWithDroplet()
+	m.overlayMode = overlayText
+	m.overlayAction = actionAddNote
+	m.overlayInput = ""
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	um := updated.(tabAppModel)
+
+	if um.overlayInput != "" {
+		t.Errorf("overlayInput = %q, want empty after backspace on empty input", um.overlayInput)
+	}
+}
+
+// TestTabApp_Detail_TextOverlay_Esc_DismissesOverlay verifies that pressing esc
+// in the text overlay closes the overlay without executing any action.
+//
+// Given: a model with overlayText active and overlayInput="some text"
+// When:  esc is pressed
+// Then:  overlayMode=overlayNone, overlayInput=""
+func TestTabApp_Detail_TextOverlay_Esc_DismissesOverlay(t *testing.T) {
+	m := detailModelWithDroplet()
+	m.overlayMode = overlayText
+	m.overlayAction = actionAddNote
+	m.overlayInput = "some text"
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	um := updated.(tabAppModel)
+
+	if um.overlayMode != overlayNone {
+		t.Errorf("overlayMode = %d, want overlayNone (%d) after esc", um.overlayMode, overlayNone)
+	}
+	if um.overlayInput != "" {
+		t.Errorf("overlayInput = %q, want empty after esc", um.overlayInput)
+	}
+}
+
+// TestTabApp_Detail_TextOverlay_Enter_WithText_ReturnsCmd verifies that pressing
+// enter in the text overlay with non-empty input closes the overlay and returns a cmd.
+//
+// Given: a model with overlayText active and overlayInput="implement"
+// When:  enter is pressed
+// Then:  overlayMode=overlayNone, overlayInput="", cmd != nil
+func TestTabApp_Detail_TextOverlay_Enter_WithText_ReturnsCmd(t *testing.T) {
+	m := detailModelWithDroplet()
+	m.overlayMode = overlayText
+	m.overlayAction = actionRestart
+	m.overlayInput = "implement"
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	um := updated.(tabAppModel)
+
+	if um.overlayMode != overlayNone {
+		t.Errorf("overlayMode = %d, want overlayNone (%d) after enter", um.overlayMode, overlayNone)
+	}
+	if um.overlayInput != "" {
+		t.Errorf("overlayInput = %q, want empty after enter", um.overlayInput)
+	}
+	if cmd == nil {
+		t.Error("expected a non-nil cmd after enter with text, got nil")
+	}
+}
+
+// TestTabApp_Detail_TextOverlay_Enter_EmptyInput_IsNoOp verifies that pressing
+// enter in the text overlay with empty input does not execute an action.
+//
+// Given: a model with overlayText active and overlayInput=""
+// When:  enter is pressed
+// Then:  overlayMode remains overlayText, cmd is nil
+func TestTabApp_Detail_TextOverlay_Enter_EmptyInput_IsNoOp(t *testing.T) {
+	m := detailModelWithDroplet()
+	m.overlayMode = overlayText
+	m.overlayAction = actionAddNote
+	m.overlayInput = ""
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	um := updated.(tabAppModel)
+
+	if um.overlayMode != overlayText {
+		t.Errorf("overlayMode = %d, want overlayText (%d) — enter with empty input should be no-op", um.overlayMode, overlayText)
+	}
+	if cmd != nil {
+		t.Error("expected nil cmd for enter with empty input, got non-nil")
+	}
+}
+
+// TestTabApp_Detail_ConfirmOverlay_Y_ClosesOverlayAndReturnsCmd verifies that
+// pressing 'y' in the confirm overlay closes it and returns an action cmd.
+//
+// Given: a model with overlayConfirm active for cancel action
+// When:  'y' is pressed
+// Then:  overlayMode=overlayNone, cmd != nil
+func TestTabApp_Detail_ConfirmOverlay_Y_ClosesOverlayAndReturnsCmd(t *testing.T) {
+	m := detailModelWithDroplet()
+	m.overlayMode = overlayConfirm
+	m.overlayAction = actionCancel
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	um := updated.(tabAppModel)
+
+	if um.overlayMode != overlayNone {
+		t.Errorf("overlayMode = %d, want overlayNone (%d) after 'y'", um.overlayMode, overlayNone)
+	}
+	if cmd == nil {
+		t.Error("expected non-nil cmd after 'y' in confirm overlay, got nil")
+	}
+}
+
+// TestTabApp_Detail_ConfirmOverlay_N_DismissesOverlay verifies that pressing 'n'
+// in the confirm overlay closes it without executing any action.
+//
+// Given: a model with overlayConfirm active for escalate action
+// When:  'n' is pressed
+// Then:  overlayMode=overlayNone, cmd is nil
+func TestTabApp_Detail_ConfirmOverlay_N_DismissesOverlay(t *testing.T) {
+	m := detailModelWithDroplet()
+	m.overlayMode = overlayConfirm
+	m.overlayAction = actionEscalate
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	um := updated.(tabAppModel)
+
+	if um.overlayMode != overlayNone {
+		t.Errorf("overlayMode = %d, want overlayNone (%d) after 'n'", um.overlayMode, overlayNone)
+	}
+	if cmd != nil {
+		t.Error("expected nil cmd after 'n' dismissal, got non-nil")
+	}
+}
+
+// TestTabApp_Detail_ConfirmOverlay_Esc_DismissesOverlay verifies that pressing esc
+// in the confirm overlay closes it without executing any action.
+//
+// Given: a model with overlayConfirm active for cancel action
+// When:  esc is pressed
+// Then:  overlayMode=overlayNone, cmd is nil
+func TestTabApp_Detail_ConfirmOverlay_Esc_DismissesOverlay(t *testing.T) {
+	m := detailModelWithDroplet()
+	m.overlayMode = overlayConfirm
+	m.overlayAction = actionCancel
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	um := updated.(tabAppModel)
+
+	if um.overlayMode != overlayNone {
+		t.Errorf("overlayMode = %d, want overlayNone (%d) after esc", um.overlayMode, overlayNone)
+	}
+	if cmd != nil {
+		t.Error("expected nil cmd after esc dismissal, got non-nil")
+	}
+}
+
+// TestTabApp_Detail_ActionResult_Success_TriggersRefetch verifies that a successful
+// tuiActionResultMsg triggers both a data-fetch and a notes-fetch command.
+//
+// Given: a model in Detail tab with selectedID="ci-aaa"
+// When:  tuiActionResultMsg{dropletID:"ci-aaa", err:nil} arrives
+// Then:  overlayErr is empty and a non-nil cmd is returned
+func TestTabApp_Detail_ActionResult_Success_TriggersRefetch(t *testing.T) {
+	m := detailModelWithDroplet()
+
+	updated, cmd := m.Update(tuiActionResultMsg{dropletID: "ci-aaa", err: nil})
+	um := updated.(tabAppModel)
+
+	if um.overlayErr != "" {
+		t.Errorf("overlayErr = %q, want empty after successful action", um.overlayErr)
+	}
+	if cmd == nil {
+		t.Error("expected non-nil cmd (refetch) after successful action result, got nil")
+	}
+}
+
+// TestTabApp_Detail_ActionResult_Error_StoresErrorMessage verifies that a failed
+// tuiActionResultMsg stores the error text in overlayErr.
+//
+// Given: a model in Detail tab with selectedID="ci-aaa"
+// When:  tuiActionResultMsg with err arrives
+// Then:  overlayErr contains the error message
+func TestTabApp_Detail_ActionResult_Error_StoresErrorMessage(t *testing.T) {
+	m := detailModelWithDroplet()
+	actionErr := errors.New("db write failed")
+
+	updated, _ := m.Update(tuiActionResultMsg{dropletID: "ci-aaa", err: actionErr})
+	um := updated.(tabAppModel)
+
+	if um.overlayErr == "" {
+		t.Error("overlayErr should be set when action result carries an error")
+	}
+	if !strings.Contains(um.overlayErr, "db write failed") {
+		t.Errorf("overlayErr = %q, want it to contain the error text", um.overlayErr)
+	}
+}
+
+// TestTabApp_Detail_ActionResult_StaleID_IsIgnored verifies that action results
+// for a different droplet are discarded.
+//
+// Given: a model in Detail tab with selectedID="ci-aaa"
+// When:  tuiActionResultMsg for "ci-bbb" arrives
+// Then:  overlayErr stays empty and no cmd is returned
+func TestTabApp_Detail_ActionResult_StaleID_IsIgnored(t *testing.T) {
+	m := detailModelWithDroplet()
+	m.overlayErr = ""
+
+	updated, cmd := m.Update(tuiActionResultMsg{dropletID: "ci-bbb", err: errors.New("should be ignored")})
+	um := updated.(tabAppModel)
+
+	if um.overlayErr != "" {
+		t.Errorf("overlayErr = %q, want empty — stale result should be discarded", um.overlayErr)
+	}
+	if cmd != nil {
+		t.Error("expected nil cmd for stale action result, got non-nil")
+	}
+}
+
+// TestTabApp_Detail_OverlayActive_ScrollKeyGoesToOverlay verifies that when an
+// overlay is active, scroll keys ('j') are consumed by the overlay handler rather
+// than scrolling the underlying detail content.
+//
+// Given: a model with overlayConfirm active and detailScrollY=0
+// When:  'j' is pressed (would normally scroll down)
+// Then:  detailScrollY remains 0 (overlay consumed the key)
+func TestTabApp_Detail_OverlayActive_ScrollKeyGoesToOverlay(t *testing.T) {
+	m := detailModelWithDroplet()
+	m.height = 4 // small viewport so 'j' would scroll if overlay were not active
+	m.overlayMode = overlayConfirm
+	m.overlayAction = actionCancel
+	m.detailScrollY = 0
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	um := updated.(tabAppModel)
+
+	if um.detailScrollY != 0 {
+		t.Errorf("detailScrollY = %d, want 0 — overlay should intercept 'j' before scroll handler", um.detailScrollY)
+	}
+	// 'j' in confirm overlay is not 'y', so overlay should dismiss.
+	if um.overlayMode != overlayNone {
+		t.Errorf("overlayMode = %d, want overlayNone (%d) — non-y key should dismiss confirm overlay", um.overlayMode, overlayNone)
+	}
+}
+
+// TestTabApp_Detail_View_ConfirmOverlay_ShowsPrompt verifies that when the confirm
+// overlay is active, the rendered view includes the action-specific prompt and (y/n).
+//
+// Given: a model with overlayConfirm active for the cancel action
+// When:  View() is called
+// Then:  the output contains "cancel" and "y/n"
+func TestTabApp_Detail_View_ConfirmOverlay_ShowsPrompt(t *testing.T) {
+	m := detailModelWithDroplet()
+	m.overlayMode = overlayConfirm
+	m.overlayAction = actionCancel
+
+	view := m.View()
+
+	if !strings.Contains(view, "cancel") {
+		t.Errorf("view should contain 'cancel' for cancel confirm overlay, got:\n%s", view)
+	}
+	if !strings.Contains(view, "y/n") {
+		t.Errorf("view should contain 'y/n' for confirm overlay, got:\n%s", view)
+	}
+}
+
+// TestTabApp_Detail_View_TextOverlay_ShowsInputAndPrompt verifies that when the
+// text overlay is active, the rendered view shows the current input text and prompt.
+//
+// Given: a model with overlayText active for add-note and overlayInput="hello"
+// When:  View() is called
+// Then:  the output contains "hello" and a note-related prompt
+func TestTabApp_Detail_View_TextOverlay_ShowsInputAndPrompt(t *testing.T) {
+	m := detailModelWithDroplet()
+	m.overlayMode = overlayText
+	m.overlayAction = actionAddNote
+	m.overlayInput = "hello"
+
+	view := m.View()
+
+	if !strings.Contains(view, "hello") {
+		t.Errorf("view should contain typed input 'hello', got:\n%s", view)
+	}
+	if !strings.Contains(view, "note") {
+		t.Errorf("view should contain note prompt, got:\n%s", view)
+	}
+}
+
+// TestTabApp_Detail_View_ActionError_ShowsInFooter verifies that when overlayErr
+// is set and no overlay is active, the error message appears in the rendered view.
+//
+// Given: a model in Detail tab with overlayErr="something went wrong"
+// When:  View() is called
+// Then:  the output contains the error text
+func TestTabApp_Detail_View_ActionError_ShowsInFooter(t *testing.T) {
+	m := detailModelWithDroplet()
+	m.overlayMode = overlayNone
+	m.overlayErr = "something went wrong"
+
+	view := m.View()
+
+	if !strings.Contains(view, "something went wrong") {
+		t.Errorf("view should contain overlayErr text, got:\n%s", view)
+	}
+}
+
+// TestExecActionCmd_CisternNewFails_ReturnsError verifies that when cistern.New
+// fails, execActionCmd returns a tuiActionResultMsg with err != nil.
+//
+// Given: a model whose dbPath points to a directory (not a valid SQLite file)
+// When:  execActionCmd is invoked and the returned tea.Cmd is executed
+// Then:  the resulting tuiActionResultMsg has err != nil and the correct dropletID
+func TestExecActionCmd_CisternNewFails_ReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	m := newTabAppModel("", dir) // dir is not a valid SQLite file
+
+	cmd := m.execActionCmd("ci-aaa", actionAddNote, "test note")
+	msg := cmd()
+
+	am, ok := msg.(tuiActionResultMsg)
+	if !ok {
+		t.Fatalf("expected tuiActionResultMsg, got %T", msg)
+	}
+	if am.dropletID != "ci-aaa" {
+		t.Errorf("dropletID = %q, want %q", am.dropletID, "ci-aaa")
+	}
+	if am.err == nil {
+		t.Error("err should be non-nil when cistern.New fails, got nil")
+	}
+}
+
+// TestTabApp_Detail_View_ActionHints_InFooter verifies that the detail footer
+// includes hints for all five action keys when no overlay is active.
+//
+// Given: a model in Detail tab with no overlay
+// When:  View() is called
+// Then:  the footer contains hints for r, x, e, n, s
+func TestTabApp_Detail_View_ActionHints_InFooter(t *testing.T) {
+	m := detailModelWithDroplet()
+	m.overlayMode = overlayNone
+	m.overlayErr = ""
+
+	view := m.View()
+
+	for _, hint := range []string{"r", "x", "e", "n", "s"} {
+		if !strings.Contains(view, hint) {
+			t.Errorf("view footer should contain action hint %q, got:\n%s", hint, view)
+		}
+	}
+}

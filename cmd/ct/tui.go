@@ -16,6 +16,22 @@ const (
 	tabDetail   = 1
 )
 
+// Overlay mode constants for action dispatch in the Detail panel.
+const (
+	overlayNone    = 0
+	overlayConfirm = 1
+	overlayText    = 2
+)
+
+// Action constants identify the pending Detail-panel action.
+const (
+	actionCancel   = "cancel"
+	actionEscalate = "escalate"
+	actionRestart  = "restart"
+	actionAddNote  = "addnote"
+	actionSetStep  = "setstep"
+)
+
 // tuiDetailDataMsg carries notes fetched for the Detail panel.
 // The dropletID field lets the handler discard stale responses when the user
 // navigates away before the fetch completes.
@@ -24,6 +40,14 @@ const (
 type tuiDetailDataMsg struct {
 	dropletID string
 	notes     []cistern.CataractaeNote
+	err       error
+}
+
+// tuiActionResultMsg carries the outcome of an async action dispatched from
+// the Detail panel. dropletID lets the handler discard results for a different
+// droplet if the user navigated away before the action completed.
+type tuiActionResultMsg struct {
+	dropletID string
 	err       error
 }
 
@@ -48,6 +72,12 @@ type tabAppModel struct {
 	detailSteps   []string                 // pipeline step names for the droplet
 	detailScrollY int
 	detailErr     error // non-nil when the notes fetch failed
+
+	// Action overlay state — populated when an action keybinding is pressed.
+	overlayMode   int    // overlayNone, overlayConfirm, or overlayText
+	overlayAction string // pending action (actionCancel, actionEscalate, …)
+	overlayInput  string // text being typed in overlayText mode
+	overlayErr    string // error message from the most recent action (empty = none)
 
 	width  int
 	height int
@@ -86,6 +116,83 @@ func (m tabAppModel) fetchDetailCmd(dropletID string) tea.Cmd {
 		notes, err := c.GetNotes(dropletID)
 		return tuiDetailDataMsg{dropletID: dropletID, notes: notes, err: err}
 	}
+}
+
+// execActionCmd opens the DB and executes the named action for dropletID.
+// input is the user-supplied text for text-entry actions; it is ignored for
+// confirm-only actions (cancel, escalate).
+func (m tabAppModel) execActionCmd(dropletID, action, input string) tea.Cmd {
+	dbPath := m.dbPath
+	return func() tea.Msg {
+		c, err := cistern.New(dbPath, "")
+		if err != nil {
+			return tuiActionResultMsg{dropletID: dropletID, err: err}
+		}
+		defer c.Close()
+		var execErr error
+		switch action {
+		case actionCancel:
+			execErr = c.Cancel(dropletID, "")
+		case actionEscalate:
+			execErr = c.Escalate(dropletID, "")
+		case actionRestart:
+			execErr = c.Assign(dropletID, "", input)
+		case actionAddNote:
+			execErr = c.AddNote(dropletID, "manual", input)
+		case actionSetStep:
+			execErr = c.SetCataractae(dropletID, input)
+		}
+		return tuiActionResultMsg{dropletID: dropletID, err: execErr}
+	}
+}
+
+// handleOverlayKey routes a key event to the active overlay (confirm or text-entry).
+// It is only called when overlayMode != overlayNone.
+func (m tabAppModel) handleOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	s := msg.String()
+	if s == "ctrl+c" {
+		return m, tea.Quit
+	}
+	switch m.overlayMode {
+	case overlayConfirm:
+		switch s {
+		case "y", "Y":
+			action, id := m.overlayAction, m.selectedID
+			m.overlayMode = overlayNone
+			m.overlayAction = ""
+			return m, m.execActionCmd(id, action, "")
+		default:
+			// Any other key (n, N, esc, q, …) dismisses without executing.
+			m.overlayMode = overlayNone
+			m.overlayAction = ""
+		}
+	case overlayText:
+		switch s {
+		case "esc":
+			m.overlayMode = overlayNone
+			m.overlayAction = ""
+			m.overlayInput = ""
+		case "enter":
+			if m.overlayInput == "" {
+				break // empty input is a no-op
+			}
+			action, id, input := m.overlayAction, m.selectedID, m.overlayInput
+			m.overlayMode = overlayNone
+			m.overlayAction = ""
+			m.overlayInput = ""
+			return m, m.execActionCmd(id, action, input)
+		case "backspace":
+			runes := []rune(m.overlayInput)
+			if len(runes) > 0 {
+				m.overlayInput = string(runes[:len(runes)-1])
+			}
+		default:
+			if msg.Type == tea.KeyRunes {
+				m.overlayInput += s
+			}
+		}
+	}
+	return m, nil
 }
 
 // visibleItems returns the list shown in the Droplets tab (all CisternItems).
@@ -282,7 +389,25 @@ func (m tabAppModel) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tuiTickMsg:
 		return m, m.fetchDataCmd()
 
+	case tuiActionResultMsg:
+		// Discard results for a droplet that is no longer selected.
+		if msg.dropletID != m.selectedID {
+			break
+		}
+		if msg.err != nil {
+			m.overlayErr = msg.err.Error()
+		} else {
+			m.overlayErr = ""
+		}
+		return m, tea.Batch(m.fetchDataCmd(), m.fetchDetailCmd(m.selectedID))
+
 	case tea.KeyMsg:
+		// When an overlay is active, route all key events to the overlay handler.
+		if m.overlayMode != overlayNone {
+			return m.handleOverlayKey(msg)
+		}
+		// Clear any prior action error on the next keypress.
+		m.overlayErr = ""
 		viewH := m.height - 1
 		if viewH < 1 {
 			viewH = 1
@@ -310,6 +435,34 @@ func (m tabAppModel) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.detailScrollY += m.height / 2
 		case "pgup", "ctrl+u":
 			m.detailScrollY -= m.height / 2
+		case "r":
+			if m.detailDroplet != nil {
+				m.overlayMode = overlayText
+				m.overlayAction = actionRestart
+				m.overlayInput = ""
+			}
+		case "x":
+			if m.detailDroplet != nil {
+				m.overlayMode = overlayConfirm
+				m.overlayAction = actionCancel
+			}
+		case "e":
+			if m.detailDroplet != nil {
+				m.overlayMode = overlayConfirm
+				m.overlayAction = actionEscalate
+			}
+		case "n":
+			if m.detailDroplet != nil {
+				m.overlayMode = overlayText
+				m.overlayAction = actionAddNote
+				m.overlayInput = ""
+			}
+		case "s":
+			if m.detailDroplet != nil {
+				m.overlayMode = overlayText
+				m.overlayAction = actionSetStep
+				m.overlayInput = ""
+			}
 		}
 		// Clamp to valid range after every scroll operation.
 		if m.detailScrollY < 0 {
@@ -432,7 +585,41 @@ func (m tabAppModel) viewDetail() string {
 		h = 24
 	}
 	sep := strings.Repeat("─", w)
-	footer := tuiStyleFooter.Render("  esc back  ↑↓/jk scroll  g/G top/bottom")
+
+	// Build footer — replaced by overlay prompt when an action is in progress.
+	var footer string
+	switch m.overlayMode {
+	case overlayConfirm:
+		var prompt string
+		switch m.overlayAction {
+		case actionCancel:
+			prompt = "cancel this droplet?"
+		case actionEscalate:
+			prompt = "escalate this droplet?"
+		default:
+			prompt = m.overlayAction + "?"
+		}
+		footer = tuiStyleYellow.Render("  " + prompt + "  (y/n)")
+	case overlayText:
+		var prompt string
+		switch m.overlayAction {
+		case actionRestart:
+			prompt = "restart at cataractae"
+		case actionAddNote:
+			prompt = "note"
+		case actionSetStep:
+			prompt = "set step"
+		default:
+			prompt = m.overlayAction
+		}
+		footer = tuiStyleYellow.Render(fmt.Sprintf("  %s: %s_  (esc cancel)", prompt, m.overlayInput))
+	default:
+		if m.overlayErr != "" {
+			footer = tuiStyleRed.Render("  error: " + m.overlayErr)
+		} else {
+			footer = tuiStyleFooter.Render("  esc back  jk scroll  g/G top  r restart  x cancel  e escalate  n note  s step")
+		}
+	}
 
 	if m.detailDroplet == nil {
 		return "  Loading…\n\n" + footer
