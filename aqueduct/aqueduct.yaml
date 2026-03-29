@@ -20,6 +20,7 @@ cataractae:
       - name: cistern-github
     timeout_minutes: 30
     on_pass: simplify
+    on_recirculate: review
     on_fail: blocked
     on_escalate: human
 
