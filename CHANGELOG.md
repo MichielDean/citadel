@@ -2,7 +2,24 @@
 
 ## Unreleased
 
-<<<<<<< HEAD
+### Delivery: recirculate on repeated CI check failures with 2-attempt fix loop (ci-n1i8z)
+
+The delivery cataractae now implements a per-check attempt counter for CI failures. After 2 failed attempts on the same check, failures are classified and routed accordingly: code-level failures recirculate with structured diagnostics, while infrastructure failures block (stagnant). This prevents infinite retry loops on stagnant failures while enabling the delivery agent to fix transient code issues.
+
+**Key changes:**
+- **Per-check attempt counter**: maintains an associative array `FIX_ATTEMPTS` keyed by check name, incremented for each fix attempt including `gh run rerun`
+- **2-attempt threshold**: after a check fails twice, classify the failure type before deciding next action
+- **Rerun counts as attempt**: `gh run rerun` explicitly counts as an attempt — flaky-test strategies that retry via rerun consume one of the two attempts
+- **Code-level failures recirculate**: test errors, assertions, schema mismatches, compile errors — anything fixable in code → `ct droplet recirculate` with structured 5-field diagnostic note
+- **Infrastructure failures block**: port conflicts, connection refused, container startup, service unavailable — environment/infrastructure errors → `ct droplet block` (stagnant status)
+- **Structured diagnostic format**: recirculate notes include (1) check name, (2) error snippet (≤10 lines from CI logs), (3) attempt 1 details, (4) attempt 2 details, (5) recommended fix for implementer
+- **Failure classification boundary**: clear examples distinguish code-level vs infrastructure patterns — delivers actionable guidance
+
+**Before:** delivery agent would retry CI failures indefinitely, leading to stagnant droplets consuming worker resources.
+**After:** after 2 failed fix attempts, the agent either recirculates for human review (code issues) or blocks as stagnant (infrastructure issues), freeing the worker slot for other work.
+
+**Acceptance criteria all met**: counter logic, 2-attempt threshold, rerun-as-attempt enforcement, failure classification with examples, and structured diagnostic format all documented and verified.
+
 ### Remove require_human gate for critical complexity (ci-mguos)
 
 Critical complexity droplets no longer pause for human approval before delivery. All droplets now flow through the complete pipeline (implement → simplify → review → qa → security-review → docs → delivery) and auto-merge identically, regardless of complexity level.
