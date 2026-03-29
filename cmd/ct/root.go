@@ -35,4 +35,3 @@ func resolveDBPath() string {
 	os.MkdirAll(dir, 0o755)
 	return filepath.Join(dir, "cistern.db")
 }
-

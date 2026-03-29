@@ -1272,7 +1272,6 @@ func TestSpawn_TmuxServerDead_RecoverySucceeds(t *testing.T) {
 	}
 	execTmuxKillServer = func() { killCalled = true }
 
-
 	workDir := t.TempDir()
 	s := &Session{ID: "tmux-recovery-ok", WorkDir: workDir}
 
@@ -1515,14 +1514,13 @@ func TestSpawn_TmuxServerDead_ConcurrentRecoveryIsSerializedByMutex(t *testing.T
 		execTmuxKillServer = origKill
 	})
 
-
 	// Both spawns always fail with a dead-server error so both enter the recovery
 	// block. The test is about serialization, not recovery success.
 	execTmuxNewSession = func(_ []string) ([]byte, error) {
 		return []byte("no server running on /tmp/tmux-1000/default"), fmt.Errorf("exit status 1")
 	}
 
-	var concurrent int64  // current number of goroutines inside execTmuxKillServer
+	var concurrent int64   // current number of goroutines inside execTmuxKillServer
 	var raceDetected int64 // set non-zero if concurrent > 1 is ever observed
 	execTmuxKillServer = func() {
 		n := atomic.AddInt64(&concurrent, 1)
@@ -1570,7 +1568,6 @@ func TestSpawn_TmuxServerDead_DoubleCheckPreventsKillingRecoveredServer(t *testi
 		execTmuxNewSession = origSpawn
 		execTmuxKillServer = origKill
 	})
-
 
 	// The server is "dead" until execTmuxKillServer is called; after that it is
 	// "alive". This models: goroutine A's kill restarts the server, so goroutine

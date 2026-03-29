@@ -252,7 +252,6 @@ func TestDropletPass_NoIssues(t *testing.T) {
 	}
 }
 
-
 func TestDropletIssueList_NoIssues(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "test.db")
 	t.Setenv("CT_DB", db)
