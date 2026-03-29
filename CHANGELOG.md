@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### git_sync: reset _primary working tree to origin/main after fetch (ci-vetm2)
+
+The `git_sync` drought hook now resets the `_primary` clone's working tree to `origin/main` after a successful fetch. This ensures new worktrees spawned from `_primary` always reflect the latest upstream state.
+
+**Key changes:**
+- **Primary clone reset**: After `git fetch origin` succeeds in `_primary`, runs `git reset --hard origin/main` to match the working tree to upstream
+- **Agent worktrees preserved**: Non-`_primary` worktrees (named by droplet ID) are never reset — they retain in-progress feature branch work
+- **New worktree freshness**: Droplet worktrees spawned after git_sync get current CLAUDE.md, INSTRUCTIONS.md, and all tracked files from origin/main
+- **Failure handling**: If reset fails, logs a warning and continues (fail-open) — fetch succeeded, reset is advisory
+
+**Before:** The `_primary` clone's working tree could accumulate stale files after fetch, leaving new worktrees with outdated content if their parent worktree hadn't been fully updated.
+
+**After:** Every new worktree inherits a clean `_primary` working tree reflecting the latest repository state.
+
+**Acceptance criteria met**: (1) After drought runs, `_primary` working tree matches `origin/main`; (2) active agent worktrees (droplet ID directories) are never reset; (3) new worktrees have current files from `origin/main`; (4) git_sync continues on reset failure.
+
 ### Dashboard: add stagnant droplets section to TUI (ci-lru8d)
 
 The flow dashboard (`ct dashboard`) now displays a dedicated **Stagnant** section showing all escalated droplets that require intervention.

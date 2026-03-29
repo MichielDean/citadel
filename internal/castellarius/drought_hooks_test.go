@@ -1248,3 +1248,92 @@ func TestRunDroughtHooks_NilCallbacks_DoesNotPanic(t *testing.T) {
 		Config: emptyConfig(),
 	})
 }
+
+// --- _primary working-tree reset tests ---
+
+func TestHookGitSync_WorkingTreeReset(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	const (
+		repoName        = "myrepo"
+		trackedFile     = "README.md"
+		originalContent = "original content\n"
+	)
+
+	tests := []struct {
+		name      string
+		cloneName string // directory name of the clone under the sandbox
+		dirty     string // content to write before sync
+		want      string // expected content after sync
+	}{
+		{
+			name:      "primary clone is reset to origin/main",
+			cloneName: "_primary",
+			dirty:     "modified content\n",
+			want:      originalContent,
+		},
+		{
+			name:      "agent worktree is not reset",
+			cloneName: "ci-abc123",
+			dirty:     "agent work in progress\n",
+			want:      "agent work in progress\n",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			setHomeForTest(t, tmpDir)
+
+			// Create remote repo with a tracked file.
+			remoteDir := filepath.Join(tmpDir, "remote")
+			if err := os.MkdirAll(remoteDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			mustGit(t, remoteDir, "init")
+			mustGit(t, remoteDir, "config", "user.email", "test@test.com")
+			mustGit(t, remoteDir, "config", "user.name", "Test")
+			if err := os.WriteFile(filepath.Join(remoteDir, trackedFile), []byte(originalContent), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			mustGit(t, remoteDir, "add", "-A")
+			mustGit(t, remoteDir, "commit", "-m", "initial")
+			exec.Command("git", "-C", remoteDir, "branch", "-M", "main").Run() //nolint:errcheck
+
+			// Clone into the sandbox under tc.cloneName.
+			sandboxRoot := filepath.Join(tmpDir, "sandboxes")
+			cloneDir := filepath.Join(sandboxRoot, repoName, tc.cloneName)
+			if err := os.MkdirAll(filepath.Dir(cloneDir), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			mustGit(t, "", "clone", remoteDir, cloneDir)
+			mustGit(t, cloneDir, "config", "user.email", "test@test.com")
+			mustGit(t, cloneDir, "config", "user.name", "Test")
+
+			// Dirty the working tree.
+			if err := os.WriteFile(filepath.Join(cloneDir, trackedFile), []byte(tc.dirty), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			cfg := &aqueduct.AqueductConfig{
+				Repos: []aqueduct.RepoConfig{
+					{Name: repoName, WorkflowPath: "aqueduct/workflow.yaml", Cataractae: 1, Prefix: "t"},
+				},
+			}
+
+			if _, err := hookGitSync(cfg, sandboxRoot, discardLogger()); err != nil {
+				t.Fatalf("hookGitSync: %v", err)
+			}
+
+			data, err := os.ReadFile(filepath.Join(cloneDir, trackedFile))
+			if err != nil {
+				t.Fatalf("read file after sync: %v", err)
+			}
+			if string(data) != tc.want {
+				t.Errorf("file content after sync = %q, want %q", string(data), tc.want)
+			}
+		})
+	}
+}

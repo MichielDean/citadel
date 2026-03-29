@@ -323,7 +323,7 @@ drought_hooks:
 
 | Action | What it does |
 |---|---|
-| `git_sync` | Fetches `origin/main` (with 30s timeout) and deploys `aqueduct.yaml`, `cataractae/<role>/PERSONA.md`, `cataractae/<role>/INSTRUCTIONS.md`, and `skills/` to `~/.cistern/`. Skips files that are already up to date. **Must be the first drought hook** so roles and skills are available to subsequent hooks. |
+| `git_sync` | Fetches `origin/main` (with 30s timeout) and deploys `aqueduct.yaml`, `cataractae/<role>/PERSONA.md`, `cataractae/<role>/INSTRUCTIONS.md`, and `skills/` to `~/.cistern/`. Resets the `_primary` clone's working tree to `origin/main` so new worktrees always inherit current files. Safe for agent worktrees (droplet ID directories) — they are never reset and retain in-progress work. Skips files that are already up to date. **Must be the first drought hook** so roles and skills are available to subsequent hooks. |
 | `cataractae_generate` | Regenerates the provider-specific instructions file (`CLAUDE.md`, `AGENTS.md`, or `GEMINI.md`) for each cataractae from its `PERSONA.md` + `INSTRUCTIONS.md`. Run after `git_sync` to pick up new source files. |
 | `worktree_prune` | Runs `git worktree prune` on the repo's primary clone to remove stale worktree registrations. |
 | `db_vacuum` | Flushes the SQLite WAL file back into the main database using `PRAGMA wal_checkpoint(TRUNCATE)`. This reclaims space without requiring an exclusive lock, making it safe to run while agents are active. |

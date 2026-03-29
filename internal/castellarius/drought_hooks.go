@@ -192,8 +192,9 @@ func mtimeAdvanced(path string, baseline time.Time) bool {
 // hookGitSync fetches the latest workflow YAML and skills from origin/main for
 // each repo and deploys them locally. Workflow changes are tracked for restart
 // purposes; skills sync is independent and never triggers a restart.
-// Uses `git fetch` + `git show origin/main:<path>` — safe to run while agents are
-// on feature branches because it never touches the working tree.
+// Uses `git fetch` + `git show origin/main:<path>`. Safe for active agent worktrees
+// (those not named `_primary`) because it never resets them. The `_primary` clone is
+// additionally reset to `origin/main` so new worktrees always branch from a clean base.
 // Must run before cataractae_generate so roles are rebuilt from the freshest YAML.
 func hookGitSync(cfg *aqueduct.AqueductConfig, sandboxRoot string, logger *slog.Logger) (changed bool, err error) {
 	home, hErr := os.UserHomeDir()
@@ -240,6 +241,20 @@ func hookGitSync(cfg *aqueduct.AqueductConfig, sandboxRoot string, logger *slog.
 		if fetchErr != nil {
 			logger.Warn("git_sync: fetch failed", "repo", repo.Name, "error", fetchErr, "output", string(fetchOut))
 			continue
+		}
+
+		// Reset _primary to origin/main after a successful fetch so it always
+		// reflects upstream exactly. New worktrees are spawned from _primary, so
+		// this ensures they get the latest CLAUDE.md and repo files. Agent
+		// worktrees (non-_primary names) are never reset — they carry
+		// in-progress work on feature branches.
+		if filepath.Base(cloneDir) == "_primary" {
+			resetOut, resetErr := exec.Command("git", "-C", cloneDir, "reset", "--hard", "origin/main").CombinedOutput()
+			if resetErr != nil {
+				logger.Warn("git_sync: failed to reset _primary to origin/main", "repo", repo.Name, "error", resetErr, "output", string(resetOut))
+			} else {
+				logger.Info("git_sync: _primary reset to origin/main", "repo", repo.Name)
+			}
 		}
 
 		// Repo-relative workflow path: aqueduct/<filename>.
