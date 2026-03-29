@@ -948,6 +948,31 @@ func (s *Castellarius) observeRepo(_ context.Context, repo aqueduct.RepoConfig) 
 			s.logger.Error("observe: advance step failed", "droplet", item.ID, "next", next, "error", err)
 		}
 	}
+
+	// Secondary: release pool slots for droplets whose status was changed to
+	// 'cancelled' or 'stagnant' externally while in_progress (i.e., without
+	// going through the normal outcome path). This happens when
+	// `ct droplet cancel` is called on a running droplet.
+	for _, extStatus := range []string{"cancelled", "stagnant"} {
+		changed, err := client.List(repo.Name, extStatus)
+		if err != nil {
+			s.logger.Error("observe: list externally-changed failed",
+				"repo", repo.Name, "status", extStatus, "error", err)
+			continue
+		}
+		for _, item := range changed {
+			if item.Assignee == "" {
+				continue
+			}
+			w := pool.FindByName(item.Assignee)
+			if w == nil || w.Status != AqueductFlowing || w.DropletID != item.ID {
+				continue
+			}
+			pool.Release(w)
+			s.logger.Info("aqueduct freed: droplet changed externally",
+				"aqueduct", item.Assignee, "droplet", item.ID, "status", extStatus)
+		}
+	}
 }
 
 // dispatchRepo assigns open items to idle workers and spawns their steps.

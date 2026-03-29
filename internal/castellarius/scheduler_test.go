@@ -1555,6 +1555,97 @@ func TestObserve_FirstPass(t *testing.T) {
 	}
 }
 
+// TestObserve_CancelledExternally_FreesPoolSlot verifies that when a droplet is
+// cancelled externally while in_progress (without signaling an outcome), the observe
+// phase detects the status change and releases the aqueduct pool slot.
+func TestObserve_CancelledExternally_FreesPoolSlot(t *testing.T) {
+	client := newMockClient()
+	item := &cistern.Droplet{
+		ID:                "ext-cancel-1",
+		Repo:              "test-repo",
+		CurrentCataractae: "implement",
+		Assignee:          "alpha",
+		Status:            "in_progress",
+	}
+	client.items[item.ID] = item
+
+	runner := newMockRunner(nil) // no auto-outcomes; agent is still "running"
+	sched := testScheduler(client, runner)
+
+	// Claim the pool slot to reflect the in-progress dispatch state.
+	pool := sched.pools["test-repo"]
+	w := pool.FindByName("alpha")
+	pool.Assign(w, item.ID, "implement")
+
+	// Simulate external cancellation: status changes to "cancelled" without an outcome.
+	client.mu.Lock()
+	client.items[item.ID].Status = "cancelled"
+	client.mu.Unlock()
+
+	sched.Tick(context.Background())
+
+	if pool.IsFlowing("alpha") {
+		t.Error("expected alpha aqueduct to be idle after external cancel, got flowing")
+	}
+}
+
+// TestObserve_StagnantExternally_FreesPoolSlot verifies that when a droplet is
+// set to stagnant externally while in_progress, the observe phase releases the pool slot.
+func TestObserve_StagnantExternally_FreesPoolSlot(t *testing.T) {
+	client := newMockClient()
+	item := &cistern.Droplet{
+		ID:                "ext-stagnant-1",
+		Repo:              "test-repo",
+		CurrentCataractae: "implement",
+		Assignee:          "alpha",
+		Status:            "in_progress",
+	}
+	client.items[item.ID] = item
+
+	runner := newMockRunner(nil)
+	sched := testScheduler(client, runner)
+
+	pool := sched.pools["test-repo"]
+	w := pool.FindByName("alpha")
+	pool.Assign(w, item.ID, "implement")
+
+	// Simulate external stagnation: status changes to "stagnant" without an outcome.
+	client.mu.Lock()
+	client.items[item.ID].Status = "stagnant"
+	client.mu.Unlock()
+
+	sched.Tick(context.Background())
+
+	if pool.IsFlowing("alpha") {
+		t.Error("expected alpha aqueduct to be idle after external stagnant, got flowing")
+	}
+}
+
+// TestObserve_ExternalCancel_NormalFlowUnaffected verifies that the external-cancel
+// secondary check does not interfere with normal outcome-driven pool release.
+func TestObserve_ExternalCancel_NormalFlowUnaffected(t *testing.T) {
+	client := newMockClient()
+	client.readyItems = []*cistern.Droplet{{ID: "normal-1", Title: "normal flow"}}
+
+	runner := newMockRunner(client) // default outcome is "pass"
+	sched := testScheduler(client, runner)
+
+	// Dispatch tick.
+	sched.Tick(context.Background())
+	if !runner.waitCalls(1, time.Second) {
+		t.Fatal("timed out waiting for spawn")
+	}
+	// Observe tick: routes "pass" → "review".
+	sched.Tick(context.Background())
+	time.Sleep(10 * time.Millisecond)
+
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if client.steps["normal-1"] != "review" {
+		t.Errorf("normal pass routing broken: expected 'review', got %q", client.steps["normal-1"])
+	}
+}
+
 // TestDispatch_DirtyWorktree verifies that when a worktree has uncommitted files
 // from a prior session, prepareDropletWorktree hard-resets them away (commit #86
 // behaviour) and the agent spawns normally into a clean state.
