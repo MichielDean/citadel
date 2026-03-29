@@ -36,6 +36,13 @@ Complexity guide:
   full     (2) — multi-part feature or moderate complexity
   critical (3) — breaking change, major refactor, multi-system coordination
 
+When file tools are available, explore the repository before writing proposals:
+  - Use Glob to discover the project layout and find relevant files
+  - Use Grep to find existing similar commands, data models, or patterns
+  - Use Read to read INSTRUCTIONS.md files and understand cataractae conventions
+  Grounding proposals in the actual codebase avoids duplicating existing work and
+  ensures descriptions reference real schema names, flags, and conventions.
+
 Your task: Given a rough idea (title and optional description), reason carefully about:
   - Scope and acceptance criteria
   - Whether the idea is too large and should be split into multiple focused droplets

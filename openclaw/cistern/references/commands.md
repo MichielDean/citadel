@@ -182,7 +182,11 @@ The health file is written atomically to `~/.cistern/castellarius.health` after 
 ct cataractae list               # All stages across all aqueducts
 ct cataractae list --aqueduct <name>
 ct cataractae generate           # Generate any missing stage configs
+ct cataractae render --step <name> [--droplet <id>]  # Preview rendered template for authoring
 ```
+
+**`ct cataractae render`** previews the rendered CLAUDE.md template for a given step, substituting all template variables (step metadata, droplet info, etc.). Useful for authoring and debugging pipeline stage configurations.
+Without `--droplet`, uses placeholder values so you can inspect the template structure without a real droplet.
 
 ## Aqueducts
 

@@ -43,6 +43,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -77,6 +78,10 @@ func main() {
 	}
 
 	if hasPrint {
+		// Capture all args for tests that need to inspect which flags were passed.
+		if argsFile := os.Getenv("FAKEAGENT_ARGS_FILE"); argsFile != "" {
+			_ = os.WriteFile(argsFile, []byte(strings.Join(os.Args[1:], "\n")), 0o644)
+		}
 		// Capture the prompt for tests that need to inspect what was sent.
 		if promptFile := os.Getenv("FAKEAGENT_PROMPT_FILE"); promptFile != "" {
 			args := os.Args[1:]
@@ -113,6 +118,7 @@ func main() {
 	flag.String("p", "", "")
 	flag.String("output-format", "", "")
 	flag.String("resume", "", "")
+	flag.String("allowedTools", "", "")
 	flag.Parse()
 
 	// Handle "claude auth status" command (no --print, args = ["auth", "status"]).

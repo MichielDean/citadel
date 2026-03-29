@@ -84,16 +84,17 @@ func TestBuiltins_OpencodePreset(t *testing.T) {
 // TestBuiltins_NonInteractiveConfig verifies the NonInteractive fields for each built-in preset.
 func TestBuiltins_NonInteractiveConfig(t *testing.T) {
 	tests := []struct {
-		name       string
-		subcommand string
-		printFlag  string
-		promptFlag string
+		name             string
+		subcommand       string
+		printFlag        string
+		promptFlag       string
+		allowedToolsFlag string
 	}{
-		{"claude", "", "--print", "-p"},
-		{"codex", "exec", "", "-p"},
-		{"gemini", "", "", "-p"},
-		{"copilot", "", "", "-p"},
-		{"opencode", "run", "", "-p"},
+		{"claude", "", "--print", "-p", "--allowedTools"},
+		{"codex", "exec", "", "-p", ""},
+		{"gemini", "", "", "-p", ""},
+		{"copilot", "", "", "-p", ""},
+		{"opencode", "run", "", "-p", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -101,6 +102,7 @@ func TestBuiltins_NonInteractiveConfig(t *testing.T) {
 			assertStr(t, "NonInteractive.Subcommand", tt.subcommand, p.NonInteractive.Subcommand)
 			assertStr(t, "NonInteractive.PrintFlag", tt.printFlag, p.NonInteractive.PrintFlag)
 			assertStr(t, "NonInteractive.PromptFlag", tt.promptFlag, p.NonInteractive.PromptFlag)
+			assertStr(t, "NonInteractive.AllowedToolsFlag", tt.allowedToolsFlag, p.NonInteractive.AllowedToolsFlag)
 		})
 	}
 }

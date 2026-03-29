@@ -109,12 +109,16 @@ Use --output-format json for scriptable output (session_id + proposals).`,
 		if filterTitle == "" {
 			return fmt.Errorf("--title is required (or use --resume to continue an existing session)")
 		}
-		var contextBlock string
-		if !filterSkipContext {
-			var repoPath string
+		// Compute the repo worktree path unconditionally so it can be passed to
+		// the agent via --add-dir regardless of whether static context is injected.
+		var repoPath string
+		if filterRepo != "" {
 			if home, err := os.UserHomeDir(); err == nil {
 				repoPath = filepath.Join(home, ".cistern", "sandboxes", filterRepo, "_primary")
 			}
+		}
+		var contextBlock string
+		if !filterSkipContext {
 			contextBlock = gatherFilterContext(filterContextConfig{
 				DBPath:   resolveDBPath(),
 				RepoPath: repoPath,
@@ -122,7 +126,7 @@ Use --output-format json for scriptable output (session_id + proposals).`,
 				Desc:     filterDescription,
 			})
 		}
-		result, err := invokeFilterNew(preset, filterTitle, filterDescription, contextBlock)
+		result, err := invokeFilterNew(preset, filterTitle, filterDescription, contextBlock, repoPath)
 		if err != nil {
 			return err
 		}
@@ -133,12 +137,14 @@ Use --output-format json for scriptable output (session_id + proposals).`,
 // invokeFilterNew starts a new filtration session and returns proposals with session_id.
 // contextBlock, when non-empty, is prepended before the system prompt so the LLM
 // sees codebase context first. Pass empty string to omit context injection.
-func invokeFilterNew(preset provider.ProviderPreset, title, description, contextBlock string) (filterSessionResult, error) {
+// repoPath, when non-empty and the preset defines AddDirFlag, is passed via
+// --add-dir so the agent can use read-only file tools to explore the repository.
+func invokeFilterNew(preset provider.ProviderPreset, title, description, contextBlock, repoPath string) (filterSessionResult, error) {
 	userPrompt := "Title: " + title
 	if description != "" {
 		userPrompt += "\nDescription: " + description
 	}
-	return callFilterAgent(preset, nil, buildFilterPrompt(contextBlock, userPrompt))
+	return callFilterAgent(preset, nil, buildFilterPrompt(contextBlock, userPrompt), repoPath)
 }
 
 // invokeFilterResume resumes an existing filtration session with the given message
@@ -149,27 +155,37 @@ func invokeFilterResume(preset provider.ProviderPreset, sessionID, message strin
 		resumeFlag = "--resume"
 	}
 	extraArgs := []string{resumeFlag, sessionID}
-	return callFilterAgent(preset, extraArgs, message)
+	return callFilterAgent(preset, extraArgs, message, "")
 }
 
 // callFilterAgent invokes the preset command with --print --output-format json,
 // optional extraArgs (e.g. --resume <id>), and the given prompt.
+// When repoPath is non-empty and the preset defines AddDirFlag, --add-dir repoPath
+// is appended so the agent can use file tools to explore the repository.
+// When the preset defines NonInteractive.AllowedToolsFlag, read-only file tools
+// (Glob, Grep, Read) are enabled so the agent can discover context on demand.
 // It returns parsed proposals and the session_id from the JSON envelope.
 // If the agent does not support --output-format json, it falls back to parsing
 // the raw output as proposals (session_id will be empty in that case).
-func callFilterAgent(preset provider.ProviderPreset, extraArgs []string, prompt string) (filterSessionResult, error) {
+func callFilterAgent(preset provider.ProviderPreset, extraArgs []string, prompt, repoPath string) (filterSessionResult, error) {
 	for _, key := range preset.EnvPassthrough {
 		if os.Getenv(key) == "" {
 			return filterSessionResult{}, fmt.Errorf("%s is not set", key)
 		}
 	}
 
-	// Build args: [Subcommand] [preset.Args...] [extraArgs...] [PrintFlag] [--output-format json] [PromptFlag prompt]
+	// Build args: [Subcommand] [preset.Args...] [--add-dir repoPath] [--allowedTools ...] [extraArgs...] [PrintFlag] [--output-format json] [PromptFlag prompt]
 	var args []string
 	if preset.NonInteractive.Subcommand != "" {
 		args = append(args, preset.NonInteractive.Subcommand)
 	}
 	args = append(args, preset.Args...)
+	if repoPath != "" && preset.AddDirFlag != "" {
+		args = append(args, preset.AddDirFlag, repoPath)
+	}
+	if preset.NonInteractive.AllowedToolsFlag != "" {
+		args = append(args, preset.NonInteractive.AllowedToolsFlag, "Glob,Grep,Read")
+	}
 	args = append(args, extraArgs...)
 	if preset.NonInteractive.PrintFlag != "" {
 		args = append(args, preset.NonInteractive.PrintFlag)

@@ -22,6 +22,11 @@ type NonInteractiveConfig struct {
 	PrintFlag string `json:"print_flag,omitempty"`
 	// PromptFlag is the flag used to pass the combined prompt (e.g. "-p").
 	PromptFlag string `json:"prompt_flag,omitempty"`
+	// AllowedToolsFlag is the CLI flag used to restrict which tools the agent
+	// may call during a non-interactive session (e.g. "--allowedTools" for claude).
+	// When non-empty, Cistern appends this flag with "Glob,Grep,Read" so the
+	// agent can explore the repository read-only but cannot modify files.
+	AllowedToolsFlag string `json:"allowed_tools_flag,omitempty"`
 }
 
 // ResumeStyle controls how a resumed session is expressed on the CLI.
@@ -106,7 +111,7 @@ var builtins = []ProviderPreset{
 		ResumeFlag:       "--resume",
 		InstructionsFile: "CLAUDE.md",
 		SupportsAddDir:   true,
-		NonInteractive:   NonInteractiveConfig{PrintFlag: "--print", PromptFlag: "-p"},
+		NonInteractive:   NonInteractiveConfig{PrintFlag: "--print", PromptFlag: "-p", AllowedToolsFlag: "--allowedTools"},
 	},
 	{
 		Name:             "codex",

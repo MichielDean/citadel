@@ -139,7 +139,7 @@ func TestCallFilterAgent_ReturnsProposalsAndSessionID(t *testing.T) {
 		},
 	}
 
-	result, err := callFilterAgent(preset, nil, "Title: fix auth bug")
+	result, err := callFilterAgent(preset, nil, "Title: fix auth bug", "")
 	if err != nil {
 		t.Fatalf("callFilterAgent: unexpected error: %v", err)
 	}
@@ -174,7 +174,7 @@ func TestCallFilterAgent_Resume_PassesExtraArgs(t *testing.T) {
 		},
 	}
 
-	result, err := callFilterAgent(preset, []string{"--resume", "test-session-id"}, "refine further")
+	result, err := callFilterAgent(preset, []string{"--resume", "test-session-id"}, "refine further", "")
 	if err != nil {
 		t.Fatalf("callFilterAgent with --resume: unexpected error: %v", err)
 	}
@@ -203,7 +203,7 @@ func TestCallFilterAgent_AgentExecFailure(t *testing.T) {
 		},
 	}
 
-	_, err := callFilterAgent(preset, nil, "some prompt")
+	_, err := callFilterAgent(preset, nil, "some prompt", "")
 	if err == nil {
 		t.Fatal("expected error when agent exits non-zero, got nil")
 	}
@@ -229,7 +229,7 @@ func TestCallFilterAgent_JSONFallback_RawOutput(t *testing.T) {
 		},
 	}
 
-	result, err := callFilterAgent(preset, nil, "Title: fix auth bug")
+	result, err := callFilterAgent(preset, nil, "Title: fix auth bug", "")
 	if err != nil {
 		t.Fatalf("callFilterAgent fallback: unexpected error: %v", err)
 	}
@@ -262,7 +262,7 @@ func TestCallFilterAgent_IsErrorEnvelope_ReturnsError(t *testing.T) {
 		},
 	}
 
-	_, err := callFilterAgent(preset, nil, "Title: fix auth bug")
+	_, err := callFilterAgent(preset, nil, "Title: fix auth bug", "")
 	if err == nil {
 		t.Fatal("expected error when agent returns is_error envelope, got nil")
 	}
@@ -285,7 +285,7 @@ func TestCallFilterAgent_MissingRequiredEnvVar(t *testing.T) {
 	}
 	t.Setenv("MISSING_FILTER_KEY", "")
 
-	_, err := callFilterAgent(preset, nil, "prompt")
+	_, err := callFilterAgent(preset, nil, "prompt", "")
 	if err == nil {
 		t.Fatal("expected error for missing env var, got nil")
 	}
@@ -313,7 +313,7 @@ func TestInvokeFilterNew_ReturnsProposalsAndSessionID(t *testing.T) {
 		},
 	}
 
-	result, err := invokeFilterNew(preset, "Add user auth", "JWT-based auth with refresh tokens", "")
+	result, err := invokeFilterNew(preset, "Add user auth", "JWT-based auth with refresh tokens", "", "")
 	if err != nil {
 		t.Fatalf("invokeFilterNew: unexpected error: %v", err)
 	}
@@ -339,7 +339,7 @@ func TestInvokeFilterNew_TitleOnly(t *testing.T) {
 		},
 	}
 
-	result, err := invokeFilterNew(preset, "Add user auth", "", "")
+	result, err := invokeFilterNew(preset, "Add user auth", "", "", "")
 	if err != nil {
 		t.Fatalf("invokeFilterNew title-only: unexpected error: %v", err)
 	}
@@ -720,7 +720,7 @@ func TestInvokeFilterNew_WithContextBlock_IncludesContextInResult(t *testing.T) 
 	}
 
 	contextBlock := "=== CODEBASE CONTEXT ===\nsome schema here\n=== END CODEBASE CONTEXT ==="
-	result, err := invokeFilterNew(preset, "Add feature", "Some description", contextBlock)
+	result, err := invokeFilterNew(preset, "Add feature", "Some description", contextBlock, "")
 	if err != nil {
 		t.Fatalf("invokeFilterNew with contextBlock: unexpected error: %v", err)
 	}
@@ -729,5 +729,183 @@ func TestInvokeFilterNew_WithContextBlock_IncludesContextInResult(t *testing.T) 
 	}
 	if len(result.Proposals) == 0 {
 		t.Fatal("expected at least one proposal")
+	}
+}
+
+// TestCallFilterAgent_WithAllowedTools_PassesToolFlag verifies that when the
+// preset's NonInteractive.AllowedToolsFlag is set, callFilterAgent appends
+// the flag with "Glob,Grep,Read" to the agent command args.
+// Given a preset with AllowedToolsFlag: "--allowedTools" pointing at fakeagent,
+// When callFilterAgent is called,
+// Then fakeagent receives --allowedTools and Glob,Grep,Read in its args.
+func TestCallFilterAgent_WithAllowedTools_PassesToolFlag(t *testing.T) {
+	fakeagentBin := buildTestBin(t, "fakeagent", "github.com/MichielDean/cistern/internal/testutil/fakeagent")
+	dir := t.TempDir()
+	argsFile := filepath.Join(dir, "args.txt")
+	t.Setenv("FAKEAGENT_ARGS_FILE", argsFile)
+
+	preset := provider.ProviderPreset{
+		Name:    "test",
+		Command: fakeagentBin,
+		NonInteractive: provider.NonInteractiveConfig{
+			PrintFlag:        "--print",
+			PromptFlag:       "-p",
+			AllowedToolsFlag: "--allowedTools",
+		},
+	}
+
+	_, err := callFilterAgent(preset, nil, "Title: fix auth bug", "")
+	if err != nil {
+		t.Fatalf("callFilterAgent: unexpected error: %v", err)
+	}
+
+	captured, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("reading args file: %v", err)
+	}
+	args := string(captured)
+	if !strings.Contains(args, "--allowedTools") {
+		t.Errorf("expected --allowedTools in agent args, got:\n%s", args)
+	}
+	if !strings.Contains(args, "Glob,Grep,Read") {
+		t.Errorf("expected Glob,Grep,Read in agent args, got:\n%s", args)
+	}
+}
+
+// TestCallFilterAgent_WithAddDir_PassesDirFlag verifies that when repoPath is
+// non-empty and the preset defines AddDirFlag, --add-dir <repoPath> is passed
+// to the agent.
+// Given a preset with AddDirFlag: "--add-dir" and a non-empty repoPath,
+// When callFilterAgent is called,
+// Then fakeagent receives --add-dir <repoPath> in its args.
+func TestCallFilterAgent_WithAddDir_PassesDirFlag(t *testing.T) {
+	fakeagentBin := buildTestBin(t, "fakeagent", "github.com/MichielDean/cistern/internal/testutil/fakeagent")
+	dir := t.TempDir()
+	argsFile := filepath.Join(dir, "args.txt")
+	t.Setenv("FAKEAGENT_ARGS_FILE", argsFile)
+
+	preset := provider.ProviderPreset{
+		Name:       "test",
+		Command:    fakeagentBin,
+		AddDirFlag: "--add-dir",
+		NonInteractive: provider.NonInteractiveConfig{
+			PrintFlag:  "--print",
+			PromptFlag: "-p",
+		},
+	}
+
+	repoPath := t.TempDir()
+	_, err := callFilterAgent(preset, nil, "Title: fix auth bug", repoPath)
+	if err != nil {
+		t.Fatalf("callFilterAgent with repoPath: unexpected error: %v", err)
+	}
+
+	captured, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("reading args file: %v", err)
+	}
+	args := string(captured)
+	if !strings.Contains(args, "--add-dir") {
+		t.Errorf("expected --add-dir in agent args, got:\n%s", args)
+	}
+	if !strings.Contains(args, repoPath) {
+		t.Errorf("expected repoPath %q in agent args, got:\n%s", repoPath, args)
+	}
+}
+
+// TestFilterCmd_WithRepo_ForwardsAddDirToAgent verifies the end-to-end path:
+// filterCmd.RunE → filterRepo != "" → repoPath computed → invokeFilterNew →
+// callFilterAgent → --add-dir <repoPath> forwarded to the agent subprocess.
+// Given a config with fakeagent as the preset command and testRepo in repos,
+// When ct filter --title "..." --repo testRepo is called with FAKEAGENT_ARGS_FILE set,
+// Then the captured subprocess args must contain --add-dir and the expected path.
+func TestFilterCmd_WithRepo_ForwardsAddDirToAgent(t *testing.T) {
+	fakeagentBin := buildTestBin(t, "fakeagent", "github.com/MichielDean/cistern/internal/testutil/fakeagent")
+	dir := t.TempDir()
+
+	// Config that overrides the claude preset command to point at fakeagent
+	// and registers testRepo so resolveCanonicalRepo succeeds.
+	cfgPath := filepath.Join(dir, "cistern.yaml")
+	cfgContent := fmt.Sprintf("provider:\n  command: %s\nrepos:\n  - name: testRepo\n    cataractae: 1\n", fakeagentBin)
+	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0o644); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+
+	argsFile := filepath.Join(dir, "args.txt")
+	t.Setenv("CT_CONFIG", cfgPath)
+	t.Setenv("CT_DB", filepath.Join(dir, "test.db"))
+	t.Setenv("CT_NO_ASCII_LOGO", "1")
+	t.Setenv("FAKEAGENT_ARGS_FILE", argsFile)
+	// Reset globals that may be polluted by prior tests.
+	filterTitle = ""
+	filterResume = ""
+	filterFile = false
+	filterRepo = ""
+	filterSkipContext = false
+	t.Cleanup(func() {
+		filterTitle = ""
+		filterResume = ""
+		filterFile = false
+		filterRepo = ""
+		filterSkipContext = false
+	})
+
+	if err := execCmd(t, "filter", "--title", "test idea", "--repo", "testRepo", "--skip-context"); err != nil {
+		t.Fatalf("filter --repo testRepo: unexpected error: %v", err)
+	}
+
+	captured, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("reading args file: %v", err)
+	}
+	args := string(captured)
+
+	if !strings.Contains(args, "--add-dir") {
+		t.Errorf("expected --add-dir in agent args, got:\n%s", args)
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("UserHomeDir: %v", err)
+	}
+	expectedPath := filepath.Join(home, ".cistern", "sandboxes", "testRepo", "_primary")
+	if !strings.Contains(args, expectedPath) {
+		t.Errorf("expected path %q in agent args, got:\n%s", expectedPath, args)
+	}
+}
+
+// TestCallFilterAgent_WithEmptyRepoPath_SkipsAddDirFlag verifies that when
+// repoPath is empty, --add-dir is NOT passed even if AddDirFlag is set.
+// Given a preset with AddDirFlag and an empty repoPath,
+// When callFilterAgent is called with repoPath="",
+// Then fakeagent does not receive --add-dir in its args.
+func TestCallFilterAgent_WithEmptyRepoPath_SkipsAddDirFlag(t *testing.T) {
+	fakeagentBin := buildTestBin(t, "fakeagent", "github.com/MichielDean/cistern/internal/testutil/fakeagent")
+	dir := t.TempDir()
+	argsFile := filepath.Join(dir, "args.txt")
+	t.Setenv("FAKEAGENT_ARGS_FILE", argsFile)
+
+	preset := provider.ProviderPreset{
+		Name:       "test",
+		Command:    fakeagentBin,
+		AddDirFlag: "--add-dir",
+		NonInteractive: provider.NonInteractiveConfig{
+			PrintFlag:  "--print",
+			PromptFlag: "-p",
+		},
+	}
+
+	_, err := callFilterAgent(preset, nil, "Title: fix auth bug", "")
+	if err != nil {
+		t.Fatalf("callFilterAgent with empty repoPath: unexpected error: %v", err)
+	}
+
+	captured, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("reading args file: %v", err)
+	}
+	args := string(captured)
+	if strings.Contains(args, "--add-dir") {
+		t.Errorf("expected no --add-dir when repoPath is empty, got:\n%s", args)
 	}
 }
