@@ -6,7 +6,6 @@ import (
 	"errors"
 	"os"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -142,15 +141,11 @@ func TestTryEnqueueArchitecti_OtherArchitectiNote_DoesEnqueue(t *testing.T) {
 	}
 }
 
-func TestTryEnqueueArchitecti_GetNotesFails_DoesNotEnqueue(t *testing.T) {
-	// Given: GetNotes returns an error
+func TestTryEnqueueArchitecti_AddNoteFails_DoesNotEnqueue(t *testing.T) {
+	// Given: AddNote returns an error — note write failure must abort before channel send
 	client := newMockClient()
 	droplet := stagnantDroplet("d-001", 5*time.Minute)
 	client.addNoteErr = errors.New("db error")
-	// Make List return the note-fetch error by overriding addNoteErr
-	// (GetNotes is separate from AddNote; simulate via a separate flag)
-	// We cannot inject a GetNotes error through mockClient directly — the
-	// test documents that AddNote failure prevents enqueue.
 
 	s := testScheduler(client, newMockRunner(client))
 
@@ -922,5 +917,3 @@ func TestRunArchitecti_RestartRateLimit_NotRecordedWhenAssignFails(t *testing.T)
 	}
 }
 
-// Ensure unused imports are satisfied (sync is used by existing test helpers).
-var _ sync.Mutex
