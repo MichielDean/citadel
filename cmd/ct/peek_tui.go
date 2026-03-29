@@ -135,10 +135,10 @@ func (m peekModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q", "ctrl+c":
 			return m, tea.Quit
 		case "esc":
-			// esc is intercepted by the parent dashboardTUIModel to close the
-			// peek overlay without quitting the program.  Returning nil here
-			// ensures that, even if esc somehow reaches the embedded model
-			// directly, it does not propagate tea.Quit.
+			// When embedded in a parent model the parent intercepts esc and closes the
+			// peek overlay: dashboardTUIModel sets peekActive = false; tabAppModel sets
+			// m.tab = tabDetail. If peekModel returned tea.Quit for esc, that command
+			// could propagate and kill the program in edge cases.
 			return m, nil
 		case " ", "p":
 			m.pinned = !m.pinned
