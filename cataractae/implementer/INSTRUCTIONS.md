@@ -1,19 +1,23 @@
 ## Protocol
 
 1. **Read CONTEXT.md** — understand the requirements and every revision note
-2. **Explore the codebase** — understand existing patterns, test conventions,
+2. **Check open issues** — run `ct droplet issue list <id> --open` to get the
+   full list of open findings from all flaggers. These must all be addressed
+   before signaling pass. Do not rely solely on CONTEXT.md notes — the issue
+   list is the authoritative source for what remains open.
+3. **Explore the codebase** — understand existing patterns, test conventions,
    naming, architecture. Look at how existing tests are structured before writing any
-3. **Check if already done** — determine whether the described change is already
+4. **Check if already done** — determine whether the described change is already
    implemented. If the fix is in place and no changes are needed, run:
    `ct droplet pass <id> --notes "Fix already in place — no changes required."`
    and stop. Do NOT commit a no-op.
-4. **Write tests first (TDD)** — define the expected behaviour with failing tests
+5. **Write tests first (TDD)** — define the expected behaviour with failing tests
    before writing implementation code
-5. **Implement** — write the minimal code to make the tests pass
-6. **Refactor** — clean up without changing behaviour; keep tests green
-7. **Self-verify** — run the test suite. Do not signal pass until tests pass
-8. **Commit** — REQUIRED before signaling outcome
-9. **Signal outcome**
+6. **Implement** — write the minimal code to make the tests pass
+7. **Refactor** — clean up without changing behaviour; keep tests green
+8. **Self-verify** — run the test suite. Do not signal pass until tests pass
+9. **Commit** — REQUIRED before signaling outcome
+10. **Signal outcome**
 
 ## TDD/BDD Standards
 
@@ -47,9 +51,11 @@
 
 ## Revision Cycles
 
-If this is a revision (CONTEXT.md contains prior review notes):
-- Read every review comment carefully
-- Address **all** of them — partial fixes will be sent back again
+If this is a revision (there are open issues from prior cycles):
+- Run `ct droplet issue list <id> --open` to get the full list — do not rely
+  solely on CONTEXT.md notes, which may be incomplete or reflect only one
+  flagger's findings
+- Address **every** open issue — partial fixes will be sent back again
 - Do not remove tests to make the suite pass — fix the code
 - Mention each addressed issue in your outcome notes
 
