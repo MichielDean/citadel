@@ -319,6 +319,13 @@ func TestRenderDashboard_ContainsExpectedSections(t *testing.T) {
 	if !strings.Contains(out, "queued") {
 		t.Error("output missing queued count")
 	}
+	// Stagnant section always present.
+	if !strings.Contains(out, "STAGNANT") {
+		t.Error("output missing STAGNANT section")
+	}
+	if !strings.Contains(out, "Stagnant: 0") {
+		t.Error("output missing 'Stagnant: 0' for empty stagnant list")
+	}
 	// Recent flow section.
 	if !strings.Contains(out, "RECENT FLOW") {
 		t.Error("output missing RECENT FLOW section")
@@ -329,6 +336,42 @@ func TestRenderDashboard_ContainsExpectedSections(t *testing.T) {
 	}
 	if !strings.Contains(out, "q to quit") {
 		t.Error("output missing footer hint")
+	}
+}
+
+func TestRenderDashboard_StagnantSection_ShowsRowsWithIDAndElapsed(t *testing.T) {
+	steps := []string{"implement", "review"}
+	updatedAt := time.Now().Add(-3 * time.Hour)
+	data := &DashboardData{
+		Cataractae: []CataractaeInfo{
+			{Name: "virgo", Steps: steps},
+		},
+		StagnantItems: []*cistern.Droplet{
+			{ID: "ci-stg01", Title: "stagnant one", Status: "stagnant", UpdatedAt: updatedAt},
+			{ID: "ci-stg02", Title: "stagnant two", Status: "stagnant", UpdatedAt: updatedAt},
+		},
+		FetchedAt: time.Now(),
+	}
+
+	out := renderDashboard(data)
+
+	// STAGNANT header must be present.
+	if !strings.Contains(out, "STAGNANT") {
+		t.Error("output missing STAGNANT header")
+	}
+	// Each row must contain the droplet ID.
+	for _, item := range data.StagnantItems {
+		if !strings.Contains(out, item.ID) {
+			t.Errorf("output missing stagnant droplet ID %q", item.ID)
+		}
+	}
+	// elapsed for 3h = "180m 0s" via formatElapsed
+	if !strings.Contains(out, "180m") {
+		t.Error("output missing elapsed time (180m) for stagnant droplets")
+	}
+	// "Stagnant: 0" must NOT appear when there are rows.
+	if strings.Contains(out, "Stagnant: 0") {
+		t.Error("output should not show 'Stagnant: 0' when stagnant items are present")
 	}
 }
 

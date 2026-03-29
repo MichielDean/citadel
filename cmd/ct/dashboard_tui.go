@@ -409,7 +409,7 @@ func (m dashboardTUIModel) View() string {
 	parts = append(parts, m.viewRecentFlow()...)
 	parts = append(parts, sep)
 
-	// 5. Footer — always pinned at the bottom (not scrolled).
+	// 8. Footer — always pinned at the bottom (not scrolled).
 	footer := tuiStyleFooter.Render("  q quit  r refresh  ↑↓/jk scroll  g/G top/bottom  p peek")
 
 	// Apply scroll: render full content, slice visible window.
