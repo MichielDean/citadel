@@ -259,6 +259,47 @@ func TestCisternList_StagnantItems_NoFlowingMessage(t *testing.T) {
 	})
 }
 
+func TestCisternList_FlowingAndStagnant_ShowsCisternDry(t *testing.T) {
+	// When both in_progress (flowing) and stagnant droplets coexist, a filtered
+	// list returning no results must NOT say "No flowing droplets." — that would
+	// be false.  The fallback "Cistern dry." is correct because the filter found
+	// nothing, not because the cistern is truly empty.
+	dir := t.TempDir()
+	db := filepath.Join(dir, "test.db")
+	t.Setenv("CT_DB", db)
+
+	c, err := cistern.New(db, "ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Create one in_progress (flowing) droplet.
+	ip, _ := c.Add("repo", "In-progress work", "", 1, 3)
+	c.UpdateStatus(ip.ID, "in_progress")
+	// Create one stagnant droplet.
+	stuck, _ := c.Add("repo", "Stuck item", "", 1, 3)
+	c.Escalate(stuck.ID, "timed out")
+	c.Close()
+
+	// Filter by --status open: no open droplets exist, so results are empty.
+	// But stats.Flowing > 0, so "No flowing droplets." must NOT appear.
+	listOutput = "table"
+	listRepo = ""
+	listStatus = "open"
+	listAll = false
+	listCancelled = false
+	defer func() { listStatus = "" }()
+
+	out := captureStdout(t, func() {
+		if err := dropletListCmd.RunE(dropletListCmd, nil); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+	got := strings.TrimSpace(out)
+	if strings.Contains(got, "No flowing droplets") {
+		t.Fatalf("expected no 'No flowing droplets' message when flowing droplets exist, got: %q", got)
+	}
+}
+
 func TestParseComplexity(t *testing.T) {
 	tests := []struct {
 		input   string
@@ -996,8 +1037,13 @@ func TestDropletSearch(t *testing.T) {
 	})
 
 	t.Run("empty results with stagnant items shows No flowing droplets message", func(t *testing.T) {
-		// Add a stagnant item to the shared test DB.
-		cs, err := cistern.New(db, "ts")
+		// Use an isolated DB with only a stagnant item and no flowing droplets,
+		// so that stats.Flowing == 0 and the stagnant message is shown.
+		stagnantDir := t.TempDir()
+		stagnantDB := filepath.Join(stagnantDir, "stagnant.db")
+		t.Setenv("CT_DB", stagnantDB)
+
+		cs, err := cistern.New(stagnantDB, "ts")
 		if err != nil {
 			t.Fatal(err)
 		}
