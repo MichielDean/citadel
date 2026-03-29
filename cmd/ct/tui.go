@@ -18,9 +18,9 @@ const (
 
 // Overlay mode constants for action dispatch in the Detail panel.
 const (
-	overlayNone    = 0
-	overlayConfirm = 1
-	overlayText    = 2
+	overlayNone = iota
+	overlayConfirm
+	overlayText
 )
 
 // Action constants identify the pending Detail-panel action.
@@ -146,6 +146,14 @@ func (m tabAppModel) execActionCmd(dropletID, action, input string) tea.Cmd {
 	}
 }
 
+// closeOverlay resets all overlay state to inactive.
+func closeOverlay(m tabAppModel) tabAppModel {
+	m.overlayMode = overlayNone
+	m.overlayAction = ""
+	m.overlayInput = ""
+	return m
+}
+
 // handleOverlayKey routes a key event to the active overlay (confirm or text-entry).
 // It is only called when overlayMode != overlayNone.
 func (m tabAppModel) handleOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -158,28 +166,22 @@ func (m tabAppModel) handleOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch s {
 		case "y", "Y":
 			action, id := m.overlayAction, m.selectedID
-			m.overlayMode = overlayNone
-			m.overlayAction = ""
+			m = closeOverlay(m)
 			return m, m.execActionCmd(id, action, "")
 		default:
 			// Any other key (n, N, esc, q, …) dismisses without executing.
-			m.overlayMode = overlayNone
-			m.overlayAction = ""
+			m = closeOverlay(m)
 		}
 	case overlayText:
 		switch s {
 		case "esc":
-			m.overlayMode = overlayNone
-			m.overlayAction = ""
-			m.overlayInput = ""
+			m = closeOverlay(m)
 		case "enter":
 			if m.overlayInput == "" {
 				break // empty input is a no-op
 			}
 			action, id, input := m.overlayAction, m.selectedID, m.overlayInput
-			m.overlayMode = overlayNone
-			m.overlayAction = ""
-			m.overlayInput = ""
+			m = closeOverlay(m)
 			return m, m.execActionCmd(id, action, input)
 		case "backspace":
 			runes := []rune(m.overlayInput)
