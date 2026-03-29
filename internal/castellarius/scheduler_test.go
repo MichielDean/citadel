@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -1600,14 +1601,7 @@ func TestObserve_ExternallyChangedStatus_FreesPoolSlot(t *testing.T) {
 
 			// Verify that the agent session was killed before the pool slot was freed.
 			wantSession := "test-repo-alpha"
-			found := false
-			for _, s := range killedSessions {
-				if s == wantSession {
-					found = true
-					break
-				}
-			}
-			if !found {
+			if !slices.Contains(killedSessions, wantSession) {
 				t.Errorf("expected session %q to be killed on external %s, killed sessions: %v", wantSession, extStatus, killedSessions)
 			}
 		})
