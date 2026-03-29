@@ -34,8 +34,7 @@ type tabAppModel struct {
 	dbPath  string
 
 	// Dashboard data — refreshed periodically via the standard tick chain.
-	data      *DashboardData
-	stateHash string
+	data *DashboardData
 
 	// Active view: tabDroplets or tabDetail.
 	tab              int
@@ -194,7 +193,6 @@ func (m tabAppModel) updateDroplets(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tuiDataMsg:
 		m.data = (*DashboardData)(msg)
-		m.stateHash = dashboardStateHash(m.data)
 		// Keep cursor in bounds after a data refresh.
 		if items := m.visibleItems(); m.cursor >= len(items) && len(items) > 0 {
 			m.cursor = len(items) - 1
@@ -335,6 +333,27 @@ func (m tabAppModel) View() string {
 	return m.viewDroplets()
 }
 
+// scrollViewport slices lines to the viewH-line window starting at scrollTop,
+// clamping scrollTop to a valid range. Used by both view functions.
+func scrollViewport(lines []string, scrollTop, viewH int) []string {
+	total := len(lines)
+	max := total - viewH
+	if max < 0 {
+		max = 0
+	}
+	if scrollTop < 0 {
+		scrollTop = 0
+	}
+	if scrollTop > max {
+		scrollTop = max
+	}
+	end := scrollTop + viewH
+	if end > total {
+		end = total
+	}
+	return lines[scrollTop:end]
+}
+
 // viewDroplets renders the Droplets list with a cursor indicator.
 func (m tabAppModel) viewDroplets() string {
 	w := m.width
@@ -386,29 +405,12 @@ func (m tabAppModel) viewDroplets() string {
 	footer := tuiStyleFooter.Render("  ↑↓/jk navigate  enter/d detail  q quit")
 
 	// Apply viewport with scroll offset so the cursor is always visible.
-	full := strings.Join(parts, "\n")
-	lines := strings.Split(full, "\n")
-	total := len(lines)
+	lines := strings.Split(strings.Join(parts, "\n"), "\n")
 	viewH := h - 1
 	if viewH < 1 {
 		viewH = 1
 	}
-	scrollTop := m.dropletsScrollTop
-	maxScrollTop := total - viewH
-	if maxScrollTop < 0 {
-		maxScrollTop = 0
-	}
-	if scrollTop > maxScrollTop {
-		scrollTop = maxScrollTop
-	}
-	if scrollTop < 0 {
-		scrollTop = 0
-	}
-	end := scrollTop + viewH
-	if end > total {
-		end = total
-	}
-	return strings.Join(lines[scrollTop:end], "\n") + "\n" + footer
+	return strings.Join(scrollViewport(lines, m.dropletsScrollTop, viewH), "\n") + "\n" + footer
 }
 
 // viewDetail renders the Detail panel for the selected droplet.
@@ -505,29 +507,13 @@ func (m tabAppModel) viewDetail() string {
 		}
 	}
 
-	// Apply viewport scroll — same pattern as dashboardTUIModel.View().
-	// The footer is pinned outside the scrolled region.
-	full := strings.Join(parts, "\n")
-	lines := strings.Split(full, "\n")
-	total := len(lines)
-	viewH := h - 1 // reserve 1 row for the pinned footer
+	// Apply viewport scroll; footer is pinned outside the scrolled region.
+	lines := strings.Split(strings.Join(parts, "\n"), "\n")
+	viewH := h - 1
 	if viewH < 1 {
 		viewH = 1
 	}
-	maxScroll := total - viewH
-	if maxScroll < 0 {
-		maxScroll = 0
-	}
-	scrollY := m.detailScrollY
-	if scrollY > maxScroll {
-		scrollY = maxScroll
-	}
-	end := scrollY + viewH
-	if end > total {
-		end = total
-	}
-	visible := lines[scrollY:end]
-	return strings.Join(visible, "\n") + "\n" + footer
+	return strings.Join(scrollViewport(lines, m.detailScrollY, viewH), "\n") + "\n" + footer
 }
 
 // RunTabbedTUI launches the ct tui interactive panel using the alternate screen.
