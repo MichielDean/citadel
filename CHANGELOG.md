@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Castellarius: persist operator assignment on dispatch, clear on terminal states (ci-dko75)
+
+Castellarius now tracks which aqueduct operator holds each droplet. When a droplet is dispatched to an aqueduct, the operator name is persisted in the database. When the droplet reaches a terminal state (delivered, cancelled, or stagnant), the assignment is cleared to prevent ghost assignments.
+
+**Key changes:**
+- **New `SetAssignedAqueduct` method**: added to `cistern.Client` interface to persist the operator name holding a droplet
+- **Dispatch assignment**: Castellarius calls `SetAssignedAqueduct` immediately after dispatching a droplet to an aqueduct
+- **Terminal state clearing**: When a droplet transitions to delivered, cancelled, or stagnant status, `assigned_aqueduct` is cleared atomically in the same UPDATE statement that closes the droplet
+- **Overwrite protection**: The SQL `WHERE` clause ensures only unassigned droplets (where `assigned_aqueduct = ''` OR `NULL`) can be assigned — prevents race conditions if multiple dispatches race
+- **Status display**: `ct castellarius status` operator table now correctly shows which operator holds which droplet, keyed by `assigned_aqueduct` instead of the legacy `assignee` field
+- **Acceptance criteria met**: (1) in_progress droplets in DB have non-empty assigned_aqueduct matching their operator; (2) ct status aqueduct table correctly joins on assigned_aqueduct; (3) ct castellarius status 'N flowing' count matches visible operator rows; (4) terminal state transitions atomically clear assigned_aqueduct
+
 ### Cataractae prompt templating: render CLAUDE.md from aqueduct at spawn time (ci-amg37)
 
 Cataractae instructions (CLAUDE.md, PERSONA.md, INSTRUCTIONS.md) can now use Go template syntax to render content at spawn time. This makes prompts data-driven — the aqueduct YAML is the source of truth, and rendered CLAUDE.md files incorporate step-specific routing, droplet metadata, and pipeline structure. Agents never see raw template markers — templates are rendered before dispatch.

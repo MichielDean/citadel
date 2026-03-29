@@ -2710,3 +2710,30 @@ func TestCheckHungDrought_WhenEmptyDBPath_NoWarning(t *testing.T) {
 		t.Errorf("unexpected warning for empty dbPath: %s", logBuf.String())
 	}
 }
+
+// TestDispatch_SetsAssignedAqueduct verifies that dispatchRepo calls
+// SetAssignedAqueduct with the operator name immediately after dispatching
+// a droplet, so in_progress droplets always carry a non-empty assigned_aqueduct.
+func TestDispatch_SetsAssignedAqueduct(t *testing.T) {
+	client := newMockClient()
+	client.readyItems = []*cistern.Droplet{{ID: "bf-01", Title: "test item"}}
+	client.items["bf-01"] = &cistern.Droplet{ID: "bf-01", Title: "test item"}
+
+	runner := newMockRunner(client)
+	sched := testScheduler(client, runner)
+	sched.Tick(context.Background())
+
+	if !runner.waitCalls(1, time.Second) {
+		t.Fatal("timed out waiting for runner call")
+	}
+
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	item, ok := client.items["bf-01"]
+	if !ok {
+		t.Fatal("item not found in mock client")
+	}
+	if item.AssignedAqueduct == "" {
+		t.Error("AssignedAqueduct is empty after dispatch — SetAssignedAqueduct was not called")
+	}
+}

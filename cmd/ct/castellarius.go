@@ -174,8 +174,8 @@ var castellariusStatusCmd = &cobra.Command{
 
 		assignee := map[string]*cistern.Droplet{}
 		for _, item := range allItems {
-			if item.Status == "in_progress" && item.Assignee != "" {
-				assignee[item.Assignee] = item
+			if item.Status == "in_progress" && item.AssignedAqueduct != "" {
+				assignee[item.AssignedAqueduct] = item
 			}
 		}
 
@@ -389,8 +389,8 @@ var statusCmd = &cobra.Command{
 				switch item.Status {
 				case "in_progress":
 					flowing++
-					if item.Assignee != "" {
-						assignee[item.Assignee] = item
+					if item.AssignedAqueduct != "" {
+						assignee[item.AssignedAqueduct] = item
 					}
 				case "open":
 					queued++

@@ -42,6 +42,10 @@ type CisternClient interface {
 	// SetOutcome records the agent outcome on a droplet. Used by stuck-delivery
 	// recovery to write an outcome directly so the observe phase can route it.
 	SetOutcome(id, outcome string) error
+	// SetAssignedAqueduct records the aqueduct operator currently holding this
+	// droplet. Called after each dispatch so in_progress droplets always carry a
+	// non-empty assigned_aqueduct for status display.
+	SetAssignedAqueduct(id, aqueductName string) error
 }
 
 // CataractaeRunner executes a single workflow step.
@@ -961,6 +965,10 @@ func (s *Castellarius) dispatchRepo(ctx context.Context, repo aqueduct.RepoConfi
 			s.logger.Error("assign failed", "droplet", item.ID, "error", err)
 			pool.Release(worker)
 			continue
+		}
+
+		if err := client.SetAssignedAqueduct(item.ID, worker.Name); err != nil {
+			s.logger.Warn("SetAssignedAqueduct failed", "droplet", item.ID, "operator", worker.Name, "error", err)
 		}
 
 		s.logger.Info("Droplet entering cataractae",

@@ -35,8 +35,9 @@ type Droplet struct {
 	// Outcome is set by agents via `ct droplet pass/recirculate/block`.
 	// Empty string means no outcome yet (NULL in DB).
 	Outcome string `json:"outcome,omitempty"`
-	// AssignedAqueduct is set on first dispatch and never cleared.
-	// Once a droplet enters an aqueduct it stays there for its full lifecycle.
+	// AssignedAqueduct records which aqueduct operator is currently holding this
+	// droplet. Set when first dispatched; cleared on terminal states (delivered,
+	// stagnant, cancelled) so no ghost assignments linger.
 	AssignedAqueduct string `json:"assigned_aqueduct,omitempty"`
 	// LastReviewedCommit is the HEAD commit hash at the time the last review
 	// diff was generated. Used to detect phantom commits (implement pass without
@@ -386,8 +387,9 @@ func (c *Client) Assign(id, worker, step string) error {
 	return checkRowsAffected(res, id)
 }
 
-// SetAssignedAqueduct records the aqueduct that first claimed this droplet.
-// It is only written once — if assigned_aqueduct is already set this is a no-op.
+// SetAssignedAqueduct records the aqueduct operator currently holding this
+// droplet. Only updates when the field is currently empty; CloseItem, Cancel,
+// and Escalate clear it as part of their terminal-state transitions.
 func (c *Client) SetAssignedAqueduct(id, aqueductName string) error {
 	_, err := c.db.Exec(
 		`UPDATE droplets SET assigned_aqueduct = ? WHERE id = ? AND (assigned_aqueduct = '' OR assigned_aqueduct IS NULL)`,
@@ -544,9 +546,10 @@ func (c *Client) GetNotes(id string) ([]CataractaeNote, error) {
 }
 
 // Escalate marks a droplet as needing human attention and records the reason.
+// assigned_aqueduct is cleared atomically so no ghost assignments linger.
 func (c *Client) Escalate(id, reason string) error {
 	res, err := c.db.Exec(
-		`UPDATE droplets SET status = 'stagnant', updated_at = ? WHERE id = ?`,
+		`UPDATE droplets SET status = 'stagnant', assigned_aqueduct = '', updated_at = ? WHERE id = ?`,
 		time.Now().UTC(), id,
 	)
 	if err != nil {
@@ -569,9 +572,10 @@ func (c *Client) Escalate(id, reason string) error {
 // Cancel marks a droplet as cancelled. Cancelled droplets are excluded from the
 // dispatch queue and from default list views. They can still be retrieved with
 // List(repo, "cancelled"). If reason is non-empty it is recorded as a note.
+// assigned_aqueduct is cleared atomically so no ghost assignments linger.
 func (c *Client) Cancel(id, reason string) error {
 	res, err := c.db.Exec(
-		`UPDATE droplets SET status = 'cancelled', updated_at = ? WHERE id = ?`,
+		`UPDATE droplets SET status = 'cancelled', assigned_aqueduct = '', updated_at = ? WHERE id = ?`,
 		time.Now().UTC(), id,
 	)
 	if err != nil {
@@ -589,9 +593,10 @@ func (c *Client) Cancel(id, reason string) error {
 }
 
 // CloseItem marks a droplet as delivered.
+// assigned_aqueduct is cleared atomically so no ghost assignments linger.
 func (c *Client) CloseItem(id string) error {
 	res, err := c.db.Exec(
-		`UPDATE droplets SET status = 'delivered', updated_at = ? WHERE id = ?`,
+		`UPDATE droplets SET status = 'delivered', assigned_aqueduct = '', updated_at = ? WHERE id = ?`,
 		time.Now().UTC(), id,
 	)
 	if err != nil {
