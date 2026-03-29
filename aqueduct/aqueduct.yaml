@@ -71,8 +71,8 @@ cataractae:
   - name: security-review
     type: agent
     identity: security
-    model: opus         # context-isolated adversarial role — no safety net, must catch vulns from diff alone
-    context: diff_only
+    model: opus         # full codebase access — trace call chains, verify auth checks, audit cumulative exposure
+    context: full_codebase
     skills:
       - name: cistern-droplet-state
     timeout_minutes: 15
