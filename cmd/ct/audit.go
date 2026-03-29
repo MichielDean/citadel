@@ -275,6 +275,7 @@ func extractFindings(text string) ([]AuditFinding, error) {
 	end := -1
 	inString := false
 	escape := false
+loop:
 	for i := start; i < len(text); i++ {
 		ch := text[i]
 		if escape {
@@ -298,10 +299,8 @@ func extractFindings(text string) ([]AuditFinding, error) {
 			depth--
 			if depth == 0 {
 				end = i
+				break loop
 			}
-		}
-		if end != -1 {
-			break
 		}
 	}
 	if end == -1 {
