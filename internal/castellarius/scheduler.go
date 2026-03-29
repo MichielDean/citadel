@@ -1467,7 +1467,6 @@ func (s *Castellarius) heartbeatArchitecti(ctx context.Context) {
 				s.architectiInFlight[item.ID] = struct{}{}
 				s.architectiInFlightMu.Unlock()
 
-				dropletCopy := *item
 				s.logger.Info("heartbeat: architecti: spawning",
 					"repo", repo.Name,
 					"droplet", item.ID,
@@ -1484,7 +1483,7 @@ func (s *Castellarius) heartbeatArchitecti(ctx context.Context) {
 						s.logger.Error("heartbeat: architecti: run failed",
 							"droplet", d.ID, "error", err)
 					}
-				}(dropletCopy, cfg)
+				}(*item, cfg)
 			}
 		}
 	}
