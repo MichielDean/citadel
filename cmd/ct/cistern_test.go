@@ -259,11 +259,9 @@ func TestCisternList_StagnantItems_NoFlowingMessage(t *testing.T) {
 	})
 }
 
-func TestCisternList_FlowingAndStagnant_ShowsCisternDry(t *testing.T) {
-	// When both in_progress (flowing) and stagnant droplets coexist, a filtered
-	// list returning no results must NOT say "No flowing droplets." — that would
-	// be false.  The fallback "Cistern dry." is correct because the filter found
-	// nothing, not because the cistern is truly empty.
+func TestCisternList_FlowingAndStagnant_ShowsNoMessage(t *testing.T) {
+	// When flowing droplets exist, a filtered list returning no results must
+	// emit no message at all — neither "No flowing droplets." nor "Cistern dry."
 	dir := t.TempDir()
 	db := filepath.Join(dir, "test.db")
 	t.Setenv("CT_DB", db)
@@ -281,7 +279,7 @@ func TestCisternList_FlowingAndStagnant_ShowsCisternDry(t *testing.T) {
 	c.Close()
 
 	// Filter by --status open: no open droplets exist, so results are empty.
-	// But stats.Flowing > 0, so "No flowing droplets." must NOT appear.
+	// stats.Flowing > 0, so no message must be emitted.
 	listOutput = "table"
 	listRepo = ""
 	listStatus = "open"
@@ -295,8 +293,8 @@ func TestCisternList_FlowingAndStagnant_ShowsCisternDry(t *testing.T) {
 		}
 	})
 	got := strings.TrimSpace(out)
-	if strings.Contains(got, "No flowing droplets") {
-		t.Fatalf("expected no 'No flowing droplets' message when flowing droplets exist, got: %q", got)
+	if got != "" {
+		t.Fatalf("expected no output when flowing droplets exist, got: %q", got)
 	}
 }
 
@@ -948,7 +946,28 @@ func TestDropletSearch(t *testing.T) {
 		}
 	})
 
-	t.Run("empty results shows Cistern dry.", func(t *testing.T) {
+	t.Run("empty results when flowing droplets exist shows no message", func(t *testing.T) {
+		// The shared DB has an in_progress droplet (stats.Flowing > 0), so a
+		// search that returns no results must emit no message at all.
+		searchQuery = "xyz-no-match"
+		searchStatus = ""
+		searchPriority = 0
+		searchOutput = "table"
+		out := captureStdout(t, func() {
+			if err := dropletSearchCmd.RunE(dropletSearchCmd, nil); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+		if strings.TrimSpace(out) != "" {
+			t.Fatalf("expected no output when flowing droplets exist, got %q", out)
+		}
+	})
+
+	t.Run("empty results on truly empty cistern shows Cistern dry.", func(t *testing.T) {
+		emptyDir := t.TempDir()
+		emptyDB := filepath.Join(emptyDir, "empty.db")
+		t.Setenv("CT_DB", emptyDB)
+
 		searchQuery = "xyz-no-match"
 		searchStatus = ""
 		searchPriority = 0

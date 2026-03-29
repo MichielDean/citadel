@@ -372,7 +372,14 @@ func displayStatusForDroplet(item *cistern.Droplet) string {
 
 func printEmptyMessage(c *cistern.Client) {
 	stats, err := c.Stats()
-	if err == nil && stats.Flowing == 0 && stats.Stagnant > 0 {
+	if err != nil {
+		fmt.Println("Cistern dry.")
+		return
+	}
+	if stats.Flowing > 0 {
+		return
+	}
+	if stats.Stagnant > 0 {
 		fmt.Printf("No flowing droplets. %d droplet(s) stagnant.\n", stats.Stagnant)
 		return
 	}
