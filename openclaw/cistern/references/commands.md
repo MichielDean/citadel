@@ -7,9 +7,21 @@ ct filter --title "..." [--description "..."]              # New refinement sess
 ct filter --resume <session-id> '<feedback>'              # Continue refinement
 ct filter --resume <session-id> --file --repo <repo>      # Persist final result
 ct filter --output-format json                            # Scriptable JSON output
+ct filter --title "..." --skip-context                    # Skip codebase context injection
 ```
 
 Interactive LLM-powered refinement **without persisting** until you're ready. Same model and prompt as `ct droplet add --filter`, but non-destructive and resumable.
+
+### Context Injection
+
+By default, `ct filter` prepends codebase context to the filtration prompt, giving the LLM knowledge of:
+- Database schema (all tables from `cistern.db`)
+- Cataractae INSTRUCTIONS.md files (agent role documentation)
+- Relevant `ct` subcommand help output
+
+This helps the LLM reject or refine proposals for functionality that already exists, and avoid suggesting workarounds for present-in-codebase solutions.
+
+**`--skip-context`** disables context injection (useful for testing or comparison runs).
 
 ## Droplet Management
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -42,6 +43,7 @@ var (
 	filterFile         bool
 	filterRepo         string
 	filterOutputFormat string
+	filterSkipContext  bool
 )
 
 var filterCmd = &cobra.Command{
@@ -107,7 +109,20 @@ Use --output-format json for scriptable output (session_id + proposals).`,
 		if filterTitle == "" {
 			return fmt.Errorf("--title is required (or use --resume to continue an existing session)")
 		}
-		result, err := invokeFilterNew(preset, filterTitle, filterDescription)
+		var contextBlock string
+		if !filterSkipContext {
+			var repoPath string
+			if home, err := os.UserHomeDir(); err == nil {
+				repoPath = filepath.Join(home, ".cistern", "sandboxes", filterRepo, "_primary")
+			}
+			contextBlock = gatherFilterContext(filterContextConfig{
+				DBPath:   resolveDBPath(),
+				RepoPath: repoPath,
+				Title:    filterTitle,
+				Desc:     filterDescription,
+			})
+		}
+		result, err := invokeFilterNew(preset, filterTitle, filterDescription, contextBlock)
 		if err != nil {
 			return err
 		}
@@ -116,13 +131,14 @@ Use --output-format json for scriptable output (session_id + proposals).`,
 }
 
 // invokeFilterNew starts a new filtration session and returns proposals with session_id.
-func invokeFilterNew(preset provider.ProviderPreset, title, description string) (filterSessionResult, error) {
+// contextBlock, when non-empty, is prepended before the system prompt so the LLM
+// sees codebase context first. Pass empty string to omit context injection.
+func invokeFilterNew(preset provider.ProviderPreset, title, description, contextBlock string) (filterSessionResult, error) {
 	userPrompt := "Title: " + title
 	if description != "" {
 		userPrompt += "\nDescription: " + description
 	}
-	combinedPrompt := filterSystemPrompt + "\n\n" + userPrompt
-	return callFilterAgent(preset, nil, combinedPrompt)
+	return callFilterAgent(preset, nil, buildFilterPrompt(contextBlock, userPrompt))
 }
 
 // invokeFilterResume resumes an existing filtration session with the given message
@@ -262,5 +278,6 @@ func init() {
 	filterCmd.Flags().BoolVar(&filterFile, "file", false, "persist the refined result to the cistern (requires --repo)")
 	filterCmd.Flags().StringVar(&filterRepo, "repo", "", "target repository (required with --file)")
 	filterCmd.Flags().StringVar(&filterOutputFormat, "output-format", "human", "output format: human or json")
+	filterCmd.Flags().BoolVar(&filterSkipContext, "skip-context", false, "skip codebase context injection (for testing and comparison)")
 	rootCmd.AddCommand(filterCmd)
 }

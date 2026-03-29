@@ -541,6 +541,7 @@ ct aqueduct inspect --table    Human-readable table instead of JSON
 # Filtration — refine ideas before adding droplets
 ct filter --title 'rough idea'                          Start a new filtration session
 ct filter --title 'idea' --description '...'           New session with description
+ct filter --title 'idea' --skip-context                Skip context injection (testing only)
 ct filter --resume <id> 'feedback'                      Continue refining a session
 ct filter --resume <id> --file --repo <repo>           Persist refined session to cistern
 ct filter --output-format json                         Machine-readable output (with --title or --resume)

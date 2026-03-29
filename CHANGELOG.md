@@ -19,6 +19,31 @@ ct droplet issue list my-droplet --flagged-by qa          # Issues filed by qa
 ct droplet issue list my-droplet --open --flagged-by qa   # Open issues filed by qa
 ```
 
+### Inject codebase context into ct filter prompt (ci-eh1ly)
+
+The `ct filter` command now automatically prepends codebase context to the filtration prompt, providing the LLM with knowledge of the database schema, cataractae instructions, and relevant `ct` subcommand help. This helps the filter reject proposals for functionality that already exists and avoid suggesting workarounds for present-in-codebase solutions.
+
+**Key changes:**
+- **Automatic context injection**: `ct filter` gathers and prepends database schema, all INSTRUCTIONS.md files from the repository's cataractae, and relevant ct subcommand help output
+- **Structured context block**: Context appears before the user's problem statement, clearly delimited with `=== CODEBASE CONTEXT ===` header
+- **`--skip-context` flag**: Bypass context injection for testing and comparison runs
+- **Bounded context sizes**: Schema is always included (small, ~10 tables), all INSTRUCTIONS.md files included (expect ~8 files, few hundred lines each), ct help filtered to commands relevant to the title/description
+- **No database mutation**: Database is opened in read-only mode (`?mode=ro`) to safely access the schema without risk of accidental writes
+
+**Example:**
+```bash
+ct filter --title 'Add authentication to API'
+  # Includes: database schema, all cataractae INSTRUCTIONS.md, and help for auth-related ct commands
+
+ct filter --title 'idea' --skip-context
+  # Disables context injection for baseline comparison
+```
+
+**Benefits:**
+- Proposals now reflect the actual state of the codebase
+- LLM can identify existing solutions and suggest refinements rather than duplicates
+- More accurate complexity and priority estimates from understanding the codebase structure
+
 ### Delivery: recirculate on repeated CI check failures with 2-attempt fix loop (ci-n1i8z)
 
 The delivery cataractae now implements a per-check attempt counter for CI failures. After 2 failed attempts on the same check, failures are classified and routed accordingly: code-level failures recirculate with structured diagnostics, while infrastructure failures block (stagnant). This prevents infinite retry loops on stagnant failures while enabling the delivery agent to fix transient code issues.

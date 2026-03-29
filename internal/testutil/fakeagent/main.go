@@ -77,6 +77,16 @@ func main() {
 	}
 
 	if hasPrint {
+		// Capture the prompt for tests that need to inspect what was sent.
+		if promptFile := os.Getenv("FAKEAGENT_PROMPT_FILE"); promptFile != "" {
+			args := os.Args[1:]
+			for i, arg := range args {
+				if arg == "-p" && i+1 < len(args) {
+					_ = os.WriteFile(promptFile, []byte(args[i+1]), 0o644)
+					break
+				}
+			}
+		}
 		mode := os.Getenv("FAKEAGENT_MODE")
 		switch {
 		case mode == "error_envelope":
