@@ -1251,135 +1251,89 @@ func TestRunDroughtHooks_NilCallbacks_DoesNotPanic(t *testing.T) {
 
 // --- _primary working-tree reset tests ---
 
-func TestHookGitSync_PrimaryWorkingTree_ResetToOriginMain(t *testing.T) {
-	// Given: a _primary clone with a locally-modified tracked file.
-	// When: hookGitSync runs.
-	// Then: the file is restored to its origin/main state.
+func TestHookGitSync_WorkingTreeReset(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
 
-	tmpDir := t.TempDir()
-	setHomeForTest(t, tmpDir)
+	const (
+		repoName        = "myrepo"
+		trackedFile     = "README.md"
+		originalContent = "original content\n"
+	)
 
-	const repoName = "myrepo"
-	const trackedFile = "README.md"
-	const originalContent = "original content\n"
-
-	// Create remote repo with a tracked file.
-	remoteDir := filepath.Join(tmpDir, "remote")
-	if err := os.MkdirAll(remoteDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	mustGit(t, remoteDir, "init")
-	mustGit(t, remoteDir, "config", "user.email", "test@test.com")
-	mustGit(t, remoteDir, "config", "user.name", "Test")
-	if err := os.WriteFile(filepath.Join(remoteDir, trackedFile), []byte(originalContent), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	mustGit(t, remoteDir, "add", "-A")
-	mustGit(t, remoteDir, "commit", "-m", "initial")
-	exec.Command("git", "-C", remoteDir, "branch", "-M", "main").Run() //nolint:errcheck
-
-	// Clone to _primary.
-	sandboxRoot := filepath.Join(tmpDir, "sandboxes")
-	primaryDir := filepath.Join(sandboxRoot, repoName, "_primary")
-	if err := os.MkdirAll(filepath.Dir(primaryDir), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	mustGit(t, "", "clone", remoteDir, primaryDir)
-	mustGit(t, primaryDir, "config", "user.email", "test@test.com")
-	mustGit(t, primaryDir, "config", "user.name", "Test")
-
-	// Dirty the working tree: modify a tracked file without committing.
-	if err := os.WriteFile(filepath.Join(primaryDir, trackedFile), []byte("modified content\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	cfg := &aqueduct.AqueductConfig{
-		Repos: []aqueduct.RepoConfig{
-			{Name: repoName, WorkflowPath: "aqueduct/workflow.yaml", Cataractae: 1, Prefix: "t"},
+	tests := []struct {
+		name      string
+		cloneName string // directory name of the clone under the sandbox
+		dirty     string // content to write before sync
+		want      string // expected content after sync
+	}{
+		{
+			name:      "primary clone is reset to origin/main",
+			cloneName: "_primary",
+			dirty:     "modified content\n",
+			want:      originalContent,
+		},
+		{
+			name:      "agent worktree is not reset",
+			cloneName: "ci-abc123",
+			dirty:     "agent work in progress\n",
+			want:      "agent work in progress\n",
 		},
 	}
 
-	// When: hookGitSync runs.
-	if _, err := hookGitSync(cfg, sandboxRoot, discardLogger()); err != nil {
-		t.Fatalf("hookGitSync: %v", err)
-	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			setHomeForTest(t, tmpDir)
 
-	// Then: the tracked file is restored to its origin/main state.
-	data, err := os.ReadFile(filepath.Join(primaryDir, trackedFile))
-	if err != nil {
-		t.Fatalf("read file after sync: %v", err)
-	}
-	if string(data) != originalContent {
-		t.Errorf("_primary file content = %q, want %q (reset to origin/main should have restored it)", string(data), originalContent)
-	}
-}
+			// Create remote repo with a tracked file.
+			remoteDir := filepath.Join(tmpDir, "remote")
+			if err := os.MkdirAll(remoteDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			mustGit(t, remoteDir, "init")
+			mustGit(t, remoteDir, "config", "user.email", "test@test.com")
+			mustGit(t, remoteDir, "config", "user.name", "Test")
+			if err := os.WriteFile(filepath.Join(remoteDir, trackedFile), []byte(originalContent), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			mustGit(t, remoteDir, "add", "-A")
+			mustGit(t, remoteDir, "commit", "-m", "initial")
+			exec.Command("git", "-C", remoteDir, "branch", "-M", "main").Run() //nolint:errcheck
 
-func TestHookGitSync_NonPrimaryWorkingTree_NotReset(t *testing.T) {
-	// Given: a non-_primary clone (active agent worktree) with a locally-modified tracked file.
-	// When: hookGitSync runs.
-	// Then: the modification is preserved — active worktrees are never reset.
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
+			// Clone into the sandbox under tc.cloneName.
+			sandboxRoot := filepath.Join(tmpDir, "sandboxes")
+			cloneDir := filepath.Join(sandboxRoot, repoName, tc.cloneName)
+			if err := os.MkdirAll(filepath.Dir(cloneDir), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			mustGit(t, "", "clone", remoteDir, cloneDir)
+			mustGit(t, cloneDir, "config", "user.email", "test@test.com")
+			mustGit(t, cloneDir, "config", "user.name", "Test")
 
-	tmpDir := t.TempDir()
-	setHomeForTest(t, tmpDir)
+			// Dirty the working tree.
+			if err := os.WriteFile(filepath.Join(cloneDir, trackedFile), []byte(tc.dirty), 0o644); err != nil {
+				t.Fatal(err)
+			}
 
-	const repoName = "myrepo"
-	const trackedFile = "README.md"
-	const originalContent = "original content\n"
-	const modifiedContent = "agent work in progress\n"
+			cfg := &aqueduct.AqueductConfig{
+				Repos: []aqueduct.RepoConfig{
+					{Name: repoName, WorkflowPath: "aqueduct/workflow.yaml", Cataractae: 1, Prefix: "t"},
+				},
+			}
 
-	// Create remote repo with a tracked file.
-	remoteDir := filepath.Join(tmpDir, "remote")
-	if err := os.MkdirAll(remoteDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	mustGit(t, remoteDir, "init")
-	mustGit(t, remoteDir, "config", "user.email", "test@test.com")
-	mustGit(t, remoteDir, "config", "user.name", "Test")
-	if err := os.WriteFile(filepath.Join(remoteDir, trackedFile), []byte(originalContent), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	mustGit(t, remoteDir, "add", "-A")
-	mustGit(t, remoteDir, "commit", "-m", "initial")
-	exec.Command("git", "-C", remoteDir, "branch", "-M", "main").Run() //nolint:errcheck
+			if _, err := hookGitSync(cfg, sandboxRoot, discardLogger()); err != nil {
+				t.Fatalf("hookGitSync: %v", err)
+			}
 
-	// Clone to a non-_primary name (agent worktree).
-	sandboxRoot := filepath.Join(tmpDir, "sandboxes")
-	worktreeDir := filepath.Join(sandboxRoot, repoName, "ci-abc123")
-	if err := os.MkdirAll(filepath.Dir(worktreeDir), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	mustGit(t, "", "clone", remoteDir, worktreeDir)
-	mustGit(t, worktreeDir, "config", "user.email", "test@test.com")
-	mustGit(t, worktreeDir, "config", "user.name", "Test")
-
-	// Dirty the working tree: simulate in-progress agent work.
-	if err := os.WriteFile(filepath.Join(worktreeDir, trackedFile), []byte(modifiedContent), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	cfg := &aqueduct.AqueductConfig{
-		Repos: []aqueduct.RepoConfig{
-			{Name: repoName, WorkflowPath: "aqueduct/workflow.yaml", Cataractae: 1, Prefix: "t"},
-		},
-	}
-
-	// When: hookGitSync runs.
-	if _, err := hookGitSync(cfg, sandboxRoot, discardLogger()); err != nil {
-		t.Fatalf("hookGitSync: %v", err)
-	}
-
-	// Then: the agent's local modifications are preserved.
-	data, err := os.ReadFile(filepath.Join(worktreeDir, trackedFile))
-	if err != nil {
-		t.Fatalf("read file after sync: %v", err)
-	}
-	if string(data) != modifiedContent {
-		t.Errorf("non-_primary file content = %q, want %q (active worktree must not be reset)", string(data), modifiedContent)
+			data, err := os.ReadFile(filepath.Join(cloneDir, trackedFile))
+			if err != nil {
+				t.Fatalf("read file after sync: %v", err)
+			}
+			if string(data) != tc.want {
+				t.Errorf("file content after sync = %q, want %q", string(data), tc.want)
+			}
+		})
 	}
 }
