@@ -311,7 +311,7 @@ func TestInvokeFilterNew_ReturnsProposalsAndSessionID(t *testing.T) {
 		},
 	}
 
-	result, err := invokeFilterNew(preset, "Add user auth", "JWT-based auth with refresh tokens")
+	result, err := invokeFilterNew(preset, "Add user auth", "JWT-based auth with refresh tokens", "")
 	if err != nil {
 		t.Fatalf("invokeFilterNew: unexpected error: %v", err)
 	}
@@ -337,7 +337,7 @@ func TestInvokeFilterNew_TitleOnly(t *testing.T) {
 		},
 	}
 
-	result, err := invokeFilterNew(preset, "Add user auth", "")
+	result, err := invokeFilterNew(preset, "Add user auth", "", "")
 	if err != nil {
 		t.Fatalf("invokeFilterNew title-only: unexpected error: %v", err)
 	}
@@ -573,5 +573,62 @@ func TestFilterCmd_ResumeFile_PersistsDroplet(t *testing.T) {
 	}
 	if items[0].Title != "mock proposal" {
 		t.Errorf("title = %q, want %q", items[0].Title, "mock proposal")
+	}
+}
+
+// TestFilterCmd_SkipContextFlag_IsRecognized verifies that --skip-context is a
+// recognized flag and does not produce an "unknown flag" error.
+// Given a config with "PortfolioWebsite" and an unknown repo name,
+// When ct filter --title "..." --repo nonexistent --skip-context is called,
+// Then the error is about the unknown repo, not about an unrecognized flag.
+func TestFilterCmd_SkipContextFlag_IsRecognized(t *testing.T) {
+	cfgPath := writeTestConfig(t, "PortfolioWebsite")
+	t.Setenv("CT_CONFIG", cfgPath)
+	t.Setenv("CT_NO_ASCII_LOGO", "1")
+	t.Cleanup(func() {
+		filterTitle = ""
+		filterRepo = ""
+		filterSkipContext = false
+	})
+
+	err := execCmd(t, "filter", "--title", "test idea", "--repo", "nonexistent-xyz", "--skip-context")
+	if err == nil {
+		t.Fatal("expected error (unknown repo), got nil")
+	}
+	if strings.Contains(err.Error(), "unknown flag: --skip-context") {
+		t.Errorf("--skip-context flag not recognized: %v", err)
+	}
+	if !strings.Contains(err.Error(), "nonexistent-xyz") {
+		t.Errorf("expected error about unknown repo 'nonexistent-xyz', got: %v", err)
+	}
+}
+
+// TestInvokeFilterNew_WithContextBlock_IncludesContextInResult verifies that
+// invokeFilterNew accepts a non-empty contextBlock without error.
+// Given a preset pointing at fakeagent and a non-empty contextBlock,
+// When invokeFilterNew is called,
+// Then proposals and a session_id are returned (fakeagent ignores prompt content).
+func TestInvokeFilterNew_WithContextBlock_IncludesContextInResult(t *testing.T) {
+	fakeagentBin := buildTestBin(t, "fakeagent", "github.com/MichielDean/cistern/internal/testutil/fakeagent")
+
+	preset := provider.ProviderPreset{
+		Name:    "test",
+		Command: fakeagentBin,
+		NonInteractive: provider.NonInteractiveConfig{
+			PrintFlag:  "--print",
+			PromptFlag: "-p",
+		},
+	}
+
+	contextBlock := "=== CODEBASE CONTEXT ===\nsome schema here\n=== END CODEBASE CONTEXT ==="
+	result, err := invokeFilterNew(preset, "Add feature", "Some description", contextBlock)
+	if err != nil {
+		t.Fatalf("invokeFilterNew with contextBlock: unexpected error: %v", err)
+	}
+	if result.SessionID == "" {
+		t.Error("expected non-empty session_id")
+	}
+	if len(result.Proposals) == 0 {
+		t.Fatal("expected at least one proposal")
 	}
 }
