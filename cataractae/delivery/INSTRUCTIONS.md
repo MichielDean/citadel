@@ -52,12 +52,15 @@ tip of `origin/$BASE`.
 
 ```bash
 git fetch origin $BASE
-MERGE_BASE=$(git merge-base HEAD origin/$BASE)
-ORIGIN_TIP=$(git rev-parse origin/$BASE)
-if [ "$MERGE_BASE" = "$ORIGIN_TIP" ]; then
-  echo "Branch is already based on origin/$BASE — no rebase needed"
+if MERGE_BASE=$(git merge-base HEAD origin/$BASE) && ORIGIN_TIP=$(git rev-parse origin/$BASE); then
+  if [ "$MERGE_BASE" = "$ORIGIN_TIP" ]; then
+    echo "Branch is already based on origin/$BASE — no rebase needed"
+  else
+    echo "Branch is behind origin/$BASE — rebasing"
+    git rebase origin/$BASE
+  fi
 else
-  echo "Branch is behind origin/$BASE — rebasing"
+  echo "merge-base check failed — rebasing unconditionally"
   git rebase origin/$BASE
 fi
 ```
