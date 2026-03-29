@@ -40,6 +40,35 @@ Five action keybindings are now available in the detail panel view without leavi
 
 All actions dispatch directly to `cistern.Client` methods without spawning CLI subcommands. After any action completes, the detail view re-fetches and displays updated droplet state. Destructive actions (cancel, escalate) show an inline confirmation overlay. Text-entry actions (restart, add-note, set-step) open a single-line text input overlay.
 
+### Architecti: autonomous diagnosis trigger for stagnant droplets (ci-khkml)
+
+The Castellarius now supports automatic invocation of the Architecti autonomous diagnosis agent when droplets become stagnant or blocked.
+
+**Configuration:**
+
+Add an `architecti` section to `~/.cistern/cistern.yaml`:
+
+```yaml
+architecti:
+  enabled: true
+  threshold_minutes: 30
+  max_files_per_run: 100
+```
+
+**Key fields:**
+- `enabled`: Activates the architecti trigger. When false, no diagnosis goroutines are spawned. Default: false (disabled)
+- `threshold_minutes`: Minimum duration (in minutes) a droplet must remain stagnant or blocked before Architecti is invoked. Must be non-negative
+- `max_files_per_run`: Maximum number of files Architecti may examine per invocation. Must be positive
+
+**Behavior:**
+- When a droplet is marked stagnant or blocked, the Castellarius heartbeat checks `architecti.enabled` and the droplet's inactivity duration
+- If inactivity exceeds `threshold_minutes`, a goroutine is spawned to invoke Architecti with the droplet configuration
+- In-flight invocations are tracked per droplet to prevent double-spawning the same diagnostician
+- Diagnostician goroutines participate in graceful shutdown: the drain timeout budget is split between in-flight Architecti goroutines and session drains
+- Architecti invocations are logged and tracked in-memory until the droplet terminal state
+
+**Omit the section entirely to disable Architecti** — this is the default state for all Cistern instances. Existing configs continue to work unchanged.
+
 ### Adversarial reviewer: full codebase access, orphaned code check (ci-hvskp)
 
 The adversarial reviewer cataractae now has full repository access to catch issues invisible from the diff alone. This enables checks for orphaned code, duplicate implementations, broken contracts, and pattern violations.
