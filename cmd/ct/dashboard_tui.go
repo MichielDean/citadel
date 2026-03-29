@@ -389,27 +389,22 @@ func (m dashboardTUIModel) View() string {
 	parts = append(parts, m.viewStatusBar())
 	parts = append(parts, sep)
 
-	// 4. Current flow — live narrative for active droplets.
-	parts = append(parts, tuiStyleHeader.Render("  CURRENT FLOW"))
-	parts = append(parts, m.viewCurrentFlow()...)
-	parts = append(parts, sep)
-
-	// 5. Cistern — queued droplets waiting.
+	// 4. Cistern — queued droplets waiting.
 	parts = append(parts, tuiStyleHeader.Render("  CISTERN"))
 	parts = append(parts, m.viewCistern()...)
 	parts = append(parts, sep)
 
-	// 6. Stagnant droplets — dedicated panel, always visible.
+	// 5. Stagnant droplets — dedicated panel, always visible.
 	parts = append(parts, tuiStyleHeader.Render("  STAGNANT"))
 	parts = append(parts, m.viewStagnant()...)
 	parts = append(parts, sep)
 
-	// 7. Recent flow.
+	// 6. Recent flow.
 	parts = append(parts, tuiStyleHeader.Render("  RECENT FLOW"))
 	parts = append(parts, m.viewRecentFlow()...)
 	parts = append(parts, sep)
 
-	// 8. Footer — always pinned at the bottom (not scrolled).
+	// 7. Footer — always pinned at the bottom (not scrolled).
 	footer := tuiStyleFooter.Render("  q quit  r refresh  ↑↓/jk scroll  g/G top/bottom  p peek")
 
 	// Apply scroll: render full content, slice visible window.
@@ -484,12 +479,14 @@ func (m dashboardTUIModel) viewAqueductArches() []string {
 
 	var lines []string
 
-	// Active aqueducts: progress bar with a blank line between each for breathing room.
+	// Active aqueducts: progress bar followed immediately by inline flow notes,
+	// with a blank line between each aqueduct unit for breathing room.
 	for i, ch := range active {
 		if i > 0 {
 			lines = append(lines, "")
 		}
 		lines = append(lines, m.viewAqueductProgress(ch))
+		lines = append(lines, m.viewInlineFlowNotes(ch)...)
 	}
 
 	// Blank separator between active and idle sections.
@@ -870,13 +867,26 @@ func (m dashboardTUIModel) tuiFlowGraphRow(ch CataractaeInfo) (graphLine, infoLi
 	return
 }
 
-func (m dashboardTUIModel) viewCurrentFlow() []string {
-	d := m.data
-	if len(d.FlowActivities) == 0 {
-		return []string{"  No droplets currently flowing."}
+// viewInlineFlowNotes renders the current-flow content for the droplet carried
+// by ch, placed inline below the aqueduct's progress bar. Returns nil if there
+// is no matching FlowActivity for ch.DropletID.
+func (m dashboardTUIModel) viewInlineFlowNotes(ch CataractaeInfo) []string {
+	if m.data == nil || ch.DropletID == "" {
+		return nil
 	}
 
-	maxW := m.width - 6 // leave room for indent + borders
+	var fa *FlowActivity
+	for i := range m.data.FlowActivities {
+		if m.data.FlowActivities[i].DropletID == ch.DropletID {
+			fa = &m.data.FlowActivities[i]
+			break
+		}
+	}
+	if fa == nil {
+		return nil
+	}
+
+	maxW := m.width - 6
 	if maxW < 40 {
 		maxW = 40
 	}
@@ -889,7 +899,6 @@ func (m dashboardTUIModel) viewCurrentFlow() []string {
 		return string(runes[:n-1]) + "…"
 	}
 
-	// Collapse multi-line note content to a single meaningful line.
 	firstMeaningfulLine := func(content string) string {
 		for _, line := range strings.Split(content, "\n") {
 			line = strings.TrimSpace(line)
@@ -900,44 +909,36 @@ func (m dashboardTUIModel) viewCurrentFlow() []string {
 		return strings.TrimSpace(content)
 	}
 
+	// Header: droplet ID + step + title.
+	stepStr := tuiStyleGreen.Render(fa.Step)
+	idStr   := tuiStyleHeader.Render(fa.DropletID)
+	title   := "  " + truncate(fa.Title, maxW-30)
 	var lines []string
-	for _, fa := range d.FlowActivities {
-		// Header: droplet ID + step + title.
-		stepStr := tuiStyleGreen.Render(fa.Step)
-		idStr   := tuiStyleHeader.Render(fa.DropletID)
-		title   := "  " + truncate(fa.Title, maxW-30)
-		lines = append(lines, fmt.Sprintf("  %s  %s%s", idStr, stepStr, title))
+	lines = append(lines, fmt.Sprintf("  %s  %s%s", idStr, stepStr, title))
 
-		if len(fa.RecentNotes) == 0 {
-			lines = append(lines, "    (no notes yet — first pass)")
-		} else {
-			for _, note := range fa.RecentNotes {
-				// Timestamp: relative if recent, otherwise HH:MM.
-				age := time.Since(note.CreatedAt)
-				var ts string
-				switch {
-				case age < time.Minute:
-					ts = "just now"
-				case age < time.Hour:
-					ts = fmt.Sprintf("%dm ago", int(age.Minutes()))
-				default:
-					ts = note.CreatedAt.Local().Format("15:04")
-				}
-
-				who  := "[" + note.CataractaeName + "]"
-				when := ts
-				text := firstMeaningfulLine(note.Content)
-				text  = truncate(text, maxW-30)
-				lines = append(lines,
-					fmt.Sprintf("    › %s  %s  %s", who, text, when),
-				)
+	if len(fa.RecentNotes) == 0 {
+		lines = append(lines, "    (no notes yet — first pass)")
+	} else {
+		for _, note := range fa.RecentNotes {
+			age := time.Since(note.CreatedAt)
+			var ts string
+			switch {
+			case age < time.Minute:
+				ts = "just now"
+			case age < time.Hour:
+				ts = fmt.Sprintf("%dm ago", int(age.Minutes()))
+			default:
+				ts = note.CreatedAt.Local().Format("15:04")
 			}
+
+			who  := "[" + note.CataractaeName + "]"
+			when := ts
+			text := firstMeaningfulLine(note.Content)
+			text  = truncate(text, maxW-30)
+			lines = append(lines,
+				fmt.Sprintf("    › %s  %s  %s", who, text, when),
+			)
 		}
-		lines = append(lines, "") // spacer between droplets
-	}
-	// Trim trailing blank line.
-	if len(lines) > 0 && lines[len(lines)-1] == "" {
-		lines = lines[:len(lines)-1]
 	}
 	return lines
 }

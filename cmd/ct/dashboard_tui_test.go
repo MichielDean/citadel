@@ -7,6 +7,8 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/MichielDean/cistern/internal/cistern"
 )
 
 func TestDashboard_PeekKey_InTmux_SpawnsNewWindow(t *testing.T) {
@@ -331,3 +333,164 @@ func TestTuiFlowGraphRow_InfoLine_IncludesTitle(t *testing.T) {
 // TestSelectArchMipmap_ReturnsNonEmpty verifies that selectArchMipmap always
 // returns a non-empty string regardless of the input width.
 
+// --- Inline flow notes tests ---
+
+// TestViewInlineFlowNotes_WhenMatchingActivity_ReturnsNoteLines verifies that
+// viewInlineFlowNotes returns content lines for a droplet with a matching
+// FlowActivity.
+//
+// Given: a model with a FlowActivity for "ci-abc12" containing one recent note
+// When:  viewInlineFlowNotes is called with CataractaeInfo{DropletID: "ci-abc12"}
+// Then:  the returned lines contain the note's content text
+
+func TestViewInlineFlowNotes_WhenMatchingActivity_ReturnsNoteLines(t *testing.T) {
+	noteTime := time.Now().Add(-5 * time.Minute)
+	m := dashboardTUIModel{
+		width: 120,
+		data: &DashboardData{
+			FlowActivities: []FlowActivity{
+				{
+					DropletID: "ci-abc12",
+					Title:     "Fix the bug",
+					Step:      "review",
+					RecentNotes: []cistern.CataractaeNote{
+						{
+							CataractaeName: "reviewer",
+							Content:        "Looks good overall",
+							CreatedAt:      noteTime,
+						},
+					},
+				},
+			},
+		},
+	}
+	ch := CataractaeInfo{DropletID: "ci-abc12"}
+	lines := m.viewInlineFlowNotes(ch)
+	joined := stripANSITest(strings.Join(lines, "\n"))
+	if !strings.Contains(joined, "Looks good overall") {
+		t.Errorf("expected note content in inline flow notes, got: %q", joined)
+	}
+}
+
+// TestViewInlineFlowNotes_WhenNoMatchingActivity_ReturnsEmpty verifies that
+// viewInlineFlowNotes returns an empty slice when there is no matching
+// FlowActivity for the given droplet.
+//
+// Given: a model with FlowActivities for a different droplet
+// When:  viewInlineFlowNotes is called with CataractaeInfo{DropletID: "ci-other"}
+// Then:  the returned slice is empty
+
+func TestViewInlineFlowNotes_WhenNoMatchingActivity_ReturnsEmpty(t *testing.T) {
+	m := dashboardTUIModel{
+		width: 120,
+		data: &DashboardData{
+			FlowActivities: []FlowActivity{
+				{DropletID: "ci-xyz99", Title: "Other droplet"},
+			},
+		},
+	}
+	ch := CataractaeInfo{DropletID: "ci-other"}
+	lines := m.viewInlineFlowNotes(ch)
+	if len(lines) != 0 {
+		t.Errorf("expected no lines for unmatched droplet, got: %v", lines)
+	}
+}
+
+// TestViewAqueductArches_ActiveWithNotes_InlinesFlowNotesAfterProgressBar verifies
+// that an active aqueduct's progress bar is immediately followed by its inline
+// flow notes.
+//
+// Given: a model with one active aqueduct "virgo" carrying droplet "ci-abc12",
+//
+//	and a FlowActivity for "ci-abc12" with a note "Important finding here"
+//
+// When:  viewAqueductArches is called
+// Then:  the output contains both the droplet ID (progress bar) and the note
+//
+//	text (inline flow notes), with the note appearing after the droplet ID
+
+func TestViewAqueductArches_ActiveWithNotes_InlinesFlowNotesAfterProgressBar(t *testing.T) {
+	noteTime := time.Now().Add(-2 * time.Minute)
+	m := dashboardTUIModel{
+		width: 120,
+		data: &DashboardData{
+			Cataractae: []CataractaeInfo{
+				{
+					Name:      "virgo",
+					RepoName:  "myrepo",
+					DropletID: "ci-abc12",
+					Step:      "implement",
+					Steps:     []string{"implement", "review"},
+					Elapsed:   90 * time.Second,
+				},
+			},
+			FlowActivities: []FlowActivity{
+				{
+					DropletID: "ci-abc12",
+					Title:     "Fix the bug",
+					Step:      "implement",
+					RecentNotes: []cistern.CataractaeNote{
+						{
+							CataractaeName: "implementer",
+							Content:        "Important finding here",
+							CreatedAt:      noteTime,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	lines := m.viewAqueductArches()
+	joined := stripANSITest(strings.Join(lines, "\n"))
+
+	if !strings.Contains(joined, "ci-abc12") {
+		t.Errorf("expected droplet ID in arches output, got: %q", joined)
+	}
+	if !strings.Contains(joined, "Important finding here") {
+		t.Errorf("expected inline flow note in arches output, got: %q", joined)
+	}
+	// Note must appear after the droplet ID (progress bar comes first).
+	idPos := strings.Index(joined, "ci-abc12")
+	notePos := strings.Index(joined, "Important finding here")
+	if notePos <= idPos {
+		t.Errorf("flow note should appear after progress bar (id at %d, note at %d)", idPos, notePos)
+	}
+}
+
+// TestView_NoCURRENTFLOWSection verifies that the standalone CURRENT FLOW
+// section has been removed from the TUI View output.
+//
+// Given: a model with data and one flowing droplet
+// When:  View() is called
+// Then:  the output does NOT contain the "CURRENT FLOW" header
+
+func TestView_NoCURRENTFLOWSection(t *testing.T) {
+	m := newDashboardTUIModel("", "")
+	m.width = 120
+	m.height = 50
+	m.data = &DashboardData{
+		Cataractae: []CataractaeInfo{
+			{
+				Name:      "virgo",
+				DropletID: "ci-abc12",
+				Step:      "implement",
+				Steps:     []string{"implement", "review"},
+			},
+		},
+		FlowActivities: []FlowActivity{
+			{
+				DropletID: "ci-abc12",
+				Title:     "Fix the bug",
+				Step:      "implement",
+			},
+		},
+		FetchedAt: time.Now(),
+	}
+
+	out := m.View()
+	stripped := stripANSITest(out)
+	if strings.Contains(stripped, "CURRENT FLOW") {
+		t.Error("TUI View should not contain standalone CURRENT FLOW section header")
+	}
+}
