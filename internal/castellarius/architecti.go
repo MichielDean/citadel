@@ -185,14 +185,9 @@ func (s *Castellarius) buildArchitectiSnapshot(ctx context.Context, trigger *cis
 	sb.WriteString("## Recent Castellarius Log (last 50 lines)\n")
 	home, _ := os.UserHomeDir()
 	logPath := filepath.Join(home, ".cistern", "castellarius.log")
-	if data, err := os.ReadFile(logPath); err == nil {
-		lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
-		start := 0
-		if len(lines) > 50 {
-			start = len(lines) - 50
-		}
+	if out, err := exec.Command("tail", "-n", "50", logPath).Output(); err == nil {
 		sb.WriteString("```\n")
-		sb.WriteString(strings.Join(lines[start:], "\n"))
+		sb.WriteString(strings.TrimRight(string(out), "\n"))
 		sb.WriteString("\n```\n\n")
 	} else {
 		sb.WriteString(fmt.Sprintf("(log file not found at %s)\n\n", logPath))
@@ -348,6 +343,9 @@ func (s *Castellarius) architectiRestart(action architectiAction, repoByDroplet 
 	if action.DropletID == "" {
 		return fmt.Errorf("restart action missing droplet_id")
 	}
+	if action.Cataractae == "" {
+		return fmt.Errorf("restart action missing cataractae")
+	}
 	client, err := s.architectiClient(action.DropletID, repoByDroplet)
 	if err != nil {
 		return fmt.Errorf("restart: %w", err)
@@ -362,22 +360,28 @@ func (s *Castellarius) architectiRestart(action architectiAction, repoByDroplet 
 			"last_restart_ago", time.Since(last).Round(time.Second))
 		return nil
 	}
-	s.architectiRestarts[action.DropletID] = time.Now()
 	s.architectiRestartsMu.Unlock()
 
-	cataractae := action.Cataractae
 	s.logger.Info("architecti: restarting droplet",
 		"droplet", action.DropletID,
-		"cataractae", cataractae,
+		"cataractae", action.Cataractae,
 		"reason", action.Reason)
 
 	// Note the restart so history is preserved.
 	if noteErr := client.AddNote(action.DropletID, "architecti",
-		fmt.Sprintf("Architecti restart → %s: %s", cataractae, action.Reason)); noteErr != nil {
+		fmt.Sprintf("Architecti restart → %s: %s", action.Cataractae, action.Reason)); noteErr != nil {
 		s.logger.Warn("architecti: restart note failed",
 			"droplet", action.DropletID, "error", noteErr)
 	}
-	return client.Assign(action.DropletID, "", cataractae)
+	if err := client.Assign(action.DropletID, "", action.Cataractae); err != nil {
+		return err
+	}
+
+	// Record rate limit timestamp only after a successful Assign.
+	s.architectiRestartsMu.Lock()
+	s.architectiRestarts[action.DropletID] = time.Now()
+	s.architectiRestartsMu.Unlock()
+	return nil
 }
 
 func (s *Castellarius) architectiCancel(action architectiAction, repoByDroplet map[string]string) error {
@@ -446,20 +450,25 @@ func (s *Castellarius) architectiNote(action architectiAction, repoByDroplet map
 }
 
 func (s *Castellarius) architectiRestartCastellarius(action architectiAction) error {
-	// Guard: only restart if the scheduler appears genuinely hung.
-	// Require lastTickAt age > architectiRestartCastellariusFactor × pollInterval.
-	if s.dbPath != "" {
-		hf, err := ReadHealthFile(filepath.Dir(s.dbPath))
-		if err == nil {
-			maxAge := time.Duration(architectiRestartCastellariusFactor) * s.pollInterval
-			lastTickAge := time.Since(hf.LastTickAt)
-			if lastTickAge < maxAge {
-				s.logger.Info("architecti: restart_castellarius skipped — scheduler is healthy",
-					"last_tick_age", lastTickAge.Round(time.Second),
-					"threshold", maxAge)
-				return nil
-			}
-		}
+	// Guard: only restart if the scheduler is positively confirmed to be hung.
+	// Fail-closed: refuse to restart if the health file is unavailable or
+	// unreadable — we cannot verify the hung state and the restart may be unsafe.
+	if s.dbPath == "" {
+		s.logger.Warn("architecti: restart_castellarius refused — dbPath not configured (cannot verify hung state)")
+		return nil
+	}
+	hf, err := ReadHealthFile(filepath.Dir(s.dbPath))
+	if err != nil {
+		s.logger.Warn("architecti: restart_castellarius refused — health file unreadable", "error", err)
+		return nil
+	}
+	maxAge := time.Duration(architectiRestartCastellariusFactor) * s.pollInterval
+	lastTickAge := time.Since(hf.LastTickAt)
+	if lastTickAge < maxAge {
+		s.logger.Info("architecti: restart_castellarius skipped — scheduler is healthy",
+			"last_tick_age", lastTickAge.Round(time.Second),
+			"threshold", maxAge)
+		return nil
 	}
 
 	s.logger.Warn("architecti: restarting castellarius", "reason", action.Reason)

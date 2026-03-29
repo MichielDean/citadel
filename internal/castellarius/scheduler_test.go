@@ -45,6 +45,7 @@ type mockClient struct {
 	addNoteErr          error // if set, AddNote returns this error
 	getReadyErr         error // if set, GetReady returns this error once then clears
 	listErr             error // if set, List returns this error
+	assignErr           error // if set, Assign returns this error
 	cancelled           map[string]string // id → cancel reason
 	filed               []filedDroplet    // FileDroplet calls
 	assignCalls         int               // total Assign call count
@@ -109,6 +110,9 @@ func (m *mockClient) Assign(id, worker, step string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.assignCalls++
+	if m.assignErr != nil {
+		return m.assignErr
+	}
 	m.steps[id] = step
 	if item, ok := m.items[id]; ok {
 		item.CurrentCataractae = step

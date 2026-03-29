@@ -3,6 +3,7 @@ package castellarius
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -564,10 +565,16 @@ func TestRunArchitecti_RestartCastellarius_WhenSchedulerHung(t *testing.T) {
 	client := newMockClient()
 	s := testSchedulerWithArchitecti(client)
 
-	// Make health file check think scheduler is hung by setting a very short
-	// poll interval — without a real health file, the check is skipped and
-	// restart proceeds.
-	s.pollInterval = 1 * time.Second
+	// Write a health file showing the scheduler has not ticked recently.
+	tmpDir := t.TempDir()
+	s.dbPath = tmpDir + "/cistern.db"
+	s.pollInterval = 10 * time.Second
+	// LastTickAt 60s ago > 5×10s = 50s threshold → scheduler is hung.
+	hf := HealthFile{
+		LastTickAt:      time.Now().Add(-60 * time.Second),
+		PollIntervalSec: 10,
+	}
+	writeTestHealthFile(t, tmpDir, hf)
 
 	var restartCalled int32
 	s.architectiRestartCastellariusFn = func() error {
@@ -631,5 +638,133 @@ func writeTestHealthFile(t *testing.T, dir string, hf HealthFile) {
 	}
 	if err := os.WriteFile(path, b, 0o644); err != nil {
 		t.Fatalf("write health file: %v", err)
+	}
+}
+
+// --- Issue 1: fail-closed restart_castellarius guard ---
+
+func TestRunArchitecti_RestartCastellarius_RefusesWhenDbPathEmpty(t *testing.T) {
+	// Given: dbPath is empty — health file cannot be read
+	client := newMockClient()
+	s := testSchedulerWithArchitecti(client)
+	// s.dbPath is "" (default) — health file is unavailable
+
+	var restartCalled int32
+	s.architectiRestartCastellariusFn = func() error {
+		atomic.AddInt32(&restartCalled, 1)
+		return nil
+	}
+	s.architectiExecFn = func(_ context.Context, _ string) ([]byte, error) {
+		return []byte(`[{"action":"restart_castellarius","reason":"test"}]`), nil
+	}
+
+	// When: runArchitecti dispatches the restart_castellarius action
+	err := s.runArchitecti(context.Background(), stagnantDroplet("d-001", 60*time.Minute), *s.config.Architecti)
+
+	// Then: restart refused — cannot verify hung state without health file
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if n := atomic.LoadInt32(&restartCalled); n != 0 {
+		t.Errorf("restartCastellariusFn called %d times, want 0 (fail-closed: no health file)", n)
+	}
+}
+
+func TestRunArchitecti_RestartCastellarius_RefusesWhenHealthFileUnreadable(t *testing.T) {
+	// Given: dbPath is set but the health file does not exist
+	client := newMockClient()
+	s := testSchedulerWithArchitecti(client)
+
+	tmpDir := t.TempDir()
+	s.dbPath = tmpDir + "/cistern.db"
+	// Deliberately do NOT write a health file — ReadHealthFile will fail.
+
+	var restartCalled int32
+	s.architectiRestartCastellariusFn = func() error {
+		atomic.AddInt32(&restartCalled, 1)
+		return nil
+	}
+	s.architectiExecFn = func(_ context.Context, _ string) ([]byte, error) {
+		return []byte(`[{"action":"restart_castellarius","reason":"test"}]`), nil
+	}
+
+	err := s.runArchitecti(context.Background(), stagnantDroplet("d-001", 60*time.Minute), *s.config.Architecti)
+
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if n := atomic.LoadInt32(&restartCalled); n != 0 {
+		t.Errorf("restartCastellariusFn called %d times, want 0 (fail-closed: health file unreadable)", n)
+	}
+}
+
+// --- Issue 3: missing cataractae validation on restart ---
+
+func TestRunArchitecti_RestartAction_MissingCataractae_NoAssignCalled(t *testing.T) {
+	// Given: agent outputs a restart action with no cataractae field
+	client := newMockClient()
+	client.items["d-001"] = stagnantDroplet("d-001", 60*time.Minute)
+	s := testSchedulerWithArchitecti(client)
+
+	s.architectiExecFn = func(_ context.Context, _ string) ([]byte, error) {
+		return []byte(`[{"action":"restart","droplet_id":"d-001","reason":"missing cataractae"}]`), nil
+	}
+
+	// When: runArchitecti dispatches the action
+	err := s.runArchitecti(context.Background(), stagnantDroplet("d-001", 60*time.Minute), *s.config.Architecti)
+
+	// Then: no error propagated (dispatcher logs and continues), but Assign never called
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	client.mu.Lock()
+	assigns := client.assignCalls
+	client.mu.Unlock()
+	if assigns != 0 {
+		t.Errorf("assignCalls = %d, want 0 (missing cataractae must be rejected before Assign)", assigns)
+	}
+}
+
+// --- Issue 2: rate limit not recorded when Assign fails ---
+
+func TestRunArchitecti_RestartRateLimit_NotRecordedWhenAssignFails(t *testing.T) {
+	// Given: Assign will fail on the first call
+	client := newMockClient()
+	client.items["d-001"] = stagnantDroplet("d-001", 60*time.Minute)
+	client.assignErr = errors.New("assign failed")
+	s := testSchedulerWithArchitecti(client)
+
+	restartJSON := `[{"action":"restart","droplet_id":"d-001","cataractae":"implement","reason":"test"}]`
+	s.architectiExecFn = func(_ context.Context, _ string) ([]byte, error) {
+		return []byte(restartJSON), nil
+	}
+
+	d := stagnantDroplet("d-001", 60*time.Minute)
+
+	// First run: Assign fails — rate limit must NOT be recorded
+	if err := s.runArchitecti(context.Background(), d, *s.config.Architecti); err != nil {
+		t.Fatalf("first run error: %v", err)
+	}
+	client.mu.Lock()
+	firstAssigns := client.assignCalls
+	client.mu.Unlock()
+	if firstAssigns != 1 {
+		t.Errorf("after first run: assignCalls = %d, want 1", firstAssigns)
+	}
+
+	// Clear the error so the second Assign can succeed
+	client.mu.Lock()
+	client.assignErr = nil
+	client.mu.Unlock()
+
+	// Second run: must NOT be rate-limited (first Assign failed, no timestamp recorded)
+	if err := s.runArchitecti(context.Background(), d, *s.config.Architecti); err != nil {
+		t.Fatalf("second run error: %v", err)
+	}
+	client.mu.Lock()
+	secondAssigns := client.assignCalls
+	client.mu.Unlock()
+	if secondAssigns != 2 {
+		t.Errorf("after second run: assignCalls = %d, want 2 (rate limit must not block retry after failed assign)", secondAssigns)
 	}
 }
