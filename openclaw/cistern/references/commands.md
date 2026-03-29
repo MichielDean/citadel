@@ -309,6 +309,82 @@ The droplet browser provides three views:
 
 All actions execute immediately through the cistern database. After any action completes, the detail view re-fetches and displays updated state.
 
+## Security Audit
+
+```bash
+ct audit run --repo <repo> [--dry-run] [--model <model>] [--priority <n>]
+```
+
+Spawns a whole-codebase security audit agent and files findings as cistern droplets.
+
+The audit agent has **read-only access** to the full repository (Glob, Grep, Read tools only) and scans for systemic vulnerabilities:
+
+**Vulnerability categories:**
+- **Authentication & Authorization** — Missing/incorrect auth checks, privilege escalation, session flaws
+- **Injection** — SQL injection, command injection, path traversal, XSS
+- **Secrets & Credentials** — Hardcoded secrets, API keys, logged sensitive data
+- **Data Exposure** — Sensitive fields in responses, verbose errors, IDOR vectors
+- **Resource Safety** — Unbounded allocations, missing rate limiting, missing timeouts
+
+**Severity levels:**
+- `blocking` — Exploitable in production with material impact (data breach, auth bypass, RCE)
+- `required` — Security weakness that should be fixed (missing validation, weak crypto, IDOR)
+- `suggestion` — Defense-in-depth improvement (additional logging, stricter CSP, input limits)
+
+### Options
+
+| Flag | Values | Default |
+|------|--------|---------|
+| `--repo` | repo name (required) | — |
+| `--dry-run` | flag — print findings without filing droplets | off |
+| `--model` | model ID (e.g., claude-opus-4-6) | configured default |
+| `--priority` | droplet priority 1–4 (1 = highest) | 1 |
+
+### Example
+
+```bash
+# Run full audit, file findings as droplets
+ct audit run --repo cistern
+
+# Preview findings without filing them
+ct audit run --repo cistern --dry-run
+
+# Override default model
+ct audit run --repo cistern --model claude-opus-4-6
+
+# File findings with lower priority
+ct audit run --repo cistern --priority 2
+```
+
+### Output
+
+**Without findings:**
+```
+Audit complete. No findings.
+```
+
+**With findings (not dry-run):**
+```
+Audit complete. Filed 3 finding(s):
+  ci-ltbxe-abc1  SQL injection in query builder [blocking]
+  ci-ltbxe-abc2  Missing rate limiting on login endpoint [required]
+  ci-ltbxe-abc3  Verbose error messages in API [suggestion]
+```
+
+**With findings (dry-run):**
+```
+Audit findings (3) — dry run, not filed:
+
+1. [blocking] SQL injection in query builder
+   Location: internal/query/builder.go:42
+   Attack:   Attacker can inject SQL via the filter parameter
+   Fix:      Use parameterized queries instead of string concatenation
+
+...
+```
+
+Each finding filed as a droplet includes severity, file location, attack vector, and remediation steps in its description.
+
 ## Status & Health
 
 ```bash
