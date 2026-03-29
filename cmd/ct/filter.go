@@ -108,8 +108,7 @@ Use --output-format json for scriptable output (session_id + proposals).`,
 		if filterTitle == "" {
 			return fmt.Errorf("--title is required (or use --resume to continue an existing session)")
 		}
-		// Compute the repo worktree path unconditionally so it can be passed to
-		// the agent via --add-dir regardless of whether static context is injected.
+		// Compute the repo worktree path for --add-dir when --repo is set.
 		var repoPath string
 		if filterRepo != "" {
 			if home, err := os.UserHomeDir(); err == nil {
@@ -131,8 +130,7 @@ Use --output-format json for scriptable output (session_id + proposals).`,
 }
 
 // invokeFilterNew starts a new filtration session and returns proposals with session_id.
-// contextBlock, when non-empty, is prepended before the system prompt so the LLM
-// sees codebase context first. Pass empty string to omit context injection.
+// contextBlock is prepended before the system prompt so the LLM sees codebase context first.
 // repoPath, when non-empty and the preset defines AddDirFlag, is passed via
 // --add-dir so the agent can use read-only file tools to explore the repository.
 func invokeFilterNew(preset provider.ProviderPreset, title, description, contextBlock, repoPath string) (filterSessionResult, error) {
