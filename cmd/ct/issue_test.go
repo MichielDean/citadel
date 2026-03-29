@@ -18,7 +18,6 @@ func execCmd(t *testing.T, args ...string) error {
 func TestDropletIssueAdd_CreatesIssue(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "test.db")
 	t.Setenv("CT_DB", db)
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
 	t.Setenv("CT_CATARACTA_NAME", "reviewer")
 
 	c, err := cistern.New(db, "ct")
@@ -52,7 +51,6 @@ func TestDropletIssueAdd_CreatesIssue(t *testing.T) {
 func TestDropletIssueResolve_UpdatesStatus(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "test.db")
 	t.Setenv("CT_DB", db)
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
 	t.Setenv("CT_CATARACTA_NAME", "reviewer")
 
 	c, _ := cistern.New(db, "ct")
@@ -75,7 +73,6 @@ func TestDropletIssueResolve_UpdatesStatus(t *testing.T) {
 func TestDropletIssueResolve_ImplementerForbidden(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "test.db")
 	t.Setenv("CT_DB", db)
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
 	t.Setenv("CT_CATARACTA_NAME", "implementer")
 
 	c, _ := cistern.New(db, "ct")
@@ -103,7 +100,6 @@ func TestDropletIssueResolve_ImplementerForbidden(t *testing.T) {
 func TestDropletIssueResolve_ImplementShortName(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "test.db")
 	t.Setenv("CT_DB", db)
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
 	t.Setenv("CT_CATARACTA_NAME", "implement")
 
 	c, _ := cistern.New(db, "ct")
@@ -120,7 +116,6 @@ func TestDropletIssueResolve_ImplementShortName(t *testing.T) {
 func TestDropletIssueReject_UpdatesStatus(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "test.db")
 	t.Setenv("CT_DB", db)
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
 	t.Setenv("CT_CATARACTA_NAME", "reviewer")
 
 	c, _ := cistern.New(db, "ct")
@@ -146,7 +141,6 @@ func TestDropletIssueReject_UpdatesStatus(t *testing.T) {
 func TestDropletIssueReject_ImplementerForbidden(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "test.db")
 	t.Setenv("CT_DB", db)
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
 	t.Setenv("CT_CATARACTA_NAME", "implementer")
 
 	c, _ := cistern.New(db, "ct")
@@ -174,7 +168,6 @@ func TestDropletIssueReject_ImplementerForbidden(t *testing.T) {
 func TestDropletIssueReject_ImplementShortName(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "test.db")
 	t.Setenv("CT_DB", db)
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
 	t.Setenv("CT_CATARACTA_NAME", "implement")
 
 	c, _ := cistern.New(db, "ct")
@@ -191,8 +184,6 @@ func TestDropletIssueReject_ImplementShortName(t *testing.T) {
 func TestDropletPass_BlockedByOpenIssues(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "test.db")
 	t.Setenv("CT_DB", db)
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
-
 	c, _ := cistern.New(db, "ct")
 	item, _ := c.Add("myrepo", "Task", "", 1, 3)
 	c.AddIssue(item.ID, "reviewer", "open issue blocking pass")
@@ -218,7 +209,6 @@ func TestDropletPass_BlockedByOpenIssues(t *testing.T) {
 func TestDropletPass_AllowedWhenIssuesResolved(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "test.db")
 	t.Setenv("CT_DB", db)
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
 	t.Setenv("CT_CATARACTA_NAME", "reviewer")
 
 	c, _ := cistern.New(db, "ct")
@@ -246,8 +236,6 @@ func TestDropletPass_AllowedWhenIssuesResolved(t *testing.T) {
 func TestDropletPass_NoIssues(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "test.db")
 	t.Setenv("CT_DB", db)
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
-
 	c, _ := cistern.New(db, "ct")
 	item, _ := c.Add("myrepo", "Task", "", 1, 3)
 	c.Close()
@@ -268,8 +256,6 @@ func TestDropletPass_NoIssues(t *testing.T) {
 func TestDropletIssueList_NoIssues(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "test.db")
 	t.Setenv("CT_DB", db)
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
-
 	c, _ := cistern.New(db, "ct")
 	item, _ := c.Add("myrepo", "Task", "", 1, 3)
 	c.Close()
@@ -287,8 +273,6 @@ func TestDropletIssueList_NoIssues(t *testing.T) {
 func TestDropletIssueList_WithIssues(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "test.db")
 	t.Setenv("CT_DB", db)
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
-
 	c, _ := cistern.New(db, "ct")
 	item, _ := c.Add("myrepo", "Task", "", 1, 3)
 	c.AddIssue(item.ID, "reviewer", "first issue description")
@@ -312,8 +296,6 @@ func TestDropletIssueList_OpenFilter(t *testing.T) {
 	t.Cleanup(func() { issueListOpen = false })
 	db := filepath.Join(t.TempDir(), "test.db")
 	t.Setenv("CT_DB", db)
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
-
 	c, _ := cistern.New(db, "ct")
 	item, _ := c.Add("myrepo", "Task", "", 1, 3)
 	c.AddIssue(item.ID, "reviewer", "open issue stays")
@@ -337,7 +319,6 @@ func TestDropletIssueList_OpenFilter(t *testing.T) {
 func TestDropletIssueResolve_EmptyEvidence(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "test.db")
 	t.Setenv("CT_DB", db)
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
 	t.Setenv("CT_CATARACTA_NAME", "reviewer")
 
 	c, _ := cistern.New(db, "ct")
@@ -354,7 +335,6 @@ func TestDropletIssueResolve_EmptyEvidence(t *testing.T) {
 func TestDropletIssueReject_EmptyEvidence(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "test.db")
 	t.Setenv("CT_DB", db)
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
 	t.Setenv("CT_CATARACTA_NAME", "reviewer")
 
 	c, _ := cistern.New(db, "ct")
@@ -372,8 +352,6 @@ func TestDropletIssueList_FlaggedByFilter(t *testing.T) {
 	t.Cleanup(func() { issueListFlaggedBy = "" })
 	db := filepath.Join(t.TempDir(), "test.db")
 	t.Setenv("CT_DB", db)
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
-
 	// Given: issues filed by two different cataractae.
 	c, _ := cistern.New(db, "ct")
 	item, _ := c.Add("myrepo", "Task", "", 1, 3)

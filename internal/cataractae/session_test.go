@@ -385,7 +385,6 @@ func TestFakeagent_SpawnOutcomeCycle(t *testing.T) {
 	dbDir := t.TempDir()
 	dbPath := filepath.Join(dbDir, "test.db")
 	t.Setenv("CT_DB", dbPath)
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
 
 	c, err := cistern.New(dbPath, "fa")
 	if err != nil {

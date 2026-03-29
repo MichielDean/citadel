@@ -24,7 +24,6 @@ import (
 func TestFilterCmd_NewSession_UnknownRepo_ReturnsError(t *testing.T) {
 	cfgPath := writeTestConfig(t, "PortfolioWebsite")
 	t.Setenv("CT_CONFIG", cfgPath)
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
 	t.Cleanup(func() {
 		filterTitle = ""
 		filterRepo = ""
@@ -47,7 +46,6 @@ func TestFilterCmd_NewSession_UnknownRepo_ReturnsError(t *testing.T) {
 func TestFilterCmd_UnknownRepo_ReturnsError(t *testing.T) {
 	cfgPath := writeTestConfig(t, "PortfolioWebsite")
 	t.Setenv("CT_CONFIG", cfgPath)
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
 	t.Cleanup(func() {
 		filterResume = ""
 		filterFile = false
@@ -76,8 +74,6 @@ func TestFilterCmd_CanonicalizeRepo_StoresCanonicalName(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "test.db")
 	t.Setenv("CT_CONFIG", cfgPath)
 	t.Setenv("CT_DB", db)
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
-
 	// Resolve canonical repo (this is what filterCmd.RunE calls).
 	repo, err := resolveCanonicalRepo("portfoliowebsite")
 	if err != nil {
@@ -408,9 +404,7 @@ func TestInvokeFilterResume_DefaultsToResumeFlag(t *testing.T) {
 
 // TestFilterCmd_NewSession_RequiresTitle verifies that ct filter without --title
 // and without --resume returns an error mentioning --title.
-func TestFilterCmd_NewSession_RequiresTitle(t *testing.T) {
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
-	err := execCmd(t, "filter")
+func TestFilterCmd_NewSession_RequiresTitle(t *testing.T) {	err := execCmd(t, "filter")
 	if err == nil {
 		t.Fatal("expected error when --title is missing, got nil")
 	}
@@ -424,9 +418,7 @@ func TestFilterCmd_NewSession_RequiresTitle(t *testing.T) {
 // Given ct filter --resume <id> with no positional arg and no --file,
 // When the command is executed,
 // Then an error mentioning "feedback" is returned.
-func TestFilterCmd_Resume_RequiresFeedbackOrFile(t *testing.T) {
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
-	err := execCmd(t, "filter", "--resume", "some-session-id")
+func TestFilterCmd_Resume_RequiresFeedbackOrFile(t *testing.T) {	err := execCmd(t, "filter", "--resume", "some-session-id")
 	if err == nil {
 		t.Fatal("expected error when --resume without feedback or --file, got nil")
 	}
@@ -437,9 +429,7 @@ func TestFilterCmd_Resume_RequiresFeedbackOrFile(t *testing.T) {
 
 // TestFilterCmd_ResumeFile_RequiresRepo verifies that ct filter --resume ... --file
 // without --repo returns an error mentioning --repo.
-func TestFilterCmd_ResumeFile_RequiresRepo(t *testing.T) {
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
-	err := execCmd(t, "filter", "--resume", "some-session-id", "--file")
+func TestFilterCmd_ResumeFile_RequiresRepo(t *testing.T) {	err := execCmd(t, "filter", "--resume", "some-session-id", "--file")
 	if err == nil {
 		t.Fatal("expected error when --file without --repo, got nil")
 	}
@@ -536,8 +526,6 @@ func TestFilterCmd_ResumeFile_PersistsDroplet(t *testing.T) {
 	fakeagentBin := buildTestBin(t, "fakeagent", "github.com/MichielDean/cistern/internal/testutil/fakeagent")
 	db := filepath.Join(t.TempDir(), "test.db")
 	t.Setenv("CT_DB", db)
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
-
 	preset := provider.ProviderPreset{
 		Name:       "test",
 		Command:    fakeagentBin,
@@ -578,32 +566,87 @@ func TestFilterCmd_ResumeFile_PersistsDroplet(t *testing.T) {
 	}
 }
 
-// TestFilterCmd_SkipContextFlag_IsRejected verifies that --skip-context is no
-// longer a recognized flag and produces an "unknown flag" error.
-// Given any ct filter invocation with --skip-context,
-// When the command is executed,
-// Then an error containing "unknown flag: --skip-context" is returned.
-func TestFilterCmd_SkipContextFlag_IsRejected(t *testing.T) {
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
+// TestFilterCmd_SkipContextFlag_IsRecognized verifies that --skip-context is a
+// recognized flag and does not produce an "unknown flag" error.
+// Given a config with "PortfolioWebsite" and an unknown repo name,
+// When ct filter --title "..." --repo nonexistent --skip-context is called,
+// Then the error is about the unknown repo, not about an unrecognized flag.
+func TestFilterCmd_SkipContextFlag_IsRecognized(t *testing.T) {
+	cfgPath := writeTestConfig(t, "PortfolioWebsite")
+	t.Setenv("CT_CONFIG", cfgPath)
 	t.Cleanup(func() {
 		filterTitle = ""
+		filterRepo = ""
+		filterSkipContext = false
 	})
 
-	err := execCmd(t, "filter", "--title", "test idea", "--skip-context")
+	err := execCmd(t, "filter", "--title", "test idea", "--repo", "nonexistent-xyz", "--skip-context")
 	if err == nil {
-		t.Fatal("expected error for removed --skip-context flag, got nil")
+		t.Fatal("expected error (unknown repo), got nil")
 	}
-	if !strings.Contains(err.Error(), "unknown flag: --skip-context") {
-		t.Errorf("expected 'unknown flag: --skip-context' error, got: %v", err)
+	if strings.Contains(err.Error(), "unknown flag: --skip-context") {
+		t.Errorf("--skip-context flag not recognized: %v", err)
+	}
+	if !strings.Contains(err.Error(), "nonexistent-xyz") {
+		t.Errorf("expected error about unknown repo 'nonexistent-xyz', got: %v", err)
 	}
 }
 
-// TestFilterCmd_PromptAlwaysHasContextHeader verifies that context is always
-// injected into the prompt — there is no flag to bypass it.
+// TestFilterCmd_SkipContext_PromptHasNoContextHeader verifies that when
+// --skip-context is set, the prompt sent to the agent contains no
+// '=== CODEBASE CONTEXT ===' header, exercising the if !filterSkipContext branch.
 // Given a config that routes the filter preset to fakeagent with FAKEAGENT_PROMPT_FILE set,
-// When ct filter --title "..." is called,
+// When ct filter --title "..." --skip-context is called,
+// Then the captured prompt must not contain the codebase context header.
+func TestFilterCmd_SkipContext_PromptHasNoContextHeader(t *testing.T) {
+	fakeagentBin := buildTestBin(t, "fakeagent", "github.com/MichielDean/cistern/internal/testutil/fakeagent")
+	dir := t.TempDir()
+
+	// Config that overrides the claude preset command to point at fakeagent.
+	cfgPath := filepath.Join(dir, "cistern.yaml")
+	cfgContent := fmt.Sprintf("provider:\n  command: %s\nrepos:\n  - name: testRepo\n    cataractae: 1\n", fakeagentBin)
+	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0o644); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+
+	promptFile := filepath.Join(dir, "prompt.txt")
+	t.Setenv("CT_CONFIG", cfgPath)
+	t.Setenv("CT_DB", filepath.Join(dir, "test.db"))
+	t.Setenv("FAKEAGENT_PROMPT_FILE", promptFile)
+	// Reset globals that may be polluted by prior tests.
+	filterTitle = ""
+	filterResume = ""
+	filterFile = false
+	filterRepo = ""
+	filterSkipContext = false
+	t.Cleanup(func() {
+		filterTitle = ""
+		filterResume = ""
+		filterFile = false
+		filterRepo = ""
+		filterSkipContext = false
+	})
+
+	if err := execCmd(t, "filter", "--title", "test idea", "--skip-context"); err != nil {
+		t.Fatalf("filter --skip-context: unexpected error: %v", err)
+	}
+
+	captured, err := os.ReadFile(promptFile)
+	if err != nil {
+		t.Fatalf("reading captured prompt: %v", err)
+	}
+	if strings.Contains(string(captured), "=== CODEBASE CONTEXT ===") {
+		t.Errorf("--skip-context: prompt must not contain context header, got:\n%s", captured)
+	}
+}
+
+// TestFilterCmd_WithoutSkipContext_PromptHasContextHeader verifies that when
+// --skip-context is NOT set, the prompt sent to the agent does contain the
+// '=== CODEBASE CONTEXT ===' header. This exercises the !filterSkipContext path.
+// Given a config that routes the filter preset to fakeagent with FAKEAGENT_PROMPT_FILE set,
+// When ct filter --title "..." is called (no --skip-context),
 // Then the captured prompt must contain the codebase context header.
-func TestFilterCmd_PromptAlwaysHasContextHeader(t *testing.T) {
+func TestFilterCmd_WithoutSkipContext_PromptHasContextHeader(t *testing.T) {
 	fakeagentBin := buildTestBin(t, "fakeagent", "github.com/MichielDean/cistern/internal/testutil/fakeagent")
 	dir := t.TempDir()
 
@@ -616,22 +659,23 @@ func TestFilterCmd_PromptAlwaysHasContextHeader(t *testing.T) {
 	promptFile := filepath.Join(dir, "prompt.txt")
 	t.Setenv("CT_CONFIG", cfgPath)
 	t.Setenv("CT_DB", filepath.Join(dir, "test.db"))
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
 	t.Setenv("FAKEAGENT_PROMPT_FILE", promptFile)
 	// Reset globals that may be polluted by prior tests.
 	filterTitle = ""
 	filterResume = ""
 	filterFile = false
 	filterRepo = ""
+	filterSkipContext = false
 	t.Cleanup(func() {
 		filterTitle = ""
 		filterResume = ""
 		filterFile = false
 		filterRepo = ""
+		filterSkipContext = false
 	})
 
 	if err := execCmd(t, "filter", "--title", "test idea"); err != nil {
-		t.Fatalf("filter: unexpected error: %v", err)
+		t.Fatalf("filter without --skip-context: unexpected error: %v", err)
 	}
 
 	captured, err := os.ReadFile(promptFile)
@@ -639,7 +683,7 @@ func TestFilterCmd_PromptAlwaysHasContextHeader(t *testing.T) {
 		t.Fatalf("reading captured prompt: %v", err)
 	}
 	if !strings.Contains(string(captured), "=== CODEBASE CONTEXT ===") {
-		t.Errorf("prompt must always contain context header, got:\n%s", captured)
+		t.Errorf("without --skip-context: prompt must contain context header, got:\n%s", captured)
 	}
 }
 
@@ -775,21 +819,22 @@ func TestFilterCmd_WithRepo_ForwardsAddDirToAgent(t *testing.T) {
 	argsFile := filepath.Join(dir, "args.txt")
 	t.Setenv("CT_CONFIG", cfgPath)
 	t.Setenv("CT_DB", filepath.Join(dir, "test.db"))
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
 	t.Setenv("FAKEAGENT_ARGS_FILE", argsFile)
 	// Reset globals that may be polluted by prior tests.
 	filterTitle = ""
 	filterResume = ""
 	filterFile = false
 	filterRepo = ""
+	filterSkipContext = false
 	t.Cleanup(func() {
 		filterTitle = ""
 		filterResume = ""
 		filterFile = false
 		filterRepo = ""
+		filterSkipContext = false
 	})
 
-	if err := execCmd(t, "filter", "--title", "test idea", "--repo", "testRepo"); err != nil {
+	if err := execCmd(t, "filter", "--title", "test idea", "--repo", "testRepo", "--skip-context"); err != nil {
 		t.Fatalf("filter --repo testRepo: unexpected error: %v", err)
 	}
 
