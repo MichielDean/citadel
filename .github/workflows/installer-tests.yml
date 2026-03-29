@@ -26,6 +26,18 @@ jobs:
     runs-on: [self-hosted, linux, x64]
 
     steps:
+      - name: Check disk space
+        run: |
+          DISK_USED_PCT=$(df --output=pcent "$GITHUB_WORKSPACE" | tail -1 | tr -d ' %')
+          DISK_FREE_PCT=$((100 - DISK_USED_PCT))
+          DISK_FREE_HUMAN=$(df -h "$GITHUB_WORKSPACE" | tail -1 | awk '{print $4}')
+          echo "Disk free: ${DISK_FREE_PCT}% (${DISK_FREE_HUMAN}) on $(df --output=source "$GITHUB_WORKSPACE" | tail -1)"
+          if [ "${DISK_FREE_PCT}" -lt 10 ]; then
+            echo "::error::Disk space critical: only ${DISK_FREE_PCT}% free on runner. Clean up runner disk before retrying."
+            df -h
+            exit 1
+          fi
+
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
@@ -55,3 +67,15 @@ jobs:
           path: |
             installer-test-container.log
           retention-days: 7
+
+      - name: Clean up runner _update and _diag
+        if: always()
+        run: |
+          RUNNER_ROOT="$(realpath "$GITHUB_WORKSPACE/../../..")"
+          for dir in _update _diag; do
+            TARGET="${RUNNER_ROOT}/${dir}"
+            if [ -d "${TARGET}" ]; then
+              echo "Cleaning ${dir} entries older than 1 day from ${TARGET}"
+              find "${TARGET}" -maxdepth 1 -mindepth 1 -mtime +1 -exec rm -rf {} + 2>/dev/null || true
+            fi
+          done
