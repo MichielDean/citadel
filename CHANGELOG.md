@@ -29,6 +29,25 @@ ct droplet block my-stagnant-droplet --notes "infrastructure failure: port alrea
 ct droplet recirculate my-stagnant-droplet --to implementer
 ```
 
+### ct audit run: whole-codebase security audit command (ci-ltbxe)
+
+New `ct audit run` command spawns a security audit agent against the full codebase and files findings as cistern droplets.
+
+**Key features:**
+- **Full codebase access**: Agent receives read-only access to the entire repository (Glob, Grep, Read tools)
+- **Systemic vulnerability scanning**: Scans for auth, injection, secrets, IDOR, rate limiting, resource safety issues
+- **Structured findings**: Each finding is filed as a standard droplet with severity, location, attack vector, and remediation
+- **Severity classification**: blocking (exploitable with material impact), required (should be fixed), suggestion (defense-in-depth)
+- **Optional dry-run**: `--dry-run` flag prints findings without filing droplets
+- **Model override**: `--model` flag allows overriding the configured agent model
+- **Priority control**: `--priority` flag sets urgency for filed finding droplets
+
+**Command syntax:**
+```bash
+ct audit run --repo <repo> [--dry-run] [--model <model>] [--priority <n>]
+```
+
+**Documentation:** See `openclaw/cistern/references/commands.md#security-audit` for full command reference, options, and examples.
 ### Security cataractae: grant full codebase access, remove diff-only isolation (ci-8rxid)
 
 The security cataractae now receives the full repository as context instead of only the diff. This enables deep vulnerability analysis through call chain tracing and cumulative exposure detection.
