@@ -296,30 +296,14 @@ func makeWorktreeDirWithoutFeatureBranch(t *testing.T, worktreeDir string) {
 	if err := os.MkdirAll(worktreeDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, args := range [][]string{
-		{"git", "init"},
-		{"git", "config", "user.email", "test@test.com"},
-		{"git", "config", "user.name", "Test"},
-	} {
-		cmd := exec.Command(args[0], args[1:]...)
-		cmd.Dir = worktreeDir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("%v: %v\n%s", args, err, out)
-		}
-	}
+	branchMustRun(t, branchGitCmd(worktreeDir, "init"))
+	branchMustRun(t, branchGitCmd(worktreeDir, "config", "user.email", "test@test.com"))
+	branchMustRun(t, branchGitCmd(worktreeDir, "config", "user.name", "Test"))
 	if err := os.WriteFile(filepath.Join(worktreeDir, "file.txt"), []byte("init"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	for _, args := range [][]string{
-		{"git", "add", "."},
-		{"git", "commit", "-m", "init"},
-	} {
-		cmd := exec.Command(args[0], args[1:]...)
-		cmd.Dir = worktreeDir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("%v: %v\n%s", args, err, out)
-		}
-	}
+	branchMustRun(t, branchGitCmd(worktreeDir, "add", "."))
+	branchMustRun(t, branchGitCmd(worktreeDir, "commit", "-m", "init"))
 }
 
 // TestRecoverDispatchLoop_PathspecError_LogsWarnAndEscalates verifies that when
