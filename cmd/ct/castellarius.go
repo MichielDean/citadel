@@ -555,7 +555,6 @@ var (
 	architectiRunDropletID string
 )
 
-
 var architectiRunCmd = &cobra.Command{
 	Use:   "run",
 	Short: "Invoke Architecti ad-hoc: build a snapshot, run the agent, and dispatch actions",

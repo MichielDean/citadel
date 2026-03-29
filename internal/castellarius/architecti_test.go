@@ -1257,7 +1257,7 @@ func TestRunArchitectiAdHoc_Normal_ReturnsFilteredActions_MaxFilesPerRun(t *test
 		false,
 	)
 
-	// Then: rawOutput is unfiltered (3 actions), returned actions are filtered (≤MaxFilesPerRun)
+	// Then: rawOutput is unfiltered (4 actions), returned actions are filtered (≤MaxFilesPerRun)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
