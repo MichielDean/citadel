@@ -74,7 +74,7 @@ Filtration is an optional pre-intake step that refines vague ideas before they e
 
 4. **QA** (`qa`) — Active verification with full codebase access: runs tests, checks each deliverable exists via `grep`, verifies CLI flags, checks mirror file consistency. Recirculates to implement on any failure.
 
-5. **Security Review** (`security-review`) — Adversarial security audit of the diff. Checks for auth bypass, injection, prompt injection, exposed secrets, resource safety, and path traversal.
+5. **Security Review** (`security-review`) — Adversarial security audit of the diff with full codebase access. Traces call chains to verify auth checks, audits cumulative exposure, and checks for auth bypass, injection, prompt injection, exposed secrets, resource safety, and path traversal.
 
 6. **Docs** (`docs`) — Reviews the diff and updates documentation for all user-visible changes: README, CHANGELOG, CLI reference, config docs. Skips if there are no user-visible changes.
 

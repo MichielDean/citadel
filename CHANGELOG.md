@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Security cataractae: grant full codebase access, remove diff-only isolation (ci-8rxid)
+
+The security cataractae now receives the full repository as context instead of only the diff. This enables deep vulnerability analysis through call chain tracing and cumulative exposure detection.
+
+**Key changes:**
+- **Full codebase access**: Security cataractae context changed from `diff_only` to `full_codebase` in aqueduct configurations
+- **Call chain tracing**: Security reviewer can now trace upstream from new endpoints/functions to verify auth checks exist before they can be reached
+- **Input flow analysis**: Can audit utility functions called by new code to verify they are safe regardless of whether they were modified in the diff
+- **Cumulative exposure detection**: Can identify whether a combination of new code and existing code creates a vulnerability (e.g., a new code path reaching an existing injection point)
+- **Updated instructions**: `cataractae/security/PERSONA.md` and `cataractae/security/INSTRUCTIONS.md` now document full codebase access and tracing methodology
+- **Prior issue check**: Security reviewer now checks for open issues from prior review cycles before conducting fresh audit
+
+**Configuration changes:**
+- `aqueduct/aqueduct.yaml:75` — `context: full_codebase` (was `diff_only`)
+- `cmd/ct/assets/aqueduct/aqueduct.yaml:89` — `context: full_codebase` (was `diff_only`) in ct init template
+- Updated comment on line 74: `full codebase access — trace call chains, verify auth checks, audit cumulative exposure` (was `context-isolated adversarial role`)
+
+**Impact**: The security reviewer now has sufficient context to catch vulnerabilities that are invisible from the changed lines alone, such as dangerous call chains that span from the diff into unchanged code, or cumulative issues where each individual change looks safe in isolation.
+
 ### git_sync: reset _primary working tree to origin/main after fetch (ci-vetm2)
 
 The `git_sync` drought hook now resets the `_primary` clone's working tree to `origin/main` after a successful fetch. This ensures new worktrees spawned from `_primary` always reflect the latest upstream state.
