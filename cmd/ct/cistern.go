@@ -1043,23 +1043,6 @@ var dropletPassCmd = &cobra.Command{
 			return fmt.Errorf("cannot pass: droplet %s has terminal status %q", args[0], item.Status)
 		}
 
-		// Refuse to pass if there are open issues.
-		openCount, err := c.CountOpenIssues(args[0])
-		if err != nil {
-			return err
-		}
-		if openCount > 0 {
-			issues, err2 := c.ListIssues(args[0], true, "")
-			if err2 != nil {
-				return err2
-			}
-			ids := make([]string, 0, len(issues))
-			for _, iss := range issues {
-				ids = append(ids, iss.ID)
-			}
-			return fmt.Errorf("cannot pass: %d open issue(s) remain: %s", openCount, strings.Join(ids, ", "))
-		}
-
 		if passNotes != "" {
 			if err := c.AddNote(args[0], cataractaeName(), passNotes); err != nil {
 				return err

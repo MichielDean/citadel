@@ -188,30 +188,26 @@ func TestDropletIssueReject_ImplementShortName(t *testing.T) {
 	}
 }
 
-func TestDropletPass_BlockedByOpenIssues(t *testing.T) {
+func TestDropletPass_SucceedsWithOpenIssues(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "test.db")
 	t.Setenv("CT_DB", db)
 	t.Setenv("CT_NO_ASCII_LOGO", "1")
 
 	c, _ := cistern.New(db, "ct")
 	item, _ := c.Add("myrepo", "Task", "", 1, 3)
-	c.AddIssue(item.ID, "reviewer", "open issue blocking pass")
+	c.AddIssue(item.ID, "reviewer", "open issue present")
 	c.Close()
 
-	err := execCmd(t, "droplet", "pass", item.ID)
-	if err == nil {
-		t.Error("expected error: pass should be blocked by open issues")
-	}
-	if !strings.Contains(err.Error(), "open issue") {
-		t.Errorf("unexpected error: %v", err)
+	if err := execCmd(t, "droplet", "pass", item.ID); err != nil {
+		t.Fatalf("pass should succeed even with open issues: %v", err)
 	}
 
-	// Verify outcome was NOT set.
+	// Verify outcome was set to pass.
 	c2, _ := cistern.New(db, "ct")
 	defer c2.Close()
 	d, _ := c2.Get(item.ID)
-	if d.Outcome == "pass" {
-		t.Error("outcome should not be set to pass when open issues exist")
+	if d.Outcome != "pass" {
+		t.Errorf("outcome = %q, want pass", d.Outcome)
 	}
 }
 
