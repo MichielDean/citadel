@@ -22,17 +22,6 @@ func architectiConfig(maxFiles int) *aqueduct.ArchitectiConfig {
 	}
 }
 
-// stagnantDroplet creates a droplet in pooled state whose UpdatedAt is
-// updatedAgo in the past.
-func stagnantDroplet(id string, updatedAgo time.Duration) *cistern.Droplet {
-	return &cistern.Droplet{
-		ID:        id,
-		Repo:      "test-repo",
-		Status:    "pooled",
-		UpdatedAt: time.Now().Add(-updatedAgo),
-	}
-}
-
 // pooledDroplet creates a droplet in pooled state whose UpdatedAt is
 // updatedAgo in the past.
 func pooledDroplet(id string, updatedAgo time.Duration) *cistern.Droplet {
@@ -49,7 +38,7 @@ func pooledDroplet(id string, updatedAgo time.Duration) *cistern.Droplet {
 func TestTryEnqueueArchitecti_NoExistingNote_EnqueuesAndWritesNote(t *testing.T) {
 	// Given: pooled droplet with no existing [architecti] invocation note
 	client := newMockClient()
-	droplet := stagnantDroplet("d-001", 5*time.Minute)
+	droplet := pooledDroplet("d-001", 5*time.Minute)
 	client.items["d-001"] = droplet
 
 	s := testScheduler(client, newMockRunner(client))
@@ -86,7 +75,7 @@ func TestTryEnqueueArchitecti_NoExistingNote_EnqueuesAndWritesNote(t *testing.T)
 func TestTryEnqueueArchitecti_ExistingInvocationNote_DoesNotEnqueue(t *testing.T) {
 	// Given: droplet already has an [architecti] enqueued: note (prior invocation)
 	client := newMockClient()
-	droplet := stagnantDroplet("d-001", 5*time.Minute)
+	droplet := pooledDroplet("d-001", 5*time.Minute)
 	client.items["d-001"] = droplet
 	client.notes["d-001"] = []cistern.CataractaeNote{
 		{
@@ -115,7 +104,7 @@ func TestTryEnqueueArchitecti_OtherArchitectiNote_DoesEnqueue(t *testing.T) {
 	// Given: droplet has an architecti action note (e.g., restart) but NOT an
 	// invocation note — action notes must not block fresh enqueues.
 	client := newMockClient()
-	droplet := stagnantDroplet("d-001", 5*time.Minute)
+	droplet := pooledDroplet("d-001", 5*time.Minute)
 	client.items["d-001"] = droplet
 	client.notes["d-001"] = []cistern.CataractaeNote{
 		{
@@ -146,7 +135,7 @@ func TestTryEnqueueArchitecti_AddNoteFails_EnqueuesWithoutNote(t *testing.T) {
 	// Given: AddNote returns an error — channel send happens first, so the
 	// droplet is still queued even though the dedup note could not be written.
 	client := newMockClient()
-	droplet := stagnantDroplet("d-001", 5*time.Minute)
+	droplet := pooledDroplet("d-001", 5*time.Minute)
 	client.addNoteErr = errors.New("db error")
 
 	s := testScheduler(client, newMockRunner(client))
@@ -216,7 +205,7 @@ func TestTryEnqueueArchitecti_PooledDroplet_EnqueuesAndWritesNote(t *testing.T) 
 func TestTryEnqueueArchitecti_QueueFull_DoesNotBlockAndDoesNotWriteNote(t *testing.T) {
 	// Given: queue is already at capacity
 	client := newMockClient()
-	droplet := stagnantDroplet("d-001", 5*time.Minute)
+	droplet := pooledDroplet("d-001", 5*time.Minute)
 
 	s := testScheduler(client, newMockRunner(client))
 
@@ -285,8 +274,8 @@ func TestStartArchitectiQueue_SerialDrain_RunsOneAtATime(t *testing.T) {
 	s.startArchitectiQueue(ctx)
 
 	// Enqueue two droplets with different IDs
-	s.architectiQueue <- stagnantDroplet("d-001", 5*time.Minute)
-	s.architectiQueue <- stagnantDroplet("d-002", 5*time.Minute)
+	s.architectiQueue <- pooledDroplet("d-001", 5*time.Minute)
+	s.architectiQueue <- pooledDroplet("d-002", 5*time.Minute)
 
 	// Wait for first droplet to start
 	select {
@@ -339,7 +328,7 @@ func TestStartArchitectiQueue_DuplicatesInQueue_ProcessedOnce(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Put the same droplet ID in the queue twice before starting the drainer
-	d := stagnantDroplet("d-001", 5*time.Minute)
+	d := pooledDroplet("d-001", 5*time.Minute)
 	s.architectiQueue <- d
 	s.architectiQueue <- d
 
@@ -371,7 +360,7 @@ func TestStartArchitectiQueue_UsesConfigFromScheduler(t *testing.T) {
 	defer cancel()
 
 	s.startArchitectiQueue(ctx)
-	s.architectiQueue <- stagnantDroplet("d-001", 5*time.Minute)
+	s.architectiQueue <- pooledDroplet("d-001", 5*time.Minute)
 
 	select {
 	case cfg := <-cfgCh:
@@ -399,7 +388,7 @@ func TestStartArchitectiQueue_DefaultConfig_WhenArchitectiNil(t *testing.T) {
 	defer cancel()
 
 	s.startArchitectiQueue(ctx)
-	s.architectiQueue <- stagnantDroplet("d-001", 5*time.Minute)
+	s.architectiQueue <- pooledDroplet("d-001", 5*time.Minute)
 
 	select {
 	case cfg := <-cfgCh:
@@ -415,7 +404,7 @@ func TestTryEnqueueArchitecti_RestartSafe_ExistingNoteBlocksReEnqueue(t *testing
 	// Given: Castellarius restarts; pooled droplet already has an invocation note
 	// from the prior run. The note check must prevent re-enqueue.
 	client := newMockClient()
-	droplet := stagnantDroplet("d-001", 120*time.Minute)
+	droplet := pooledDroplet("d-001", 120*time.Minute)
 	client.items["d-001"] = droplet
 	// Simulate: note was written before the restart
 	client.notes["d-001"] = []cistern.CataractaeNote{
@@ -445,7 +434,7 @@ func TestTryEnqueueArchitecti_SuccessfulEnqueue_WritesBothNoteAndQueues(t *testi
 	// Given: successful enqueue — channel send happens first, then note write.
 	// Verify both the queue entry and the invocation note are present after the call.
 	client := newMockClient()
-	droplet := stagnantDroplet("d-001", 5*time.Minute)
+	droplet := pooledDroplet("d-001", 5*time.Minute)
 
 	s := testScheduler(client, newMockRunner(client))
 
@@ -502,7 +491,7 @@ func TestRunArchitecti_GlobalSingletonGuard_SkipsWhenRunning(t *testing.T) {
 	s.architectiRunning.Store(true)
 
 	// When: runArchitecti is called
-	err := s.runArchitecti(context.Background(), stagnantDroplet("d-001", 60*time.Minute), *s.config.Architecti)
+	err := s.runArchitecti(context.Background(), pooledDroplet("d-001", 60*time.Minute), *s.config.Architecti)
 
 	// Then: no error, exec not called (singleton guard fired)
 	if err != nil {
@@ -520,11 +509,11 @@ func TestRunArchitecti_GlobalSingletonGuard_SkipsWhenRunning(t *testing.T) {
 func TestRunArchitecti_GlobalSingletonGuard_ClearsAfterRun(t *testing.T) {
 	// Given: architectiRunning starts false
 	client := newMockClient()
-	client.items["d-001"] = stagnantDroplet("d-001", 60*time.Minute)
+	client.items["d-001"] = pooledDroplet("d-001", 60*time.Minute)
 	s := testSchedulerWithArchitecti(client)
 
 	// When: runArchitecti completes normally
-	err := s.runArchitecti(context.Background(), stagnantDroplet("d-001", 60*time.Minute), *s.config.Architecti)
+	err := s.runArchitecti(context.Background(), pooledDroplet("d-001", 60*time.Minute), *s.config.Architecti)
 
 	// Then: no error, architectiRunning is cleared
 	if err != nil {
@@ -538,7 +527,7 @@ func TestRunArchitecti_GlobalSingletonGuard_ClearsAfterRun(t *testing.T) {
 func TestRunArchitecti_EmptyArray_LogsNoAction(t *testing.T) {
 	// Given: agent returns empty action array
 	client := newMockClient()
-	client.items["d-001"] = stagnantDroplet("d-001", 60*time.Minute)
+	client.items["d-001"] = pooledDroplet("d-001", 60*time.Minute)
 	s := testSchedulerWithArchitecti(client)
 
 	s.architectiExecFn = func(_ context.Context, _ string) ([]byte, error) {
@@ -546,7 +535,7 @@ func TestRunArchitecti_EmptyArray_LogsNoAction(t *testing.T) {
 	}
 
 	// When: runArchitecti runs
-	err := s.runArchitecti(context.Background(), stagnantDroplet("d-001", 60*time.Minute), *s.config.Architecti)
+	err := s.runArchitecti(context.Background(), pooledDroplet("d-001", 60*time.Minute), *s.config.Architecti)
 
 	// Then: no error, no client mutations
 	if err != nil {
@@ -565,7 +554,7 @@ func TestRunArchitecti_EmptyArray_LogsNoAction(t *testing.T) {
 func TestRunArchitecti_RestartAction_ResetsDropletToNamedCataractae(t *testing.T) {
 	// Given: agent returns a restart action for d-001 → implement
 	client := newMockClient()
-	client.items["d-001"] = stagnantDroplet("d-001", 60*time.Minute)
+	client.items["d-001"] = pooledDroplet("d-001", 60*time.Minute)
 	s := testSchedulerWithArchitecti(client)
 
 	s.architectiExecFn = func(_ context.Context, _ string) ([]byte, error) {
@@ -573,7 +562,7 @@ func TestRunArchitecti_RestartAction_ResetsDropletToNamedCataractae(t *testing.T
 	}
 
 	// When: runArchitecti runs
-	err := s.runArchitecti(context.Background(), stagnantDroplet("d-001", 60*time.Minute), *s.config.Architecti)
+	err := s.runArchitecti(context.Background(), pooledDroplet("d-001", 60*time.Minute), *s.config.Architecti)
 
 	// Then: Assign called with empty worker and "implement" step
 	if err != nil {
@@ -590,7 +579,7 @@ func TestRunArchitecti_RestartAction_ResetsDropletToNamedCataractae(t *testing.T
 func TestRunArchitecti_RestartRateLimit_BlocksSecondRestartWithin24h(t *testing.T) {
 	// Given: agent returns a restart action for d-001
 	client := newMockClient()
-	client.items["d-001"] = stagnantDroplet("d-001", 60*time.Minute)
+	client.items["d-001"] = pooledDroplet("d-001", 60*time.Minute)
 	s := testSchedulerWithArchitecti(client)
 
 	restartJSON := `[{"action":"restart","droplet_id":"d-001","cataractae":"implement","reason":"test"}]`
@@ -598,7 +587,7 @@ func TestRunArchitecti_RestartRateLimit_BlocksSecondRestartWithin24h(t *testing.
 		return []byte(restartJSON), nil
 	}
 
-	d := stagnantDroplet("d-001", 60*time.Minute)
+	d := pooledDroplet("d-001", 60*time.Minute)
 
 	// First run: restart should be executed
 	if err := s.runArchitecti(context.Background(), d, *s.config.Architecti); err != nil {
@@ -626,14 +615,14 @@ func TestRunArchitecti_RestartRateLimit_BlocksSecondRestartWithin24h(t *testing.
 func TestRunArchitecti_CancelAction_CancelsDroplet(t *testing.T) {
 	// Given: agent returns a cancel action for d-001
 	client := newMockClient()
-	client.items["d-001"] = stagnantDroplet("d-001", 60*time.Minute)
+	client.items["d-001"] = pooledDroplet("d-001", 60*time.Minute)
 	s := testSchedulerWithArchitecti(client)
 
 	s.architectiExecFn = func(_ context.Context, _ string) ([]byte, error) {
 		return []byte(`[{"action":"cancel","droplet_id":"d-001","reason":"irrecoverable"}]`), nil
 	}
 
-	err := s.runArchitecti(context.Background(), stagnantDroplet("d-001", 60*time.Minute), *s.config.Architecti)
+	err := s.runArchitecti(context.Background(), pooledDroplet("d-001", 60*time.Minute), *s.config.Architecti)
 
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
@@ -655,7 +644,7 @@ func TestRunArchitecti_FileAction_CreatesNewDroplet(t *testing.T) {
 		return []byte(`[{"action":"file","repo":"test-repo","title":"Fix the thing","description":"details","complexity":"standard","reason":"structural bug"}]`), nil
 	}
 
-	err := s.runArchitecti(context.Background(), stagnantDroplet("d-001", 60*time.Minute), *s.config.Architecti)
+	err := s.runArchitecti(context.Background(), pooledDroplet("d-001", 60*time.Minute), *s.config.Architecti)
 
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
@@ -690,7 +679,7 @@ func TestRunArchitecti_FileAction_MaxFilesPerRun_LimitsActions(t *testing.T) {
 		]`), nil
 	}
 
-	err := s.runArchitecti(context.Background(), stagnantDroplet("d-001", 60*time.Minute), *s.config.Architecti)
+	err := s.runArchitecti(context.Background(), pooledDroplet("d-001", 60*time.Minute), *s.config.Architecti)
 
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
@@ -706,14 +695,14 @@ func TestRunArchitecti_FileAction_MaxFilesPerRun_LimitsActions(t *testing.T) {
 func TestRunArchitecti_NoteAction_AddsNoteToDroplet(t *testing.T) {
 	// Given: agent returns a note action for d-001
 	client := newMockClient()
-	client.items["d-001"] = stagnantDroplet("d-001", 60*time.Minute)
+	client.items["d-001"] = pooledDroplet("d-001", 60*time.Minute)
 	s := testSchedulerWithArchitecti(client)
 
 	s.architectiExecFn = func(_ context.Context, _ string) ([]byte, error) {
 		return []byte(`[{"action":"note","droplet_id":"d-001","body":"looks like a known transient","reason":"r"}]`), nil
 	}
 
-	err := s.runArchitecti(context.Background(), stagnantDroplet("d-001", 60*time.Minute), *s.config.Architecti)
+	err := s.runArchitecti(context.Background(), pooledDroplet("d-001", 60*time.Minute), *s.config.Architecti)
 
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
@@ -757,7 +746,7 @@ func TestStartArchitectiQueue_PanicInRunFn_DrainerContinues(t *testing.T) {
 
 	// Enqueue the panicking droplet first, then a normal one
 	s.architectiQueue <- &cistern.Droplet{ID: "d-panic", Status: "pooled"}
-	s.architectiQueue <- stagnantDroplet("d-ok", 5*time.Minute)
+	s.architectiQueue <- pooledDroplet("d-ok", 5*time.Minute)
 
 	// Then: drainer recovers from panic and processes d-ok
 	select {
@@ -790,7 +779,7 @@ func TestStartArchitectiQueue_SeenMap_ClearedBetweenBursts(t *testing.T) {
 	s.startArchitectiQueue(ctx)
 
 	// First burst: enqueue d-001 and drain it
-	s.architectiQueue <- stagnantDroplet("d-001", 5*time.Minute)
+	s.architectiQueue <- pooledDroplet("d-001", 5*time.Minute)
 	select {
 	case id := <-processed:
 		if id != "d-001" {
@@ -804,7 +793,7 @@ func TestStartArchitectiQueue_SeenMap_ClearedBetweenBursts(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 
 	// Second burst: enqueue d-001 again; seen-map should be cleared so it runs
-	s.architectiQueue <- stagnantDroplet("d-001", 5*time.Minute)
+	s.architectiQueue <- pooledDroplet("d-001", 5*time.Minute)
 	select {
 	case id := <-processed:
 		if id != "d-001" {
@@ -840,7 +829,7 @@ func TestRunArchitecti_RestartCastellarius_WhenSchedulerHung(t *testing.T) {
 		return []byte(`[{"action":"restart_castellarius","reason":"scheduler appears hung"}]`), nil
 	}
 
-	err := s.runArchitecti(context.Background(), stagnantDroplet("d-001", 60*time.Minute), *s.config.Architecti)
+	err := s.runArchitecti(context.Background(), pooledDroplet("d-001", 60*time.Minute), *s.config.Architecti)
 
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
@@ -873,7 +862,7 @@ func TestRunArchitecti_RestartCastellarius_SkipsWhenSchedulerHealthy(t *testing.
 		return []byte(`[{"action":"restart_castellarius","reason":"just testing"}]`), nil
 	}
 
-	err := s.runArchitecti(context.Background(), stagnantDroplet("d-001", 60*time.Minute), *s.config.Architecti)
+	err := s.runArchitecti(context.Background(), pooledDroplet("d-001", 60*time.Minute), *s.config.Architecti)
 
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
@@ -914,7 +903,7 @@ func TestRunArchitecti_RestartCastellarius_RefusesWhenDbPathEmpty(t *testing.T) 
 	}
 
 	// When: runArchitecti dispatches the restart_castellarius action
-	err := s.runArchitecti(context.Background(), stagnantDroplet("d-001", 60*time.Minute), *s.config.Architecti)
+	err := s.runArchitecti(context.Background(), pooledDroplet("d-001", 60*time.Minute), *s.config.Architecti)
 
 	// Then: restart refused — cannot verify hung state without health file
 	if err != nil {
@@ -943,7 +932,7 @@ func TestRunArchitecti_RestartCastellarius_RefusesWhenHealthFileUnreadable(t *te
 		return []byte(`[{"action":"restart_castellarius","reason":"test"}]`), nil
 	}
 
-	err := s.runArchitecti(context.Background(), stagnantDroplet("d-001", 60*time.Minute), *s.config.Architecti)
+	err := s.runArchitecti(context.Background(), pooledDroplet("d-001", 60*time.Minute), *s.config.Architecti)
 
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
@@ -958,7 +947,7 @@ func TestRunArchitecti_RestartCastellarius_RefusesWhenHealthFileUnreadable(t *te
 func TestRunArchitecti_RestartAction_MissingCataractae_NoAssignCalled(t *testing.T) {
 	// Given: agent outputs a restart action with no cataractae field
 	client := newMockClient()
-	client.items["d-001"] = stagnantDroplet("d-001", 60*time.Minute)
+	client.items["d-001"] = pooledDroplet("d-001", 60*time.Minute)
 	s := testSchedulerWithArchitecti(client)
 
 	s.architectiExecFn = func(_ context.Context, _ string) ([]byte, error) {
@@ -966,7 +955,7 @@ func TestRunArchitecti_RestartAction_MissingCataractae_NoAssignCalled(t *testing
 	}
 
 	// When: runArchitecti dispatches the action
-	err := s.runArchitecti(context.Background(), stagnantDroplet("d-001", 60*time.Minute), *s.config.Architecti)
+	err := s.runArchitecti(context.Background(), pooledDroplet("d-001", 60*time.Minute), *s.config.Architecti)
 
 	// Then: no error propagated (dispatcher logs and continues), but Assign never called
 	if err != nil {
@@ -985,7 +974,7 @@ func TestRunArchitecti_RestartAction_MissingCataractae_NoAssignCalled(t *testing
 func TestRunArchitecti_RestartRateLimit_NotRecordedWhenAssignFails(t *testing.T) {
 	// Given: Assign will fail on the first call
 	client := newMockClient()
-	client.items["d-001"] = stagnantDroplet("d-001", 60*time.Minute)
+	client.items["d-001"] = pooledDroplet("d-001", 60*time.Minute)
 	client.assignErr = errors.New("assign failed")
 	s := testSchedulerWithArchitecti(client)
 
@@ -994,7 +983,7 @@ func TestRunArchitecti_RestartRateLimit_NotRecordedWhenAssignFails(t *testing.T)
 		return []byte(restartJSON), nil
 	}
 
-	d := stagnantDroplet("d-001", 60*time.Minute)
+	d := pooledDroplet("d-001", 60*time.Minute)
 
 	// First run: Assign fails — rate limit must NOT be recorded
 	if err := s.runArchitecti(context.Background(), d, *s.config.Architecti); err != nil {
@@ -1029,7 +1018,7 @@ func TestRunArchitecti_RestartRateLimit_NotRecordedWhenAssignFails(t *testing.T)
 func TestRunArchitectiAdHoc_DryRun_ReturnsSnapshotAndOutput_WithoutDispatching(t *testing.T) {
 	// Given: dry-run mode, agent returns a restart action
 	client := newMockClient()
-	client.items["d-001"] = stagnantDroplet("d-001", 60*time.Minute)
+	client.items["d-001"] = pooledDroplet("d-001", 60*time.Minute)
 	s := testSchedulerWithArchitecti(client)
 
 	agentOutput := `[{"action":"restart","droplet_id":"d-001","cataractae":"implement","reason":"test"}]`
@@ -1040,7 +1029,7 @@ func TestRunArchitectiAdHoc_DryRun_ReturnsSnapshotAndOutput_WithoutDispatching(t
 	// When: RunArchitectiAdHoc is called with dryRun=true
 	snapshot, rawOutput, actions, err := s.RunArchitectiAdHoc(
 		context.Background(),
-		stagnantDroplet("d-001", 60*time.Minute),
+		pooledDroplet("d-001", 60*time.Minute),
 		*s.config.Architecti,
 		true,
 	)
@@ -1070,7 +1059,7 @@ func TestRunArchitectiAdHoc_DryRun_ReturnsSnapshotAndOutput_WithoutDispatching(t
 func TestRunArchitectiAdHoc_Normal_DispatchesActions(t *testing.T) {
 	// Given: normal mode, agent returns a restart action for d-001
 	client := newMockClient()
-	client.items["d-001"] = stagnantDroplet("d-001", 60*time.Minute)
+	client.items["d-001"] = pooledDroplet("d-001", 60*time.Minute)
 	s := testSchedulerWithArchitecti(client)
 
 	s.architectiExecFn = func(_ context.Context, _ string) ([]byte, error) {
@@ -1080,7 +1069,7 @@ func TestRunArchitectiAdHoc_Normal_DispatchesActions(t *testing.T) {
 	// When: RunArchitectiAdHoc is called with dryRun=false
 	snapshot, rawOutput, actions, err := s.RunArchitectiAdHoc(
 		context.Background(),
-		stagnantDroplet("d-001", 60*time.Minute),
+		pooledDroplet("d-001", 60*time.Minute),
 		*s.config.Architecti,
 		false,
 	)
@@ -1117,7 +1106,7 @@ func TestRunArchitectiAdHoc_Normal_EmptyActions_NoDispatch(t *testing.T) {
 
 	_, _, actions, err := s.RunArchitectiAdHoc(
 		context.Background(),
-		stagnantDroplet("d-001", 60*time.Minute),
+		pooledDroplet("d-001", 60*time.Minute),
 		*s.config.Architecti,
 		false,
 	)
@@ -1150,7 +1139,7 @@ func TestRunArchitectiAdHoc_ExecError_ReturnsError(t *testing.T) {
 	// When: RunArchitectiAdHoc is called
 	_, _, _, err := s.RunArchitectiAdHoc(
 		context.Background(),
-		stagnantDroplet("d-001", 60*time.Minute),
+		pooledDroplet("d-001", 60*time.Minute),
 		*s.config.Architecti,
 		false,
 	)
@@ -1381,7 +1370,7 @@ func TestBuildArchitectiSnapshot_Notes_TimestampAndCataractaeNameIncluded(t *tes
 func TestRunArchitectiAdHoc_Normal_MarkdownWrappedJSON_ReturnsParsedActions(t *testing.T) {
 	// Given: LLM output wraps JSON in markdown code block (typical LLM output)
 	client := newMockClient()
-	client.items["d-001"] = stagnantDroplet("d-001", 60*time.Minute)
+	client.items["d-001"] = pooledDroplet("d-001", 60*time.Minute)
 	s := testSchedulerWithArchitecti(client)
 
 	// LLM commonly wraps JSON in a markdown fenced code block
@@ -1395,7 +1384,7 @@ func TestRunArchitectiAdHoc_Normal_MarkdownWrappedJSON_ReturnsParsedActions(t *t
 	// When: RunArchitectiAdHoc dispatches (non-dry-run)
 	_, _, actions, err := s.RunArchitectiAdHoc(
 		context.Background(),
-		stagnantDroplet("d-001", 60*time.Minute),
+		pooledDroplet("d-001", 60*time.Minute),
 		*s.config.Architecti,
 		false,
 	)
@@ -1424,7 +1413,7 @@ func TestRunArchitectiAdHoc_ParseError_ReturnsError(t *testing.T) {
 	// When: RunArchitectiAdHoc is called with dryRun=false
 	_, _, _, err := s.RunArchitectiAdHoc(
 		context.Background(),
-		stagnantDroplet("d-001", 60*time.Minute),
+		pooledDroplet("d-001", 60*time.Minute),
 		*s.config.Architecti,
 		false,
 	)
@@ -1619,7 +1608,7 @@ func TestRunArchitectiAdHoc_Normal_ReturnsFilteredActions_MaxFilesPerRun(t *test
 	// When: RunArchitectiAdHoc dispatches (non-dry-run)
 	_, rawOutput, actions, err := s.RunArchitectiAdHoc(
 		context.Background(),
-		stagnantDroplet("d-001", 60*time.Minute),
+		pooledDroplet("d-001", 60*time.Minute),
 		*s.config.Architecti,
 		false,
 	)
