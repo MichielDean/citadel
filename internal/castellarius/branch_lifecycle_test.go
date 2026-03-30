@@ -411,8 +411,8 @@ func TestPrepareDropletWorktree_ResumesFromExistingBranch_AfterStagnantCleanup(t
 	if err != nil {
 		t.Fatalf("rev-parse after: %v", err)
 	}
-	if strings.TrimSpace(string(beforeSHA)) != strings.TrimSpace(string(afterSHA)) {
-		t.Errorf("prior commits lost: HEAD before=%s after=%s",
-			strings.TrimSpace(string(beforeSHA)), strings.TrimSpace(string(afterSHA)))
+	before, after := strings.TrimSpace(string(beforeSHA)), strings.TrimSpace(string(afterSHA))
+	if before != after {
+		t.Errorf("prior commits lost: HEAD before=%s after=%s", before, after)
 	}
 }

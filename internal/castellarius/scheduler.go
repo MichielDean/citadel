@@ -1832,14 +1832,13 @@ func prepareDropletWorktreeWithLogger(logger *slog.Logger, primaryDir, sandboxRo
 	addExisting := exec.Command("git", "worktree", "add", worktreePath, branch)
 	addExisting.Dir = primaryDir
 	freshBranch := false
-	if out, err := addExisting.CombinedOutput(); err != nil {
+	if _, err := addExisting.CombinedOutput(); err != nil {
 		// Branch doesn't exist yet — create it fresh from origin/main.
 		addNew := exec.Command("git", "worktree", "add", "-b", branch, worktreePath, "origin/main")
 		addNew.Dir = primaryDir
 		if out2, err2 := addNew.CombinedOutput(); err2 != nil {
 			return "", fmt.Errorf("git worktree add %s in %s: %w: %s", worktreePath, primaryDir, err2, out2)
 		}
-		_ = out // first attempt output discarded; only the second failure matters
 		freshBranch = true
 	}
 
