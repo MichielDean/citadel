@@ -147,7 +147,7 @@ ct droplet show <id>
 
 # Manage
 ct droplet restart <id>
-ct droplet escalate <id>
+ct droplet pool <id>
 ct droplet cancel <id>
 ct droplet note <id> "..."
 ct droplet deps <id> --add <dep-id>

@@ -29,9 +29,9 @@ ct droplet recirculate <id> --notes "Specific issues: 1. <issue> 2. <issue>"
 ct droplet recirculate <id> --to implement --notes "Reason for routing to implement."
 ```
 
-### Block — cannot proceed, needs human intervention
+### Pool — cannot proceed
 ```bash
-ct droplet block <id> --notes "Blocked because: <specific reason and what is needed>"
+ct droplet pool <id> --notes "Cannot proceed because: <specific reason and what is needed>"
 ```
 
 ### Add a note (without signaling)

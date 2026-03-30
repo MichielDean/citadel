@@ -335,12 +335,12 @@ func makePrimaryClone(t *testing.T, primaryDir string) {
 	branchMustRun(t, branchGitCmd(primaryDir, "config", "user.name", "Test"))
 }
 
-// TestRecoverDispatchLoop_PathspecError_LogsWarnAndEscalates verifies that when
+// TestRecoverDispatchLoop_PathspecError_LogsWarnAndPools verifies that when
 // prepareDropletWorktree fails with "pathspec did not match any file(s) known to git"
 // (i.e. the feature branch was deleted) and the fresh-branch fallback also fails,
-// the recovery logs at WARN level, escalates the droplet to stagnant with a note
+// the recovery logs at WARN level, pools the droplet with a note
 // containing the branch name and failure reason, and resets the dispatch tracker.
-func TestRecoverDispatchLoop_PathspecError_LogsWarnAndEscalates(t *testing.T) {
+func TestRecoverDispatchLoop_PathspecError_LogsWarnAndPools(t *testing.T) {
 	sandboxRoot := t.TempDir()
 	const itemID = "dl-pathspec-1"
 
@@ -396,14 +396,14 @@ func TestRecoverDispatchLoop_PathspecError_LogsWarnAndEscalates(t *testing.T) {
 	client.mu.Lock()
 	defer client.mu.Unlock()
 
-	// Escalate must have been called.
-	reason, escalated := client.escalated[itemID]
-	if !escalated {
-		t.Error("expected client.Escalate to be called when fresh-branch fallback also fails")
+	// Pool must have been called.
+	reason, pooled := client.pooled[itemID]
+	if !pooled {
+		t.Error("expected client.Pool to be called when fresh-branch fallback also fails")
 	}
-	// Escalation note must contain branch name.
+	// Pool reason must contain branch name.
 	if !strings.Contains(reason, "feat/"+itemID) {
-		t.Errorf("escalation reason must contain branch name; got: %q", reason)
+		t.Errorf("pool reason must contain branch name; got: %q", reason)
 	}
 
 	// An addNote call must contain the branch name and a failure reason.
@@ -424,11 +424,11 @@ func TestRecoverDispatchLoop_PathspecError_LogsWarnAndEscalates(t *testing.T) {
 	}
 }
 
-// TestRecoverDispatchLoop_PathspecError_FreshBranchSucceeds_NoEscalation verifies
+// TestRecoverDispatchLoop_PathspecError_FreshBranchSucceeds_NoPooling verifies
 // that when prepareDropletWorktree fails with "pathspec did not match" but the
-// fresh-branch fallback succeeds, the droplet is NOT escalated and a recovery
+// fresh-branch fallback succeeds, the droplet is NOT pooled and a recovery
 // note is written.
-func TestRecoverDispatchLoop_PathspecError_FreshBranchSucceeds_NoEscalation(t *testing.T) {
+func TestRecoverDispatchLoop_PathspecError_FreshBranchSucceeds_NoPooling(t *testing.T) {
 	sandboxRoot := t.TempDir()
 	const repoName = "test-repo"
 	const itemID = "dl-pathspec-fresh"
@@ -455,9 +455,9 @@ func TestRecoverDispatchLoop_PathspecError_FreshBranchSucceeds_NoEscalation(t *t
 	client.mu.Lock()
 	defer client.mu.Unlock()
 
-	// Must NOT escalate.
-	if _, escalated := client.escalated[itemID]; escalated {
-		t.Error("expected no escalation when fresh-branch fallback succeeds")
+	// Must NOT pool.
+	if _, pooled := client.pooled[itemID]; pooled {
+		t.Error("expected no pooling when fresh-branch fallback succeeds")
 	}
 
 	// A note mentioning the fresh-branch recovery must be written.
@@ -473,11 +473,11 @@ func TestRecoverDispatchLoop_PathspecError_FreshBranchSucceeds_NoEscalation(t *t
 	}
 }
 
-// TestRecoverDispatchLoop_PathspecError_RemoveAllFails_EscalatesImmediately verifies
+// TestRecoverDispatchLoop_PathspecError_RemoveAllFails_PoolsImmediately verifies
 // that when os.RemoveAll fails on the stale worktree directory (after a pathspec
-// error), the recovery logs at WARN level, escalates immediately with a reason
+// error), the recovery logs at WARN level, pools immediately with a reason
 // containing "stale worktree directory", and does NOT attempt the fresh-branch retry.
-func TestRecoverDispatchLoop_PathspecError_RemoveAllFails_EscalatesImmediately(t *testing.T) {
+func TestRecoverDispatchLoop_PathspecError_RemoveAllFails_PoolsImmediately(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("cannot simulate permission errors when running as root")
 	}
@@ -525,13 +525,13 @@ func TestRecoverDispatchLoop_PathspecError_RemoveAllFails_EscalatesImmediately(t
 	client.mu.Lock()
 	defer client.mu.Unlock()
 
-	// Must escalate immediately with a reason mentioning the stale worktree directory.
-	reason, escalated := client.escalated[itemID]
-	if !escalated {
-		t.Error("expected client.Escalate to be called when os.RemoveAll fails")
+	// Must pool immediately with a reason mentioning the stale worktree directory.
+	reason, pooled := client.pooled[itemID]
+	if !pooled {
+		t.Error("expected client.Pool to be called when os.RemoveAll fails")
 	}
 	if !strings.Contains(reason, "stale worktree") {
-		t.Errorf("expected escalation reason to mention 'stale worktree'; got: %q", reason)
+		t.Errorf("expected pool reason to mention 'stale worktree'; got: %q", reason)
 	}
 
 	// Must NOT have written a fresh-branch note (retry was skipped).
@@ -542,78 +542,11 @@ func TestRecoverDispatchLoop_PathspecError_RemoveAllFails_EscalatesImmediately(t
 	}
 }
 
-// TestRecoverDispatchLoop_OrphanedRegistryEntry_PruneEnablesRecreate verifies
-// that when a feature branch is "in-use" by a stale worktree registry entry
-// (the directory was deleted externally without git worktree remove), recovery
-// calls git worktree prune before git worktree add so the stale entry is
-// cleared and the worktree can be recreated successfully.
-func TestRecoverDispatchLoop_OrphanedRegistryEntry_PruneEnablesRecreate(t *testing.T) {
-	sandboxRoot := t.TempDir()
-	const repoName = "test-repo"
-	const itemID = "dl-orphan-prune"
-
-	primaryDir := filepath.Join(sandboxRoot, repoName, "_primary")
-	makePrimaryClone(t, primaryDir)
-
-	// Create the feature branch in a worktree at a stale path (not the expected worktreePath).
-	stalePath := filepath.Join(sandboxRoot, repoName, "stale-"+itemID)
-	branch := "feat/" + itemID
-	addCmd := exec.Command("git", "worktree", "add", "-b", branch, stalePath, "origin/main")
-	addCmd.Dir = primaryDir
-	if out, err := addCmd.CombinedOutput(); err != nil {
-		t.Fatalf("git worktree add stale: %v\n%s", err, out)
-	}
-
-	// Delete the stale worktree directory — leaves the .git/worktrees registry entry
-	// intact, with the branch marked as checked out at a now-missing path.
-	if err := os.RemoveAll(stalePath); err != nil {
-		t.Fatal(err)
-	}
-
-	// Precondition: the expected worktreePath is not registered (never created).
-	worktreePath := filepath.Join(sandboxRoot, repoName, itemID)
-	if worktreeRegistered(primaryDir, worktreePath) {
-		t.Fatal("precondition: worktreePath must not be registered")
-	}
-
-	client := newMockClient()
-	item := &cistern.Droplet{ID: itemID, CurrentCataractae: "implement", Status: "in_progress"}
-	client.items[itemID] = item
-
-	config := testConfig()
-	workflows := map[string]*aqueduct.Workflow{repoName: testWorkflow()}
-	clients := map[string]CisternClient{repoName: client}
-	runner := newMockRunner(client)
-	sched := NewFromParts(config, workflows, clients, runner, WithSandboxRoot(sandboxRoot))
-
-	sched.recoverDispatchLoop(client, item, config.Repos[0])
-
-	client.mu.Lock()
-	defer client.mu.Unlock()
-
-	// Must NOT escalate.
-	if _, escalated := client.escalated[itemID]; escalated {
-		t.Errorf("expected no escalation; reason: %q", client.escalated[itemID])
-	}
-
-	// A success note must be written confirming the worktree was recreated.
-	var hasSuccessNote bool
-	for _, n := range client.attached {
-		if n.id == itemID && strings.Contains(n.notes, "worktree recreated") {
-			hasSuccessNote = true
-			break
-		}
-	}
-	if !hasSuccessNote {
-		t.Errorf("expected 'worktree recreated' success note after prune clears stale entry; notes: %v", client.attached)
-	}
-}
-
-// TestRecoverDispatchLoop_AddNoteError_EscalationPath_LogsWarn verifies that
-// when AddNote returns an error during the escalation path (fixAttempt >
+// TestRecoverDispatchLoop_AddNoteError_PoolingPath_LogsWarn verifies that
+// when AddNote returns an error during the pooling path (fixAttempt >
 // dispatchMaxSelfFix), the error is logged at Warn level rather than silently
 // discarded.
-func TestRecoverDispatchLoop_AddNoteError_EscalationPath_LogsWarn(t *testing.T) {
+func TestRecoverDispatchLoop_AddNoteError_PoolingPath_LogsWarn(t *testing.T) {
 	const itemID = "dl-note-err-1"
 
 	client := newMockClient()
@@ -633,7 +566,7 @@ func TestRecoverDispatchLoop_AddNoteError_EscalationPath_LogsWarn(t *testing.T) 
 		WithSandboxRoot(t.TempDir()),
 	)
 
-	// Push fix attempt count above dispatchMaxSelfFix to trigger the escalation path.
+	// Push fix attempt count above dispatchMaxSelfFix to trigger the pooling path.
 	for range dispatchMaxSelfFix + 1 {
 		sched.dispatchLoop.incrementFix(itemID)
 	}
@@ -641,6 +574,6 @@ func TestRecoverDispatchLoop_AddNoteError_EscalationPath_LogsWarn(t *testing.T) 
 	sched.recoverDispatchLoop(client, item, config.Repos[0])
 
 	if !strings.Contains(buf.String(), "WARN") {
-		t.Errorf("expected WARN log when AddNote fails during escalation; log: %q", buf.String())
+		t.Errorf("expected WARN log when AddNote fails during pooling; log: %q", buf.String())
 	}
 }

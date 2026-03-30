@@ -23,21 +23,21 @@ const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
 
 // Droplet represents a unit of work flowing through the cistern.
 type Droplet struct {
-	ID               string `json:"id"`
-	Repo             string `json:"repo"`
-	Title            string `json:"title"`
-	Description      string `json:"description"`
-	Priority         int    `json:"priority"`
-	Complexity       int    `json:"complexity"`
-	Status           string `json:"status"`
-	Assignee         string `json:"assignee"` // empty string when unassigned
+	ID                string `json:"id"`
+	Repo              string `json:"repo"`
+	Title             string `json:"title"`
+	Description       string `json:"description"`
+	Priority          int    `json:"priority"`
+	Complexity        int    `json:"complexity"`
+	Status            string `json:"status"`
+	Assignee          string `json:"assignee"` // empty string when unassigned
 	CurrentCataractae string `json:"current_cataractae"`
-	// Outcome is set by agents via `ct droplet pass/recirculate/block`.
+	// Outcome is set by agents via `ct droplet pass/recirculate/pool`.
 	// Empty string means no outcome yet (NULL in DB).
 	Outcome string `json:"outcome,omitempty"`
 	// AssignedAqueduct records which aqueduct operator is currently holding this
 	// droplet. Set when first dispatched; cleared on terminal states (delivered,
-	// stagnant, cancelled) so no ghost assignments linger.
+	// pooled, cancelled) so no ghost assignments linger.
 	AssignedAqueduct string `json:"assigned_aqueduct,omitempty"`
 	// LastReviewedCommit is the HEAD commit hash at the time the last review
 	// diff was generated. Used to detect phantom commits (implement pass without
@@ -50,11 +50,11 @@ type Droplet struct {
 
 // CataractaeNote is a note attached by a workflow cataractae.
 type CataractaeNote struct {
-	ID        int       `json:"id"`
-	DropletID    string    `json:"droplet_id"`
-	CataractaeName string   `json:"cataractae_name"`
-	Content   string    `json:"content"`
-	CreatedAt time.Time `json:"created_at"`
+	ID             int       `json:"id"`
+	DropletID      string    `json:"droplet_id"`
+	CataractaeName string    `json:"cataractae_name"`
+	Content        string    `json:"content"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 // Client is a SQLite-backed work queue client.
@@ -122,7 +122,7 @@ func New(dbPath, prefix string) (*Client, error) {
 	}
 	db.Exec(`ALTER TABLE droplets ADD COLUMN outcome TEXT DEFAULT NULL`)
 	// Vocabulary migrations: update legacy status values to canonical vocabulary.
-	db.Exec(`UPDATE droplets SET status = 'stagnant' WHERE status = 'escalated'`)
+	db.Exec(`UPDATE droplets SET status = 'pooled' WHERE status IN ('stagnant', 'blocked', 'escalated')`)
 	// Dependency table migration for existing DBs (idempotent — IF NOT EXISTS).
 	db.Exec(`CREATE TABLE IF NOT EXISTS droplet_dependencies (
 		droplet_id TEXT NOT NULL REFERENCES droplets(id),
@@ -389,7 +389,7 @@ func (c *Client) Assign(id, worker, step string) error {
 
 // SetAssignedAqueduct records the aqueduct operator currently holding this
 // droplet. Only updates when the field is currently empty; CloseItem, Cancel,
-// and Escalate clear it as part of their terminal-state transitions.
+// and Pool clear it as part of their terminal-state transitions.
 func (c *Client) SetAssignedAqueduct(id, aqueductName string) error {
 	_, err := c.db.Exec(
 		`UPDATE droplets SET assigned_aqueduct = ? WHERE id = ? AND (assigned_aqueduct = '' OR assigned_aqueduct IS NULL)`,
@@ -448,7 +448,7 @@ type EditDropletFields struct {
 }
 
 // EditDroplet updates mutable fields on a droplet that has not yet been picked
-// up. Allowed statuses: open, stagnant. Returns an error if the droplet is
+// up. Allowed statuses: open, pooled. Returns an error if the droplet is
 // in_progress or delivered.
 func (c *Client) EditDroplet(id string, fields EditDropletFields) error {
 	if fields.Description == nil && fields.Complexity == nil && fields.Priority == nil {
@@ -477,7 +477,7 @@ func (c *Client) EditDroplet(id string, fields EditDropletFields) error {
 	args = append(args, time.Now().UTC())
 	args = append(args, id)
 
-	query := "UPDATE droplets SET " + strings.Join(setClauses, ", ") + " WHERE id = ? AND status IN ('open', 'stagnant')"
+	query := "UPDATE droplets SET " + strings.Join(setClauses, ", ") + " WHERE id = ? AND status IN ('open', 'pooled')"
 	res, err := c.db.Exec(query, args...)
 	if err != nil {
 		return fmt.Errorf("cistern: edit %s: %w", id, err)
@@ -545,26 +545,26 @@ func (c *Client) GetNotes(id string) ([]CataractaeNote, error) {
 	return notes, rows.Err()
 }
 
-// Escalate marks a droplet as needing human attention and records the reason.
+// Pool marks a droplet as pooled — cannot currently flow forward — and records the reason.
 // assigned_aqueduct is cleared atomically so no ghost assignments linger.
-func (c *Client) Escalate(id, reason string) error {
+func (c *Client) Pool(id, reason string) error {
 	res, err := c.db.Exec(
-		`UPDATE droplets SET status = 'stagnant', assigned_aqueduct = '', updated_at = ? WHERE id = ?`,
+		`UPDATE droplets SET status = 'pooled', assigned_aqueduct = '', updated_at = ? WHERE id = ?`,
 		time.Now().UTC(), id,
 	)
 	if err != nil {
-		return fmt.Errorf("cistern: escalate %s: %w", id, err)
+		return fmt.Errorf("cistern: pool %s: %w", id, err)
 	}
 	if err := checkRowsAffected(res, id); err != nil {
 		return err
 	}
 
 	_, err = c.db.Exec(
-		`INSERT INTO events (droplet_id, event_type, payload, created_at) VALUES (?, 'escalate', ?, ?)`,
+		`INSERT INTO events (droplet_id, event_type, payload, created_at) VALUES (?, 'pool', ?, ?)`,
 		id, reason, time.Now().UTC(),
 	)
 	if err != nil {
-		return fmt.Errorf("cistern: escalate event %s: %w", id, err)
+		return fmt.Errorf("cistern: pool event %s: %w", id, err)
 	}
 	return nil
 }
@@ -612,7 +612,7 @@ func (c *Client) CloseItem(id string) error {
 }
 
 // SetOutcome records the agent outcome on a droplet. Pass empty string to clear
-// (sets the column to NULL). Agents call this via `ct droplet pass/recirculate/block`.
+// (sets the column to NULL). Agents call this via `ct droplet pass/recirculate/pool`.
 func (c *Client) SetOutcome(id, outcome string) error {
 	var err error
 	var res sql.Result
@@ -787,7 +787,7 @@ func scanDroplet(row *sql.Row) (*Droplet, error) {
 	return &droplet, nil
 }
 
-// Purge deletes delivered/stagnant/cancelled droplets older than olderThan, cascading to
+// Purge deletes delivered/pooled/cancelled droplets older than olderThan, cascading to
 // cataractae_notes and events. Returns the count of droplets deleted (or that would be
 // deleted in dry-run mode).
 func (c *Client) Purge(olderThan time.Duration, dryRun bool) (int, error) {
@@ -796,7 +796,7 @@ func (c *Client) Purge(olderThan time.Duration, dryRun bool) (int, error) {
 	if dryRun {
 		var count int
 		err := c.db.QueryRow(
-			`SELECT COUNT(*) FROM droplets WHERE status IN ('delivered', 'stagnant', 'cancelled') AND updated_at < ?`,
+			`SELECT COUNT(*) FROM droplets WHERE status IN ('delivered', 'pooled', 'cancelled') AND updated_at < ?`,
 			cutoff,
 		).Scan(&count)
 		if err != nil {
@@ -813,7 +813,7 @@ func (c *Client) Purge(olderThan time.Duration, dryRun bool) (int, error) {
 
 	if _, err := tx.Exec(
 		`DELETE FROM cataractae_notes WHERE droplet_id IN (
-			SELECT id FROM droplets WHERE status IN ('delivered', 'stagnant', 'cancelled') AND updated_at < ?
+			SELECT id FROM droplets WHERE status IN ('delivered', 'pooled', 'cancelled') AND updated_at < ?
 		)`, cutoff,
 	); err != nil {
 		return 0, fmt.Errorf("cistern: purge cataractae_notes: %w", err)
@@ -821,7 +821,7 @@ func (c *Client) Purge(olderThan time.Duration, dryRun bool) (int, error) {
 
 	if _, err := tx.Exec(
 		`DELETE FROM events WHERE droplet_id IN (
-			SELECT id FROM droplets WHERE status IN ('delivered', 'stagnant', 'cancelled') AND updated_at < ?
+			SELECT id FROM droplets WHERE status IN ('delivered', 'pooled', 'cancelled') AND updated_at < ?
 		)`, cutoff,
 	); err != nil {
 		return 0, fmt.Errorf("cistern: purge events: %w", err)
@@ -829,14 +829,14 @@ func (c *Client) Purge(olderThan time.Duration, dryRun bool) (int, error) {
 
 	if _, err := tx.Exec(
 		`DELETE FROM droplet_issues WHERE droplet_id IN (
-			SELECT id FROM droplets WHERE status IN ('delivered', 'stagnant', 'cancelled') AND updated_at < ?
+			SELECT id FROM droplets WHERE status IN ('delivered', 'pooled', 'cancelled') AND updated_at < ?
 		)`, cutoff,
 	); err != nil {
 		return 0, fmt.Errorf("cistern: purge droplet_issues: %w", err)
 	}
 
 	res, err := tx.Exec(
-		`DELETE FROM droplets WHERE status IN ('delivered', 'stagnant', 'cancelled') AND updated_at < ?`,
+		`DELETE FROM droplets WHERE status IN ('delivered', 'pooled', 'cancelled') AND updated_at < ?`,
 		cutoff,
 	)
 	if err != nil {
@@ -855,9 +855,9 @@ func (c *Client) Purge(olderThan time.Duration, dryRun bool) (int, error) {
 
 // RecentEvent is a summary entry from the events or step_notes table.
 type RecentEvent struct {
-	Time  time.Time `json:"time"`
-	Droplet  string    `json:"droplet"`
-	Event string    `json:"event"`
+	Time    time.Time `json:"time"`
+	Droplet string    `json:"droplet"`
+	Event   string    `json:"event"`
 }
 
 // ListRecentEvents returns up to limit recent entries from the events and
@@ -890,7 +890,7 @@ type DropletStats struct {
 	Flowing   int // status=in_progress
 	Queued    int // status=open
 	Delivered int // status=delivered
-	Stagnant  int // status=stagnant
+	Pooled    int // status=pooled
 }
 
 // Stats returns counts of droplets grouped by status.
@@ -915,8 +915,8 @@ func (c *Client) Stats() (DropletStats, error) {
 			s.Queued += count
 		case "delivered":
 			s.Delivered += count
-		case "stagnant":
-			s.Stagnant += count
+		case "pooled":
+			s.Pooled += count
 		}
 	}
 	return s, rows.Err()

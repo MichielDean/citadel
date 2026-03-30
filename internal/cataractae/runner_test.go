@@ -30,11 +30,11 @@ func testQueueClient(t *testing.T) *cistern.Client {
 
 func testRepoConfig() aqueduct.RepoConfig {
 	return aqueduct.RepoConfig{
-		Name:    "testrepo",
-		URL:     "https://github.com/example/testrepo",
+		Name:       "testrepo",
+		URL:        "https://github.com/example/testrepo",
 		Cataractae: 3,
-		Names:   []string{"alice", "bob", "charlie"},
-		Prefix:  "tr",
+		Names:      []string{"alice", "bob", "charlie"},
+		Prefix:     "tr",
 	}
 }
 
@@ -53,7 +53,7 @@ func TestNewRunner_NamedWorkers(t *testing.T) {
 		SkipInitialClone: true,
 		Repo:             testRepoConfig(),
 		Workflow:         testWorkflow(),
-		CisternClient:      testQueueClient(t),
+		CisternClient:    testQueueClient(t),
 		SandboxRoot:      t.TempDir(),
 	}
 
@@ -96,7 +96,7 @@ func TestNewRunner_NumberedWorkers(t *testing.T) {
 		SkipInitialClone: true,
 		Repo:             repo,
 		Workflow:         testWorkflow(),
-		CisternClient:      testQueueClient(t),
+		CisternClient:    testQueueClient(t),
 		SandboxRoot:      t.TempDir(),
 	}
 
@@ -118,7 +118,7 @@ func TestNewRunner_NoWorkflow(t *testing.T) {
 	cfg := Config{
 		SkipInitialClone: true,
 		Repo:             testRepoConfig(),
-		CisternClient:      testQueueClient(t),
+		CisternClient:    testQueueClient(t),
 	}
 	_, err := New(cfg)
 	if err == nil {
@@ -143,7 +143,7 @@ func TestClaimRelease(t *testing.T) {
 		SkipInitialClone: true,
 		Repo:             testRepoConfig(),
 		Workflow:         testWorkflow(),
-		CisternClient:      testQueueClient(t),
+		CisternClient:    testQueueClient(t),
 		SandboxRoot:      t.TempDir(),
 	}
 
@@ -195,7 +195,7 @@ func TestStepByName(t *testing.T) {
 		SkipInitialClone: true,
 		Repo:             testRepoConfig(),
 		Workflow:         testWorkflow(),
-		CisternClient:      testQueueClient(t),
+		CisternClient:    testQueueClient(t),
 		SandboxRoot:      t.TempDir(),
 	}
 
@@ -225,7 +225,7 @@ func TestOutcomeValidate(t *testing.T) {
 		{"pass", false},
 		{"fail", false},
 		{"recirculate", false},
-		{"escalate", false},
+		{"pool", false},
 		{"", true},
 		{"unknown", true},
 	}
@@ -247,7 +247,7 @@ func TestOutcomeRouteField(t *testing.T) {
 		{"pass", "on_pass"},
 		{"fail", "on_fail"},
 		{"recirculate", "on_recirculate"},
-		{"escalate", "on_escalate"},
+		{"pool", "on_pool"},
 		{"unknown", ""},
 	}
 
@@ -272,10 +272,10 @@ func TestWriteContextFile(t *testing.T) {
 	}
 
 	step := &aqueduct.WorkflowCataractae{
-		Name:    "implement",
-		Type:    aqueduct.CataractaeTypeAgent,
+		Name:     "implement",
+		Type:     aqueduct.CataractaeTypeAgent,
 		Identity: "implementer",
-		Context: aqueduct.ContextFullCodebase,
+		Context:  aqueduct.ContextFullCodebase,
 	}
 
 	notes := []cistern.CataractaeNote{
@@ -414,7 +414,6 @@ func TestOutcomeJSON(t *testing.T) {
 	}
 }
 
-
 func TestWorkerSandboxPaths(t *testing.T) {
 	sandboxRoot := "/tmp/test-sandboxes"
 	repo := testRepoConfig()
@@ -439,9 +438,9 @@ func TestWorkerSandboxPaths(t *testing.T) {
 
 func TestWorkerName_Fallback(t *testing.T) {
 	repo := aqueduct.RepoConfig{
-		Name:    "test",
+		Name:       "test",
 		Cataractae: 2,
-		Names:   []string{"alpha"},
+		Names:      []string{"alpha"},
 	}
 
 	if got := workerName(repo, 0); got != "alpha" {
@@ -943,9 +942,9 @@ func TestWriteContextFile_ReviewerWithOpenIssues(t *testing.T) {
 	path := filepath.Join(dir, "CONTEXT.md")
 
 	item := &cistern.Droplet{
-		ID:     "rr-1",
-		Title:  "Review item",
-		Status: "in_progress",
+		ID:       "rr-1",
+		Title:    "Review item",
+		Status:   "in_progress",
 		Priority: 1,
 	}
 	step := &aqueduct.WorkflowCataractae{
@@ -1004,9 +1003,9 @@ func TestWriteContextFile_ReviewerWithRevisionNotes(t *testing.T) {
 	path := filepath.Join(dir, "CONTEXT.md")
 
 	item := &cistern.Droplet{
-		ID:     "rr-2",
-		Title:  "Review with notes",
-		Status: "in_progress",
+		ID:       "rr-2",
+		Title:    "Review with notes",
+		Status:   "in_progress",
 		Priority: 1,
 	}
 	step := &aqueduct.WorkflowCataractae{

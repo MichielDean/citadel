@@ -50,7 +50,7 @@ func stuckDeliveryWorkflow() *aqueduct.Workflow {
 	return &aqueduct.Workflow{
 		Name: "feature",
 		Cataractae: []aqueduct.WorkflowCataractae{
-			{Name: "implement", Type: aqueduct.CataractaeTypeAgent, OnPass: "delivery", OnFail: "blocked"},
+			{Name: "implement", Type: aqueduct.CataractaeTypeAgent, OnPass: "delivery", OnFail: "pooled"},
 			{
 				Name:           "delivery",
 				Type:           aqueduct.CataractaeTypeAgent,
@@ -83,10 +83,10 @@ func newStuckClient(item *cistern.Droplet) *mockClient {
 }
 
 type findPRResult struct {
-	prURL           string
-	state           string
+	prURL            string
+	state            string
 	mergeStateStatus string
-	err             error
+	err              error
 }
 
 // stuckScheduler builds a Castellarius with injectable stuck-delivery functions.
@@ -357,9 +357,9 @@ func TestRecoverOpenPR_Behind_RebaseOK_Pass(t *testing.T) {
 	c := newStuckClient(item)
 	s := stuckScheduler(c,
 		findPRResult{prURL: "https://github.com/o/r/pull/10", state: "OPEN", mergeStateStatus: "BEHIND"},
-		nil,  // killErr
-		nil,  // rebaseErr (success)
-		nil,  // ghMergeFirstErr (auto-merge succeeds)
+		nil, // killErr
+		nil, // rebaseErr (success)
+		nil, // ghMergeFirstErr (auto-merge succeeds)
 		nil,
 	)
 
@@ -397,7 +397,7 @@ func TestRecoverOpenPR_Behind_AutoMergeFail_StillPass(t *testing.T) {
 	s := stuckScheduler(c,
 		findPRResult{},
 		nil,
-		nil,                              // rebaseErr (success)
+		nil,                             // rebaseErr (success)
 		errors.New("auto-merge failed"), // ghMergeFirstErr (auto-merge attempt fails)
 		nil,
 	)
@@ -463,7 +463,7 @@ func TestRecoverOpenPR_Clean_DirectFail_AutoOK_Pass(t *testing.T) {
 		nil,
 		nil,
 		errors.New("direct merge: protected branch"), // first call fails
-		nil,                                           // second call (auto) succeeds
+		nil, // second call (auto) succeeds
 	)
 
 	s.recoverOpenPR(context.Background(), c, item, "/sandbox",

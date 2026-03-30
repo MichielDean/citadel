@@ -73,12 +73,12 @@ func TestFlowInspectCisternCounts(t *testing.T) {
 	if err := c.UpdateStatus(item2.ID, "in_progress"); err != nil {
 		t.Fatal(err)
 	}
-	// escalated item
-	item3, err := c.Add("repo", "stagnant item", "", 2, 2)
+	// pooled item
+	item3, err := c.Add("repo", "pooled item", "", 2, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Escalate(item3.ID, "test reason"); err != nil {
+	if err := c.Pool(item3.ID, "test reason"); err != nil {
 		t.Fatal(err)
 	}
 	// closed item
@@ -119,13 +119,13 @@ func TestFlowInspectCisternCounts(t *testing.T) {
 	if out.Counts.Queued != 1 {
 		t.Errorf("queued: got %d, want 1", out.Counts.Queued)
 	}
-	if out.Counts.Stagnant != 1 {
-		t.Errorf("stagnant: got %d, want 1", out.Counts.Stagnant)
+	if out.Counts.Pooled != 1 {
+		t.Errorf("pooled: got %d, want 1", out.Counts.Pooled)
 	}
 	if out.Counts.Delivered != 1 {
 		t.Errorf("delivered: got %d, want 1", out.Counts.Delivered)
 	}
-	if out.Counts.Total != 3 { // flowing + queued + stagnant, not closed
+	if out.Counts.Total != 3 { // flowing + queued + pooled, not closed
 		t.Errorf("total: got %d, want 3", out.Counts.Total)
 	}
 
@@ -198,7 +198,7 @@ func TestTmuxSessionAlive(t *testing.T) {
 	}
 }
 
-func TestBuildInspectOutput_UsesProvidedPathsAndIncludesStagnant(t *testing.T) {
+func TestBuildInspectOutput_UsesProvidedPathsAndIncludesPooled(t *testing.T) {
 	dir := t.TempDir()
 	db := filepath.Join(dir, "test.db")
 	cfgPath := tempCfg(t)
@@ -207,11 +207,11 @@ func TestBuildInspectOutput_UsesProvidedPathsAndIncludesStagnant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	item, err := c.Add("myrepo", "stagnant item", "", 2, 2)
+	item, err := c.Add("myrepo", "pooled item", "", 2, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Escalate(item.ID, "test reason"); err != nil {
+	if err := c.Pool(item.ID, "test reason"); err != nil {
 		t.Fatal(err)
 	}
 	c.Close()
@@ -224,13 +224,13 @@ func TestBuildInspectOutput_UsesProvidedPathsAndIncludesStagnant(t *testing.T) {
 	if out.Cistern.Config != cfgPath {
 		t.Errorf("config: got %q, want %q", out.Cistern.Config, cfgPath)
 	}
-	if out.Counts.Stagnant != 1 {
-		t.Errorf("stagnant: got %d, want 1", out.Counts.Stagnant)
+	if out.Counts.Pooled != 1 {
+		t.Errorf("pooled: got %d, want 1", out.Counts.Pooled)
 	}
 	if len(out.Droplets) != 1 {
 		t.Fatalf("droplets: got %d, want 1", len(out.Droplets))
 	}
-	if out.Droplets[0].Status != "stagnant" {
-		t.Errorf("droplet status: got %q, want escalated", out.Droplets[0].Status)
+	if out.Droplets[0].Status != "pooled" {
+		t.Errorf("droplet status: got %q, want pooled", out.Droplets[0].Status)
 	}
 }

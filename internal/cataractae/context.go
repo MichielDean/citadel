@@ -281,8 +281,8 @@ func writeContextFile(path string, p ContextParams) error {
 	b.WriteString("**Recirculate (needs rework — send back upstream):**\n")
 	b.WriteString(fmt.Sprintf("    ct droplet recirculate %s\n", p.Item.ID))
 	b.WriteString(fmt.Sprintf("    ct droplet recirculate %s --to implement\n\n", p.Item.ID))
-	b.WriteString("**Block (genuinely blocked, cannot proceed):**\n")
-	b.WriteString(fmt.Sprintf("    ct droplet block %s\n\n", p.Item.ID))
+	b.WriteString("**Pool (cannot currently proceed):**\n")
+	b.WriteString(fmt.Sprintf("    ct droplet pool %s\n\n", p.Item.ID))
 	b.WriteString("Add notes before signaling:\n")
 	b.WriteString(fmt.Sprintf("    ct droplet note %s \"What you did / found\"\n\n", p.Item.ID))
 	b.WriteString("The `ct` binary is on your PATH.\n")
@@ -335,7 +335,7 @@ func buildSpecContent(item *cistern.Droplet) string {
 }
 
 // revisionCycleNotes returns the notes from the most recent recirculate cycle —
-// i.e. all notes appended since the last "pass" or "block" note from a cataractae.
+// i.e. all notes appended since the last "pass" or "pool" note from a cataractae.
 // These are surfaced at the top of CONTEXT.md so the implementer sees them first.
 func revisionCycleNotes(notes []cistern.CataractaeNote) []cistern.CataractaeNote {
 	// Walk newest-to-oldest to find the start of the latest recirculate cycle.

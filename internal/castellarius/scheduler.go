@@ -31,7 +31,7 @@ type CisternClient interface {
 
 	AddNote(id, step, content string) error
 	GetNotes(id string) ([]cistern.CataractaeNote, error)
-	Escalate(id, reason string) error
+	Pool(id, reason string) error
 	CloseItem(id string) error
 	List(repo, status string) ([]*cistern.Droplet, error)
 	Purge(olderThan time.Duration, dryRun bool) (int, error)
@@ -78,26 +78,26 @@ type CataractaeRequest struct {
 // Castellarius is the core loop that polls for work, assigns it to operators,
 // and routes outcomes through workflow cataractae.
 type Castellarius struct {
-	config            aqueduct.AqueductConfig
-	workflows         map[string]*aqueduct.Workflow
-	clients           map[string]CisternClient
-	pools             map[string]*AqueductPool
-	runner            CataractaeRunner
-	logger            *slog.Logger
-	pollInterval      time.Duration
+	config       aqueduct.AqueductConfig
+	workflows    map[string]*aqueduct.Workflow
+	clients      map[string]CisternClient
+	pools        map[string]*AqueductPool
+	runner       CataractaeRunner
+	logger       *slog.Logger
+	pollInterval time.Duration
 	// heartbeatInterval controls how often orphaned in-progress droplets are
 	// checked. Independent of pollInterval so it fires even when the main tick
 	// is busy. Defaults to 30s.
-	heartbeatInterval   time.Duration
-	sandboxRoot         string
-	cleanupInterval     time.Duration
-	dbPath              string
-	wasDrought          bool
-	startupBinaryMtime  time.Time // mtime of the binary at startup; used to detect updates
-	cfgPath             string    // path to cistern.yaml; used to detect config-file updates
-	startupCfgMtime     time.Time // mtime of cistern.yaml at startup; used to detect updates
-	supervised          bool      // true if managed by systemd/supervisord/etc.
-	reloadCh            chan struct{} // signals Tick() to hot-reload workflows from disk
+	heartbeatInterval  time.Duration
+	sandboxRoot        string
+	cleanupInterval    time.Duration
+	dbPath             string
+	wasDrought         bool
+	startupBinaryMtime time.Time     // mtime of the binary at startup; used to detect updates
+	cfgPath            string        // path to cistern.yaml; used to detect config-file updates
+	startupCfgMtime    time.Time     // mtime of cistern.yaml at startup; used to detect updates
+	supervised         bool          // true if managed by systemd/supervisord/etc.
+	reloadCh           chan struct{} // signals Tick() to hot-reload workflows from disk
 
 	// Stuck delivery recovery — injectable for testing.
 	findPRFn        func(ctx context.Context, repoName, dropletID, sandboxDir string) (prURL, state, mergeStateStatus string, err error)
@@ -129,12 +129,12 @@ type Castellarius struct {
 	droughtRunning   atomic.Bool
 	droughtStartedAt atomic.Pointer[time.Time]
 
-	// runArchitectiFn is invoked for stagnant/blocked droplets when architecti
+	// runArchitectiFn is invoked for pooled droplets when architecti
 	// is enabled. Defaults to s.runArchitecti; injectable for testing.
 	runArchitectiFn func(context.Context, *cistern.Droplet, aqueduct.ArchitectiConfig) error
 
 	// architectiQueue is the serial in-memory queue for Architecti invocations.
-	// Stagnant/blocked transitions enqueue droplets here; a single background
+	// Pooled transitions enqueue droplets here; a single background
 	// goroutine drains it serially — one droplet at a time. Buffered to avoid
 	// blocking observeRepo. Always non-nil after construction.
 	architectiQueue chan *cistern.Droplet
@@ -170,12 +170,6 @@ type Castellarius struct {
 	// architectiRestartCastellariusFn executes the restart_castellarius action.
 	// Default: systemctl --user restart castellarius. Injectable for testing.
 	architectiRestartCastellariusFn func() error
-
-	// repoMu serializes per-repo _primary clone operations (git fetch, worktree
-	// add/remove, git config) to prevent races when multiple dispatch goroutines
-	// operate concurrently against the same shared primary clone.
-	// Keyed by repo name; initialized alongside pools in New() and NewFromParts().
-	repoMu map[string]*sync.Mutex
 }
 
 // isSupervisedProcess returns true when the Castellarius is being managed by
@@ -257,24 +251,23 @@ func New(config aqueduct.AqueductConfig, dbPath string, runner CataractaeRunner,
 	}
 
 	s := &Castellarius{
-		config:             config,
-		workflows:          make(map[string]*aqueduct.Workflow),
-		clients:            make(map[string]CisternClient),
-		pools:              make(map[string]*AqueductPool),
-		repoMu:             make(map[string]*sync.Mutex),
-		runner:             runner,
-		logger:             slog.Default(),
-		pollInterval:       10 * time.Second,
-		heartbeatInterval:  30 * time.Second,
-		drainTimeout:       5 * time.Minute,
-		dbPath:             dbPath,
-		startupBinaryMtime: startupBinaryMtime,
-		supervised:         isSupervisedProcess(),
-		reloadCh:           make(chan struct{}, 1),
-		findPRFn:           defaultFindPR,
-		killSessionFn:      defaultKillSession,
-		rebaseAndPushFn:    defaultRebaseAndPush,
-		ghMergeFn:          defaultGhMerge,
+		config:                 config,
+		workflows:              make(map[string]*aqueduct.Workflow),
+		clients:                make(map[string]CisternClient),
+		pools:                  make(map[string]*AqueductPool),
+		runner:                 runner,
+		logger:                 slog.Default(),
+		pollInterval:           10 * time.Second,
+		heartbeatInterval:      30 * time.Second,
+		drainTimeout:           5 * time.Minute,
+		dbPath:                 dbPath,
+		startupBinaryMtime:     startupBinaryMtime,
+		supervised:             isSupervisedProcess(),
+		reloadCh:               make(chan struct{}, 1),
+		findPRFn:               defaultFindPR,
+		killSessionFn:          defaultKillSession,
+		rebaseAndPushFn:        defaultRebaseAndPush,
+		ghMergeFn:              defaultGhMerge,
 		dispatchLoop:           newDispatchLoopTracker(),
 		lastStallNoted:         make(map[string]time.Time),
 		architectiQueue:        make(chan *cistern.Droplet, architectiQueueCap),
@@ -347,7 +340,6 @@ func New(config aqueduct.AqueductConfig, dbPath string, runner CataractaeRunner,
 			names = defaultAqueductNames(repo.Cataractae)
 		}
 		s.pools[repo.Name] = NewAqueductPool(repo.Name, names)
-		s.repoMu[repo.Name] = &sync.Mutex{}
 	}
 
 	return s, nil
@@ -362,20 +354,19 @@ func NewFromParts(
 	opts ...Option,
 ) *Castellarius {
 	s := &Castellarius{
-		config:            config,
-		workflows:         workflows,
-		clients:           clients,
-		pools:             make(map[string]*AqueductPool),
-		repoMu:            make(map[string]*sync.Mutex),
-		runner:            runner,
-		logger:            slog.Default(),
-		pollInterval:      10 * time.Second,
-		heartbeatInterval: 30 * time.Second,
-		drainTimeout:      5 * time.Minute,
-		findPRFn:          defaultFindPR,
-		killSessionFn:     defaultKillSession,
-		rebaseAndPushFn:   defaultRebaseAndPush,
-		ghMergeFn:         defaultGhMerge,
+		config:                 config,
+		workflows:              workflows,
+		clients:                clients,
+		pools:                  make(map[string]*AqueductPool),
+		runner:                 runner,
+		logger:                 slog.Default(),
+		pollInterval:           10 * time.Second,
+		heartbeatInterval:      30 * time.Second,
+		drainTimeout:           5 * time.Minute,
+		findPRFn:               defaultFindPR,
+		killSessionFn:          defaultKillSession,
+		rebaseAndPushFn:        defaultRebaseAndPush,
+		ghMergeFn:              defaultGhMerge,
 		dispatchLoop:           newDispatchLoopTracker(),
 		lastStallNoted:         make(map[string]time.Time),
 		architectiQueue:        make(chan *cistern.Droplet, architectiQueueCap),
@@ -395,7 +386,6 @@ func NewFromParts(
 			names = defaultAqueductNames(repo.Cataractae)
 		}
 		s.pools[repo.Name] = NewAqueductPool(repo.Name, names)
-		s.repoMu[repo.Name] = &sync.Mutex{}
 	}
 
 	return s
@@ -463,11 +453,6 @@ func (s *Castellarius) Run(ctx context.Context) error {
 	// Start the serial Architecti queue drainer. It runs for the lifetime of
 	// the scheduler and processes one droplet at a time.
 	s.startArchitectiQueue(ctx)
-
-	// Scan for pre-existing bad-state droplets before entering the poll loop.
-	// Treats startup as a mass state-transition event: any stagnant/blocked
-	// droplet without an [architecti] invocation note is enqueued once.
-	s.scanBadStates()
 
 	if s.cleanupInterval > 0 {
 		go func() {
@@ -712,7 +697,7 @@ func (s *Castellarius) addNote(client CisternClient, dropletID, source, msg stri
 	}
 }
 
-// purgeOldItems deletes closed/escalated items older than retention_days across all repos.
+// purgeOldItems deletes closed/pooled items older than retention_days across all repos.
 func (s *Castellarius) purgeOldItems() {
 	retentionDays := s.config.RetentionDays
 	if retentionDays <= 0 {
@@ -829,14 +814,11 @@ func (s *Castellarius) tick(ctx context.Context) {
 	}
 	s.wasDrought = isDrought
 
-	// Catch any stagnant/blocked droplets that slipped through transition detection.
-	s.scanBadStates()
-
 	s.writeHealthFile()
 }
 
 // observeRepo routes all in_progress items that have signaled an outcome.
-// Agents write outcomes via `ct droplet pass/recirculate/block <id>`, which sets
+// Agents write outcomes via `ct droplet pass/recirculate/pool <id>`, which sets
 // the outcome column in the DB. This phase finds those items and advances them.
 func (s *Castellarius) observeRepo(_ context.Context, repo aqueduct.RepoConfig) {
 	client := s.clients[repo.Name]
@@ -858,16 +840,12 @@ func (s *Castellarius) observeRepo(_ context.Context, repo aqueduct.RepoConfig) 
 		assignee := item.Assignee
 
 		// cleanupBranch removes the per-droplet worktree.
-		// When keepBranch is true the worktree directory is detached but the
-		// feature branch ref is preserved so a future prepareDropletWorktree
-		// call can resume from the existing commits (stagnant/blocked/escalate).
-		// When keepBranch is false (done/cancelled) the branch is deleted too.
-		cleanupBranch := func(keepBranch bool) {
+		// Called at terminal states and no-route pool — non-terminal routes keep
+		// the worktree so the next dispatch cycle can resume incrementally.
+		cleanupBranch := func() {
 			if s.sandboxRoot != "" {
 				primaryDir := filepath.Join(s.sandboxRoot, repo.Name, "_primary")
-				s.repoMu[repo.Name].Lock()
-				removeDropletWorktreeWithLogger(slog.Default(), primaryDir, s.sandboxRoot, repo.Name, item.ID, keepBranch)
-				s.repoMu[repo.Name].Unlock()
+				removeDropletWorktree(primaryDir, s.sandboxRoot, repo.Name, item.ID)
 			}
 		}
 
@@ -900,7 +878,7 @@ func (s *Castellarius) observeRepo(_ context.Context, repo aqueduct.RepoConfig) 
 		case ResultRecirculate:
 			s.logger.Info("Droplet recirculated", "droplet", item.ID, "cataractae", step.Name)
 		default:
-			s.logger.Info("Droplet stagnant at cataractae", "droplet", item.ID, "cataractae", step.Name, "outcome", item.Outcome)
+			s.logger.Info("Droplet pooled at cataractae", "droplet", item.ID, "cataractae", step.Name, "outcome", item.Outcome)
 		}
 
 		// Phantom commit prevention: when implement passes, verify that HEAD has
@@ -952,18 +930,18 @@ func (s *Castellarius) observeRepo(_ context.Context, repo aqueduct.RepoConfig) 
 		if next == "" {
 			if result == ResultRecirculate {
 				note := fmt.Sprintf(
-					"cataractae %q signaled recirculate but has no on_recirculate route configured — this is likely an agent error (recirculate used instead of pass or block). Manual intervention required.",
+					"cataractae %q signaled recirculate but has no on_recirculate route configured — this is likely an agent error (recirculate used instead of pass or pool). Manual intervention required.",
 					step.Name,
 				)
 				s.addNote(client, item.ID, "scheduler", note)
 			}
 			reason := fmt.Sprintf("no route from step %q for outcome %q", step.Name, item.Outcome)
 			s.logger.Warn("observe: no route", "droplet", item.ID)
-			cleanupBranch(true) // no-route → always stagnant, keep branch
-			if err := client.Escalate(item.ID, reason); err != nil {
-				s.logger.Error("observe: escalate failed", "droplet", item.ID, "error", err)
+			cleanupBranch()
+			if err := client.Pool(item.ID, reason); err != nil {
+				s.logger.Error("observe: pool failed", "droplet", item.ID, "error", err)
 			}
-			// Stagnant transition: enqueue for Architecti (note-based dedup prevents repeat).
+			// Pooled transition: enqueue for Architecti (note-based dedup prevents repeat).
 			s.tryEnqueueArchitecti(client, item)
 			continue
 		}
@@ -974,11 +952,10 @@ func (s *Castellarius) observeRepo(_ context.Context, repo aqueduct.RepoConfig) 
 		}
 
 		if isTerminal(next) {
-			nextLower := strings.ToLower(next)
-			cleanupBranch(nextLower != "done") // keep branch unless truly done
+			cleanupBranch()
 			s.handleTerminal(client, item.ID, next, step.Name)
-			// Blocked/human/escalate terminals become stagnant: enqueue for Architecti.
-			if nextLower != "done" {
+			// Pooled/human terminals become pooled: enqueue for Architecti.
+			if strings.ToLower(next) != "done" {
 				s.tryEnqueueArchitecti(client, item)
 			}
 			continue
@@ -1006,10 +983,10 @@ func (s *Castellarius) observeRepo(_ context.Context, repo aqueduct.RepoConfig) 
 	}
 
 	// Secondary: release pool slots for droplets whose status was changed to
-	// 'cancelled' or 'stagnant' externally while in_progress (i.e., without
+	// 'cancelled' or 'pooled' externally while in_progress (i.e., without
 	// going through the normal outcome path). This happens when
 	// `ct droplet cancel` is called on a running droplet.
-	for _, extStatus := range []string{"cancelled", "stagnant"} {
+	for _, extStatus := range []string{"cancelled", "pooled"} {
 		changed, err := client.List(repo.Name, extStatus)
 		if err != nil {
 			s.logger.Error("observe: list externally-changed failed",
@@ -1032,9 +1009,7 @@ func (s *Castellarius) observeRepo(_ context.Context, repo aqueduct.RepoConfig) 
 			pool.Release(w)
 			if s.sandboxRoot != "" {
 				primaryDir := filepath.Join(s.sandboxRoot, repo.Name, "_primary")
-s.repoMu[repo.Name].Lock()
-			removeDropletWorktreeWithLogger(slog.Default(), primaryDir, s.sandboxRoot, repo.Name, item.ID, extStatus == "stagnant")
-			s.repoMu[repo.Name].Unlock()
+				removeDropletWorktree(primaryDir, s.sandboxRoot, repo.Name, item.ID)
 			}
 			s.logger.Info("aqueduct freed: droplet changed externally",
 				"aqueduct", item.Assignee, "droplet", item.ID, "status", extStatus)
@@ -1103,12 +1078,12 @@ func (s *Castellarius) dispatchRepo(ctx context.Context, repo aqueduct.RepoConfi
 		)
 
 		req := CataractaeRequest{
-			Item:       item,
-			Step:       *step,
-			Workflow:   wf,
-			RepoConfig: repo,
+			Item:         item,
+			Step:         *step,
+			Workflow:     wf,
+			RepoConfig:   repo,
 			AqueductName: worker.Name,
-			Notes:      notes,
+			Notes:        notes,
 		}
 
 		w := worker // capture for goroutine
@@ -1151,10 +1126,7 @@ func (s *Castellarius) dispatchRepo(ctx context.Context, repo aqueduct.RepoConfi
 				req.Step.Type == aqueduct.CataractaeTypeAgent &&
 				req.Step.Context != aqueduct.ContextSpecOnly {
 				primaryDir := filepath.Join(s.sandboxRoot, req.RepoConfig.Name, "_primary")
-				repoMu := s.repoMu[req.RepoConfig.Name]
-				repoMu.Lock()
 				sandboxDir, err := prepareDropletWorktree(primaryDir, s.sandboxRoot, req.RepoConfig.Name, req.Item.ID)
-				repoMu.Unlock()
 				if err != nil {
 					s.logger.Error("prepare worktree failed",
 						"repo", req.RepoConfig.Name,
@@ -1244,7 +1216,7 @@ func (s *Castellarius) totalBusy() int {
 // "pass"               → (ResultPass, "")
 // "recirculate"        → (ResultRecirculate, "")
 // "recirculate:impl"   → (ResultRecirculate, "impl")
-// "block"              → (ResultFail, "")
+// "pool"               → (ResultPool, "")
 func parseOutcome(outcome string) (Result, string) {
 	if strings.HasPrefix(outcome, "recirculate:") {
 		return ResultRecirculate, strings.TrimPrefix(outcome, "recirculate:")
@@ -1254,8 +1226,8 @@ func parseOutcome(outcome string) (Result, string) {
 		return ResultPass, ""
 	case "recirculate":
 		return ResultRecirculate, ""
-	case "block":
-		return ResultFail, ""
+	case "pool":
+		return ResultPool, ""
 	default:
 		return ResultFail, ""
 	}
@@ -1292,8 +1264,8 @@ func route(step aqueduct.WorkflowCataractae, result Result) string {
 		return step.OnFail
 	case ResultRecirculate:
 		return step.OnRecirculate
-	case ResultEscalate:
-		return step.OnEscalate
+	case ResultPool:
+		return step.OnPool
 	default:
 		return step.OnFail
 	}
@@ -1302,7 +1274,7 @@ func route(step aqueduct.WorkflowCataractae, result Result) string {
 // isTerminal returns true if the target is a terminal state.
 func isTerminal(name string) bool {
 	switch strings.ToLower(name) {
-	case "done", "blocked", "human", "escalate":
+	case "done", "pooled", "human", "pool":
 		return true
 	}
 	return false
@@ -1315,11 +1287,11 @@ func (s *Castellarius) handleTerminal(client CisternClient, itemID, terminal, fr
 		if err := client.CloseItem(itemID); err != nil {
 			s.logger.Error("close failed", "droplet", itemID, "error", err)
 		}
-	case "blocked", "human", "escalate":
-		s.logger.Info("Droplet stagnant at terminal", "droplet", itemID, "terminal", terminal, "from_cataractae", fromStep)
+	case "pooled", "human", "pool":
+		s.logger.Info("Droplet pooled at terminal", "droplet", itemID, "terminal", terminal, "from_cataractae", fromStep)
 		reason := fmt.Sprintf("reached terminal %q from cataractae %q", terminal, fromStep)
-		if err := client.Escalate(itemID, reason); err != nil {
-			s.logger.Error("escalate at terminal failed", "droplet", itemID, "error", err)
+		if err := client.Pool(itemID, reason); err != nil {
+			s.logger.Error("pool at terminal failed", "droplet", itemID, "error", err)
 		}
 		if strings.ToLower(terminal) == "human" {
 			if err := client.SetCataractae(itemID, "human"); err != nil {
@@ -1847,19 +1819,17 @@ func prepareDropletWorktreeWithLogger(logger *slog.Logger, primaryDir, sandboxRo
 		return "", fmt.Errorf("mkdir for worktree %s: %w", worktreePath, err)
 	}
 
-	// First try attaching to an existing branch (handles crash-between-branch-create-and-worktree-add
-	// and stagnant resume where keepBranch=true preserved the branch ref).
+	// First try attaching to an existing branch (handles crash-between-branch-create-and-worktree-add).
 	addExisting := exec.Command("git", "worktree", "add", worktreePath, branch)
 	addExisting.Dir = primaryDir
-	freshBranch := false
-	if _, err := addExisting.CombinedOutput(); err != nil {
+	if out, err := addExisting.CombinedOutput(); err != nil {
 		// Branch doesn't exist yet — create it fresh from origin/main.
 		addNew := exec.Command("git", "worktree", "add", "-b", branch, worktreePath, "origin/main")
 		addNew.Dir = primaryDir
 		if out2, err2 := addNew.CombinedOutput(); err2 != nil {
 			return "", fmt.Errorf("git worktree add %s in %s: %w: %s", worktreePath, primaryDir, err2, out2)
 		}
-		freshBranch = true
+		_ = out // first attempt output discarded; only the second failure matters
 	}
 
 	for _, args := range [][]string{
@@ -1873,17 +1843,16 @@ func prepareDropletWorktreeWithLogger(logger *slog.Logger, primaryDir, sandboxRo
 		}
 	}
 
-	if freshBranch {
-		// Hard-reset to origin/main to guarantee a clean baseline for a new branch.
-		reset := exec.Command("git", "reset", "--hard", "origin/main")
-		reset.Dir = worktreePath
-		if out, err := reset.CombinedOutput(); err != nil {
-			return "", fmt.Errorf("git reset in %s: %w: %s", worktreePath, err, out)
-		}
-		clean := exec.Command("git", "clean", "-fd")
-		clean.Dir = worktreePath
-		_ = clean.Run()
+	// Hard-reset to origin/main to guarantee a clean baseline — the worktree
+	// may inherit local modifications from the primary clone.
+	reset := exec.Command("git", "reset", "--hard", "origin/main")
+	reset.Dir = worktreePath
+	if out, err := reset.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("git reset in %s: %w: %s", worktreePath, err, out)
 	}
+	clean := exec.Command("git", "clean", "-fd")
+	clean.Dir = worktreePath
+	_ = clean.Run()
 
 	logger.Info("worktree created",
 		"droplet", dropletID, "path", worktreePath,
@@ -1895,25 +1864,20 @@ func prepareDropletWorktreeWithLogger(logger *slog.Logger, primaryDir, sandboxRo
 // unregisters it from git, and deletes the feature branch from the primary
 // clone. Errors are ignored — best-effort cleanup.
 func removeDropletWorktree(primaryDir, sandboxRoot, repoName, dropletID string) {
-	removeDropletWorktreeWithLogger(slog.Default(), primaryDir, sandboxRoot, repoName, dropletID, false)
+	removeDropletWorktreeWithLogger(slog.Default(), primaryDir, sandboxRoot, repoName, dropletID)
 }
 
 // removeDropletWorktreeWithLogger is the logger-parameterized implementation
 // of removeDropletWorktree, used directly in tests.
-// When keepBranch is true, the worktree directory is detached but the feature
-// branch ref is preserved in the primary clone so a subsequent
-// prepareDropletWorktree call can resume from the existing commits.
-func removeDropletWorktreeWithLogger(logger *slog.Logger, primaryDir, sandboxRoot, repoName, dropletID string, keepBranch bool) {
+func removeDropletWorktreeWithLogger(logger *slog.Logger, primaryDir, sandboxRoot, repoName, dropletID string) {
 	worktreePath := filepath.Join(sandboxRoot, repoName, dropletID)
 	rm := exec.Command("git", "worktree", "remove", "--force", worktreePath)
 	rm.Dir = primaryDir
 	rmErr := rm.Run()
 
-	if !keepBranch {
-		del := exec.Command("git", "branch", "-D", "feat/"+dropletID)
-		del.Dir = primaryDir
-		_ = del.Run()
-	}
+	del := exec.Command("git", "branch", "-D", "feat/"+dropletID)
+	del.Dir = primaryDir
+	_ = del.Run()
 
 	if rmErr != nil {
 		logger.Warn("worktree deletion failed", "droplet", dropletID, "path", worktreePath, "error", rmErr)

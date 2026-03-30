@@ -29,7 +29,7 @@ func statusCode(dStatus string) string {
 		return colorYellow
 	case "awaiting":
 		return colorYellow
-	case "stagnant":
+	case "pooled":
 		return colorRed
 	case "delivered", "cancelled":
 		return colorDim
@@ -47,7 +47,7 @@ func statusIcon(dStatus string) string {
 		return col(colorYellow, "○")
 	case "awaiting":
 		return col(colorYellow, "⏸")
-	case "stagnant":
+	case "pooled":
 		return col(colorRed, "✗")
 	case "delivered":
 		return col(colorDim, "✓")

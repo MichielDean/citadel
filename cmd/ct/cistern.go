@@ -352,8 +352,8 @@ func displayStatus(status string) string {
 		return "flowing"
 	case "open":
 		return "queued"
-	case "escalated", "stagnant":
-		return "stagnant"
+	case "pooled":
+		return "pooled"
 	case "closed", "delivered":
 		return "delivered"
 	default:
@@ -364,7 +364,7 @@ func displayStatus(status string) string {
 // displayStatusForDroplet returns the display status for a droplet, overriding
 // for human-gated droplets to show "awaiting approval".
 func displayStatusForDroplet(item *cistern.Droplet) string {
-	if item.CurrentCataractae == "human" && (item.Status == "stagnant" || item.Status == "escalated") {
+	if item.CurrentCataractae == "human" && item.Status == "pooled" {
 		return "awaiting"
 	}
 	return displayStatus(item.Status)
@@ -379,8 +379,8 @@ func printEmptyMessage(c *cistern.Client) {
 	if stats.Flowing > 0 {
 		return
 	}
-	if stats.Stagnant > 0 {
-		fmt.Printf("No flowing droplets. %d droplet(s) stagnant.\n", stats.Stagnant)
+	if stats.Pooled > 0 {
+		fmt.Printf("No flowing droplets. %d droplet(s) pooled.\n", stats.Pooled)
 		return
 	}
 	fmt.Println("Cistern dry.")
@@ -562,7 +562,7 @@ var dropletRenameCmd = &cobra.Command{
 
 var dropletShowCmd = &cobra.Command{
 	Use:   "show <id>",
-		Short: "Show details of a droplet",
+	Short: "Show details of a droplet",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := cistern.New(resolveDBPath(), "")
@@ -611,7 +611,7 @@ var dropletShowCmd = &cobra.Command{
 
 var dropletNoteCmd = &cobra.Command{
 	Use:   "note <id> <content>",
-		Short: "Add a note to a droplet",
+	Short: "Add a note to a droplet",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := cistern.New(resolveDBPath(), "")
@@ -623,7 +623,7 @@ var dropletNoteCmd = &cobra.Command{
 		if err := c.AddNote(args[0], cataractaeName(), args[1]); err != nil {
 			return err
 		}
-			fmt.Printf("note added to droplet %s\n", args[0])
+		fmt.Printf("note added to droplet %s\n", args[0])
 		return nil
 	},
 }
@@ -644,7 +644,7 @@ var dropletCloseCmd = &cobra.Command{
 		if err := c.CloseItem(args[0]); err != nil {
 			return err
 		}
-			fmt.Printf("droplet %s delivered\n", args[0])
+		fmt.Printf("droplet %s delivered\n", args[0])
 		return nil
 	},
 }
@@ -653,7 +653,7 @@ var dropletCloseCmd = &cobra.Command{
 
 var dropletReopenCmd = &cobra.Command{
 	Use:   "reopen <id>",
-		Short: "Return a droplet to the cistern",
+	Short: "Return a droplet to the cistern",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := cistern.New(resolveDBPath(), "")
@@ -665,7 +665,7 @@ var dropletReopenCmd = &cobra.Command{
 		if err := c.UpdateStatus(args[0], "open"); err != nil {
 			return err
 		}
-			fmt.Printf("droplet %s returned to cistern\n", args[0])
+		fmt.Printf("droplet %s returned to cistern\n", args[0])
 		return nil
 	},
 }
@@ -678,7 +678,7 @@ var restartNotes string
 var dropletRestartCmd = &cobra.Command{
 	Use:   "restart <id>",
 	Short: "Re-enter a droplet at a specific cataractae",
-	Long: `Restart sends a delivered, blocked, or stagnant droplet back into the
+	Long: `Restart sends a delivered or pooled droplet back into the
 pipeline at the named cataractae. Use this to recover orphaned droplets
 after delivery failures without losing prior history.
 
@@ -719,28 +719,45 @@ Examples:
 	},
 }
 
-// --- cistern escalate ---
+// --- cistern pool ---
 
-var escalateReason string
+var poolNotes string
 
-var dropletEscalateCmd = &cobra.Command{
-	Use:   "escalate <id>",
-		Short: "Mark a droplet stagnant — escalate for human attention",
+var dropletPoolCmd = &cobra.Command{
+	Use:   "pool <id>",
+	Short: "Signal pool outcome — cannot currently proceed",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if escalateReason == "" {
-			return fmt.Errorf("--reason is required")
-		}
 		c, err := cistern.New(resolveDBPath(), "")
 		if err != nil {
 			return err
 		}
 		defer c.Close()
 
-		if err := c.Escalate(args[0], escalateReason); err != nil {
+		item, err := c.Get(args[0])
+		if err != nil {
 			return err
 		}
-			fmt.Printf("droplet %s stagnant\n", args[0])
+		if item.Status == "delivered" || item.Status == "cancelled" {
+			return fmt.Errorf("cannot pool: droplet %s has terminal status %q", args[0], item.Status)
+		}
+
+		if poolNotes != "" {
+			if err := c.AddNote(args[0], cataractaeName(), poolNotes); err != nil {
+				return err
+			}
+		}
+		if err := c.SetOutcome(args[0], "pool"); err != nil {
+			return err
+		}
+		// When not in_progress, Castellarius will never observe this droplet.
+		// Directly pool so the reason is recorded in events with a non-empty payload.
+		if item.Status != "in_progress" {
+			if err := c.Pool(args[0], poolNotes); err != nil {
+				return err
+			}
+		}
+		fmt.Printf("droplet %s: outcome=pool\n", args[0])
 		return nil
 	},
 }
@@ -754,7 +771,7 @@ var (
 
 var dropletPurgeCmd = &cobra.Command{
 	Use:   "purge",
-		Short: "Delete closed/stagnant droplets older than a threshold",
+	Short: "Delete closed/pooled droplets older than a threshold",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if purgeOlderThan == "" {
 			return fmt.Errorf("--older-than is required")
@@ -774,9 +791,9 @@ var dropletPurgeCmd = &cobra.Command{
 			return err
 		}
 		if purgeDryRun {
-				fmt.Printf("dry-run: would purge %d droplet(s)\n", n)
-			} else {
-				fmt.Printf("purged %d droplet(s)\n", n)
+			fmt.Printf("dry-run: would purge %d droplet(s)\n", n)
+		} else {
+			fmt.Printf("purged %d droplet(s)\n", n)
 		}
 		return nil
 	},
@@ -874,9 +891,9 @@ var dropletStatsCmd = &cobra.Command{
 		fmt.Fprintf(tw, "  flowing\t%d\n", s.Flowing)
 		fmt.Fprintf(tw, "  queued\t%d\n", s.Queued)
 		fmt.Fprintf(tw, "  delivered\t%d\n", s.Delivered)
-		fmt.Fprintf(tw, "  stagnant\t%d\n", s.Stagnant)
+		fmt.Fprintf(tw, "  pooled\t%d\n", s.Pooled)
 		fmt.Fprintln(tw, "  ──────────────")
-		fmt.Fprintf(tw, "  total\t%d\n", s.Flowing+s.Queued+s.Delivered+s.Stagnant)
+		fmt.Fprintf(tw, "  total\t%d\n", s.Flowing+s.Queued+s.Delivered+s.Pooled)
 		return tw.Flush()
 	},
 }
@@ -1113,49 +1130,6 @@ var dropletRecirculateCmd = &cobra.Command{
 			return err
 		}
 		fmt.Printf("droplet %s: outcome=%s\n", args[0], outcome)
-		return nil
-	},
-}
-
-// --- cistern block ---
-
-var blockNotes string
-
-var dropletBlockCmd = &cobra.Command{
-	Use:   "block <id>",
-	Short: "Signal block outcome — genuinely blocked, cannot proceed",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := cistern.New(resolveDBPath(), "")
-		if err != nil {
-			return err
-		}
-		defer c.Close()
-
-		item, err := c.Get(args[0])
-		if err != nil {
-			return err
-		}
-		if item.Status == "delivered" || item.Status == "cancelled" {
-			return fmt.Errorf("cannot block: droplet %s has terminal status %q", args[0], item.Status)
-		}
-
-		if blockNotes != "" {
-			if err := c.AddNote(args[0], cataractaeName(), blockNotes); err != nil {
-				return err
-			}
-		}
-		if err := c.SetOutcome(args[0], "block"); err != nil {
-			return err
-		}
-		// When not in_progress, Castellarius will never observe this droplet.
-		// Directly escalate so the reason is recorded in events with a non-empty payload.
-		if item.Status != "in_progress" {
-			if err := c.Escalate(args[0], blockNotes); err != nil {
-				return err
-			}
-		}
-		fmt.Printf("droplet %s: outcome=block\n", args[0])
 		return nil
 	},
 }
@@ -1403,7 +1377,7 @@ At least one flag must be provided. Only the flags you pass are updated.
 To replace the description with multi-line text from stdin:
   echo 'new description' | ct droplet edit <id> --description -
 
-The droplet must be queued (open or stagnant). Edits are rejected once a
+The droplet must be queued (open or pooled). Edits are rejected once a
 droplet is in_progress or delivered.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -1472,23 +1446,21 @@ func init() {
 	dropletDepsCmd.Flags().StringVar(&depsRemove, "remove", "", "remove a dependency (dep ID)")
 
 	dropletListCmd.Flags().StringVar(&listRepo, "repo", "", "filter by repo")
-	dropletListCmd.Flags().StringVar(&listStatus, "status", "", "filter by status (open|in_progress|delivered|stagnant)")
+	dropletListCmd.Flags().StringVar(&listStatus, "status", "", "filter by status (open|in_progress|delivered|pooled)")
 	dropletListCmd.Flags().StringVar(&listOutput, "output", "table", "output format: table or json")
 	dropletListCmd.Flags().BoolVar(&listAll, "all", false, "include delivered droplets in a dimmed section below active ones")
 	dropletListCmd.Flags().BoolVar(&listWatch, "watch", false, "live-refresh the list every 2 seconds (Ctrl-C to stop)")
 	dropletListCmd.Flags().BoolVar(&listCancelled, "cancelled", false, "show only cancelled droplets (for audit)")
 
 	dropletSearchCmd.Flags().StringVar(&searchQuery, "query", "", "filter by title substring (case-insensitive)")
-	dropletSearchCmd.Flags().StringVar(&searchStatus, "status", "", "filter by status (open|in_progress|delivered|stagnant)")
+	dropletSearchCmd.Flags().StringVar(&searchStatus, "status", "", "filter by status (open|in_progress|delivered|pooled)")
 	dropletSearchCmd.Flags().IntVar(&searchPriority, "priority", 0, "filter by priority (0 means no filter)")
 	dropletSearchCmd.Flags().StringVar(&searchOutput, "output", "table", "output format: table or json")
 
 	dropletExportCmd.Flags().StringVar(&exportFormat, "format", "json", "output format: json or csv")
 	dropletExportCmd.Flags().StringVar(&exportQuery, "query", "", "filter by title substring (case-insensitive)")
-	dropletExportCmd.Flags().StringVar(&exportStatus, "status", "", "filter by status (open|in_progress|delivered|stagnant)")
+	dropletExportCmd.Flags().StringVar(&exportStatus, "status", "", "filter by status (open|in_progress|delivered|pooled)")
 	dropletExportCmd.Flags().IntVar(&exportPriority, "priority", 0, "filter by priority (0 means no filter)")
-
-	dropletEscalateCmd.Flags().StringVar(&escalateReason, "reason", "", "escalation reason (required)")
 
 	dropletPurgeCmd.Flags().StringVar(&purgeOlderThan, "older-than", "", "delete droplets older than this duration (e.g. 30d, 24h) (required)")
 	dropletPurgeCmd.Flags().BoolVar(&purgeDryRun, "dry-run", false, "show what would be deleted without deleting")
@@ -1496,7 +1468,7 @@ func init() {
 	dropletPassCmd.Flags().StringVar(&passNotes, "notes", "", "add a note before signaling pass")
 	dropletRecirculateCmd.Flags().StringVar(&recirculateTo, "to", "", "named cataractae to recirculate to (e.g. --to implement)")
 	dropletRecirculateCmd.Flags().StringVar(&recirculateNotes, "notes", "", "add a note before signaling recirculate")
-	dropletBlockCmd.Flags().StringVar(&blockNotes, "notes", "", "add a note before signaling block")
+	dropletPoolCmd.Flags().StringVar(&poolNotes, "notes", "", "add a note before signaling pool")
 	dropletCancelCmd.Flags().StringVar(&cancelNotes, "notes", "", "reason for cancellation")
 
 	dropletPeekCmd.Flags().IntVar(&peekLines, "lines", 0, "number of scrollback lines to capture; 0 means full scrollback")
@@ -1522,8 +1494,8 @@ func init() {
 	dropletEditCmd.Flags().IntVar(&editPriority, "priority", 0, "new priority")
 
 	dropletCmd.AddCommand(dropletAddCmd, dropletListCmd, dropletShowCmd, dropletNoteCmd,
-		dropletCloseCmd, dropletReopenCmd, dropletEscalateCmd, dropletPurgeCmd,
-		dropletPassCmd, dropletRecirculateCmd, dropletBlockCmd, dropletCancelCmd, dropletApproveCmd,
+		dropletCloseCmd, dropletReopenCmd, dropletPurgeCmd,
+		dropletPassCmd, dropletRecirculateCmd, dropletPoolCmd, dropletCancelCmd, dropletApproveCmd,
 		dropletStatsCmd, dropletDepsCmd, dropletPeekCmd, dropletIssueCmd, dropletSearchCmd,
 		dropletExportCmd, dropletRenameCmd, dropletRestartCmd, dropletEditCmd)
 	rootCmd.AddCommand(dropletCmd)

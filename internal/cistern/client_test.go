@@ -355,17 +355,17 @@ func TestGetNotes_Empty(t *testing.T) {
 	}
 }
 
-func TestEscalate(t *testing.T) {
+func TestPool(t *testing.T) {
 	c := testClient(t)
 	item, _ := c.Add("myrepo", "Task", "", 1, 3)
 
-	if err := c.Escalate(item.ID, "stuck on flaky test"); err != nil {
+	if err := c.Pool(item.ID, "stuck on flaky test"); err != nil {
 		t.Fatal(err)
 	}
 
 	got, _ := c.Get(item.ID)
-	if got.Status != "stagnant" {
-		t.Errorf("status = %q, want %q", got.Status, "stagnant")
+	if got.Status != "pooled" {
+		t.Errorf("status = %q, want %q", got.Status, "pooled")
 	}
 }
 
@@ -523,7 +523,7 @@ func TestStats_EmptyDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stats on empty DB: %v", err)
 	}
-	if s.Flowing != 0 || s.Queued != 0 || s.Delivered != 0 || s.Stagnant != 0 {
+	if s.Flowing != 0 || s.Queued != 0 || s.Delivered != 0 || s.Pooled != 0 {
 		t.Errorf("expected all zeros on empty DB, got %+v", s)
 	}
 }
@@ -727,7 +727,7 @@ func TestGetLastReviewedCommit_PersistedInGet(t *testing.T) {
 func TestStats_WithData(t *testing.T) {
 	c := testClient(t)
 
-	// Add 2 open (queued), 1 in_progress (flowing), 3 delivered, 1 stagnant.
+	// Add 2 open (queued), 1 in_progress (flowing), 3 delivered, 1 pooled.
 	c.Add("repo", "q1", "", 1, 3)
 	c.Add("repo", "q2", "", 1, 3)
 	item3, _ := c.Add("repo", "ip1", "", 1, 3)
@@ -740,7 +740,7 @@ func TestStats_WithData(t *testing.T) {
 	c.CloseItem(item4.ID)
 	c.CloseItem(item5.ID)
 	c.CloseItem(item6.ID)
-	c.Escalate(item7.ID, "stuck")
+	c.Pool(item7.ID, "stuck")
 
 	s, err := c.Stats()
 	if err != nil {
@@ -755,8 +755,8 @@ func TestStats_WithData(t *testing.T) {
 	if s.Delivered != 3 {
 		t.Errorf("Delivered = %d, want 3", s.Delivered)
 	}
-	if s.Stagnant != 1 {
-		t.Errorf("Stagnant = %d, want 1", s.Stagnant)
+	if s.Pooled != 1 {
+		t.Errorf("Pooled = %d, want 1", s.Pooled)
 	}
 }
 
@@ -876,7 +876,7 @@ func TestUpdateTitle_NotFound(t *testing.T) {
 }
 
 func TestSetOutcome(t *testing.T) {
-	for _, outcome := range []string{"pass", "recirculate", "block"} {
+	for _, outcome := range []string{"pass", "recirculate", "pool"} {
 		t.Run(outcome, func(t *testing.T) {
 			c := testClient(t)
 			item, _ := c.Add("myrepo", "Task", "", 1, 3)
@@ -937,11 +937,11 @@ func TestSetCataractae_NotFound(t *testing.T) {
 func TestPurge(t *testing.T) {
 	c := testClient(t)
 	delivered, _ := c.Add("myrepo", "Delivered", "", 1, 3)
-	stagnant, _ := c.Add("myrepo", "Stagnant", "", 1, 3)
+	pooled, _ := c.Add("myrepo", "Pooled", "", 1, 3)
 	inProgress, _ := c.Add("myrepo", "In progress", "", 1, 3)
 
-	c.CloseItem(delivered.ID)        // status = delivered
-	c.Escalate(stagnant.ID, "stuck") // status = stagnant
+	c.CloseItem(delivered.ID)  // status = delivered
+	c.Pool(pooled.ID, "stuck") // status = pooled
 	c.UpdateStatus(inProgress.ID, "in_progress")
 
 	// Negative duration sets cutoff in the future, making all items eligible by age.
@@ -950,7 +950,7 @@ func TestPurge(t *testing.T) {
 		t.Fatal(err)
 	}
 	if n != 2 {
-		t.Errorf("purged %d, want 2 (delivered + stagnant)", n)
+		t.Errorf("purged %d, want 2 (delivered + pooled)", n)
 	}
 
 	// in_progress item must survive.
@@ -958,12 +958,12 @@ func TestPurge(t *testing.T) {
 		t.Errorf("in-progress item should not be purged: %v", err)
 	}
 
-	// delivered and stagnant must be gone.
+	// delivered and pooled must be gone.
 	if item, _ := c.Get(delivered.ID); item != nil {
 		t.Error("delivered item should have been purged")
 	}
-	if item, _ := c.Get(stagnant.ID); item != nil {
-		t.Error("stagnant item should have been purged")
+	if item, _ := c.Get(pooled.ID); item != nil {
+		t.Error("pooled item should have been purged")
 	}
 }
 
@@ -1017,9 +1017,9 @@ func TestListRecentEvents_WithEvents(t *testing.T) {
 	c := testClient(t)
 	item, _ := c.Add("myrepo", "Task", "", 1, 3)
 
-	// AddNote writes to cataractae_notes; Escalate writes to events.
+	// AddNote writes to cataractae_notes; Pool writes to events.
 	c.AddNote(item.ID, "implement", "wrote the code")
-	c.Escalate(item.ID, "needs human review")
+	c.Pool(item.ID, "needs human review")
 
 	events, err := c.ListRecentEvents(10)
 	if err != nil {
@@ -1165,14 +1165,14 @@ func TestEditDroplet_GuardDelivered(t *testing.T) {
 	}
 }
 
-func TestEditDroplet_AllowStagnant(t *testing.T) {
+func TestEditDroplet_AllowPooled(t *testing.T) {
 	c := testClient(t)
 	item, _ := c.Add("repo", "Title", "old", 1, 3)
-	c.Escalate(item.ID, "stuck")
+	c.Pool(item.ID, "stuck")
 
 	err := c.EditDroplet(item.ID, EditDropletFields{Description: ptr("updated")})
 	if err != nil {
-		t.Fatalf("expected stagnant droplet to be editable, got: %v", err)
+		t.Fatalf("expected pooled droplet to be editable, got: %v", err)
 	}
 
 	got, _ := c.Get(item.ID)
@@ -1661,9 +1661,9 @@ func TestCloseItem_ClearsAssignedAqueduct(t *testing.T) {
 	}
 }
 
-// TestEscalate_ClearsAssignedAqueduct verifies that escalating a droplet to stagnant
+// TestPool_ClearsAssignedAqueduct verifies that pooling a droplet
 // removes assigned_aqueduct so no ghost assignments linger.
-func TestEscalate_ClearsAssignedAqueduct(t *testing.T) {
+func TestPool_ClearsAssignedAqueduct(t *testing.T) {
 	c := testClient(t)
 	item, _ := c.Add("myrepo", "Stuck task", "", 1, 2)
 	c.SetAssignedAqueduct(item.ID, "cistern-beta")
@@ -1675,7 +1675,7 @@ func TestEscalate_ClearsAssignedAqueduct(t *testing.T) {
 		t.Fatal("precondition failed: SetAssignedAqueduct did not set the field")
 	}
 
-	if err := c.Escalate(item.ID, "timeout"); err != nil {
+	if err := c.Pool(item.ID, "timeout"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1684,7 +1684,7 @@ func TestEscalate_ClearsAssignedAqueduct(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got.AssignedAqueduct != "" {
-		t.Errorf("AssignedAqueduct after Escalate = %q, want empty string", got.AssignedAqueduct)
+		t.Errorf("AssignedAqueduct after Pool = %q, want empty string", got.AssignedAqueduct)
 	}
 }
 

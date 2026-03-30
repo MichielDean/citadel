@@ -264,26 +264,25 @@ func TestDropletPass_NoIssues(t *testing.T) {
 	}
 }
 
+// --- pass: pooled / terminal status tests ---
 
-// --- pass: stagnant / terminal status tests ---
-
-// TestDropletPass_WhenStagnant_SetsStatusDelivered verifies that passing a stagnant
+// TestDropletPass_WhenPooled_SetsStatusDelivered verifies that passing a pooled
 // droplet immediately sets status=delivered without Castellarius involvement.
-// Given a stagnant droplet with no open issues,
+// Given a pooled droplet with no open issues,
 // When ct droplet pass is called,
 // Then status=delivered and outcome=pass.
-func TestDropletPass_WhenStagnant_SetsStatusDelivered(t *testing.T) {
+func TestDropletPass_WhenPooled_SetsStatusDelivered(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "test.db")
 	t.Setenv("CT_DB", db)
 	t.Setenv("CT_NO_ASCII_LOGO", "1")
 
 	c, _ := cistern.New(db, "ct")
 	item, _ := c.Add("myrepo", "Task", "", 1, 3)
-	c.Escalate(item.ID, "timed out")
+	c.Pool(item.ID, "timed out")
 	c.Close()
 
 	if err := execCmd(t, "droplet", "pass", item.ID); err != nil {
-		t.Fatalf("pass on stagnant droplet should succeed: %v", err)
+		t.Fatalf("pass on pooled droplet should succeed: %v", err)
 	}
 
 	c2, _ := cistern.New(db, "ct")
@@ -369,60 +368,60 @@ func TestDropletPass_WhenCancelled_ReturnsError(t *testing.T) {
 	}
 }
 
-// --- block: stagnant / terminal status tests ---
+// --- pool: pooled / terminal status tests ---
 
-// TestDropletBlock_WhenStagnant_SetsOutcomeAndKeepsStagnant verifies that blocking a
-// stagnant droplet records outcome=block and status remains stagnant.
-// Given a stagnant droplet,
-// When ct droplet block is called,
-// Then outcome=block and status=stagnant.
-func TestDropletBlock_WhenStagnant_SetsOutcomeAndKeepsStagnant(t *testing.T) {
-	t.Cleanup(func() { blockNotes = "" })
+// TestDropletPool_WhenPooled_SetsOutcomeAndKeepsPooled verifies that pooling a
+// pooled droplet records outcome=pool and status remains pooled.
+// Given a pooled droplet,
+// When ct droplet pool is called,
+// Then outcome=pool and status=pooled.
+func TestDropletPool_WhenPooled_SetsOutcomeAndKeepsPooled(t *testing.T) {
+	t.Cleanup(func() { poolNotes = "" })
 	db := filepath.Join(t.TempDir(), "test.db")
 	t.Setenv("CT_DB", db)
 	t.Setenv("CT_NO_ASCII_LOGO", "1")
 
 	c, _ := cistern.New(db, "ct")
 	item, _ := c.Add("myrepo", "Task", "", 1, 3)
-	c.Escalate(item.ID, "timed out")
+	c.Pool(item.ID, "timed out")
 	c.Close()
 
-	if err := execCmd(t, "droplet", "block", item.ID); err != nil {
-		t.Fatalf("block on stagnant droplet should succeed: %v", err)
+	if err := execCmd(t, "droplet", "pool", item.ID); err != nil {
+		t.Fatalf("pool on pooled droplet should succeed: %v", err)
 	}
 
 	c2, _ := cistern.New(db, "ct")
 	defer c2.Close()
 	d, _ := c2.Get(item.ID)
-	if d.Status != "stagnant" {
-		t.Errorf("status = %q, want stagnant", d.Status)
+	if d.Status != "pooled" {
+		t.Errorf("status = %q, want pooled", d.Status)
 	}
-	if d.Outcome != "block" {
-		t.Errorf("outcome = %q, want block", d.Outcome)
+	if d.Outcome != "pool" {
+		t.Errorf("outcome = %q, want pool", d.Outcome)
 	}
 }
 
-// TestDropletBlock_WhenStagnant_ForwardsBlockNotes verifies that --notes is recorded
-// when blocking a stagnant droplet, so the reason is traceable.
-// Given a stagnant droplet,
-// When ct droplet block --notes "reason" is called,
+// TestDropletPool_WhenPooled_ForwardsPoolNotes verifies that --notes is recorded
+// when pooling a pooled droplet, so the reason is traceable.
+// Given a pooled droplet,
+// When ct droplet pool --notes "reason" is called,
 // Then the note appears in the droplet's notes.
-func TestDropletBlock_WhenStagnant_ForwardsBlockNotes(t *testing.T) {
-	t.Cleanup(func() { blockNotes = "" })
+func TestDropletPool_WhenPooled_ForwardsPoolNotes(t *testing.T) {
+	t.Cleanup(func() { poolNotes = "" })
 	db := filepath.Join(t.TempDir(), "test.db")
 	t.Setenv("CT_DB", db)
 	t.Setenv("CT_NO_ASCII_LOGO", "1")
 
 	c, _ := cistern.New(db, "ct")
 	item, _ := c.Add("myrepo", "Task", "", 1, 3)
-	c.Escalate(item.ID, "timed out")
+	c.Pool(item.ID, "timed out")
 	c.Close()
 
-	if err := execCmd(t, "droplet", "block", "--notes", "waiting on upstream API", item.ID); err != nil {
-		t.Fatalf("block --notes on stagnant droplet should succeed: %v", err)
+	if err := execCmd(t, "droplet", "pool", "--notes", "waiting on upstream API", item.ID); err != nil {
+		t.Fatalf("pool --notes on pooled droplet should succeed: %v", err)
 	}
 
-	// Verify the blockNotes was added as a cataractae note.
+	// Verify the poolNotes was added as a cataractae note.
 	c2, _ := cistern.New(db, "ct")
 	defer c2.Close()
 	notes, err := c2.GetNotes(item.ID)
@@ -437,13 +436,13 @@ func TestDropletBlock_WhenStagnant_ForwardsBlockNotes(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Errorf("expected note containing blockNotes reason, notes: %+v", notes)
+		t.Errorf("expected note containing poolNotes reason, notes: %+v", notes)
 	}
 }
 
-// TestDropletBlock_WhenDelivered_ReturnsError verifies that blocking a delivered droplet
+// TestDropletPool_WhenDelivered_ReturnsError verifies that pooling a delivered droplet
 // returns a clear error.
-func TestDropletBlock_WhenDelivered_ReturnsError(t *testing.T) {
+func TestDropletPool_WhenDelivered_ReturnsError(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "test.db")
 	t.Setenv("CT_DB", db)
 	t.Setenv("CT_NO_ASCII_LOGO", "1")
@@ -453,18 +452,18 @@ func TestDropletBlock_WhenDelivered_ReturnsError(t *testing.T) {
 	c.CloseItem(item.ID)
 	c.Close()
 
-	err := execCmd(t, "droplet", "block", item.ID)
+	err := execCmd(t, "droplet", "pool", item.ID)
 	if err == nil {
-		t.Fatal("expected error: cannot block a delivered droplet")
+		t.Fatal("expected error: cannot pool a delivered droplet")
 	}
 	if !strings.Contains(err.Error(), "delivered") {
 		t.Errorf("error %q should mention 'delivered'", err.Error())
 	}
 }
 
-// TestDropletBlock_WhenCancelled_ReturnsError verifies that blocking a cancelled droplet
+// TestDropletPool_WhenCancelled_ReturnsError verifies that pooling a cancelled droplet
 // returns a clear error.
-func TestDropletBlock_WhenCancelled_ReturnsError(t *testing.T) {
+func TestDropletPool_WhenCancelled_ReturnsError(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "test.db")
 	t.Setenv("CT_DB", db)
 	t.Setenv("CT_NO_ASCII_LOGO", "1")
@@ -474,23 +473,23 @@ func TestDropletBlock_WhenCancelled_ReturnsError(t *testing.T) {
 	c.Cancel(item.ID, "no longer needed")
 	c.Close()
 
-	err := execCmd(t, "droplet", "block", item.ID)
+	err := execCmd(t, "droplet", "pool", item.ID)
 	if err == nil {
-		t.Fatal("expected error: cannot block a cancelled droplet")
+		t.Fatal("expected error: cannot pool a cancelled droplet")
 	}
 	if !strings.Contains(err.Error(), "cancelled") {
 		t.Errorf("error %q should mention 'cancelled'", err.Error())
 	}
 }
 
-// --- recirculate: stagnant / terminal status tests ---
+// --- recirculate: pooled / terminal status tests ---
 
-// TestDropletRecirculate_WhenStagnant_SetsStatusOpen verifies that recirculating a
-// stagnant droplet immediately sets status=open and clears outcome.
-// Given a stagnant droplet,
+// TestDropletRecirculate_WhenPooled_SetsStatusOpen verifies that recirculating a
+// pooled droplet immediately sets status=open and clears outcome.
+// Given a pooled droplet,
 // When ct droplet recirculate is called,
 // Then status=open and outcome="" (Assign clears outcome).
-func TestDropletRecirculate_WhenStagnant_SetsStatusOpen(t *testing.T) {
+func TestDropletRecirculate_WhenPooled_SetsStatusOpen(t *testing.T) {
 	t.Cleanup(func() { recirculateTo = "" })
 	db := filepath.Join(t.TempDir(), "test.db")
 	t.Setenv("CT_DB", db)
@@ -499,11 +498,11 @@ func TestDropletRecirculate_WhenStagnant_SetsStatusOpen(t *testing.T) {
 	c, _ := cistern.New(db, "ct")
 	item, _ := c.Add("myrepo", "Task", "", 1, 3)
 	c.SetCataractae(item.ID, "implement")
-	c.Escalate(item.ID, "timed out")
+	c.Pool(item.ID, "timed out")
 	c.Close()
 
 	if err := execCmd(t, "droplet", "recirculate", item.ID); err != nil {
-		t.Fatalf("recirculate on stagnant droplet should succeed: %v", err)
+		t.Fatalf("recirculate on pooled droplet should succeed: %v", err)
 	}
 
 	c2, _ := cistern.New(db, "ct")
@@ -517,12 +516,12 @@ func TestDropletRecirculate_WhenStagnant_SetsStatusOpen(t *testing.T) {
 	}
 }
 
-// TestDropletRecirculate_WhenStagnant_DefaultsToCurrentCataractae verifies that when
+// TestDropletRecirculate_WhenPooled_DefaultsToCurrentCataractae verifies that when
 // --to is not provided, recirculate targets the droplet's current_cataractae.
-// Given a stagnant droplet at cataractae "implement",
+// Given a pooled droplet at cataractae "implement",
 // When ct droplet recirculate is called without --to,
 // Then current_cataractae remains "implement".
-func TestDropletRecirculate_WhenStagnant_DefaultsToCurrentCataractae(t *testing.T) {
+func TestDropletRecirculate_WhenPooled_DefaultsToCurrentCataractae(t *testing.T) {
 	t.Cleanup(func() { recirculateTo = "" })
 	db := filepath.Join(t.TempDir(), "test.db")
 	t.Setenv("CT_DB", db)
@@ -531,11 +530,11 @@ func TestDropletRecirculate_WhenStagnant_DefaultsToCurrentCataractae(t *testing.
 	c, _ := cistern.New(db, "ct")
 	item, _ := c.Add("myrepo", "Task", "", 1, 3)
 	c.SetCataractae(item.ID, "implement")
-	c.Escalate(item.ID, "timed out")
+	c.Pool(item.ID, "timed out")
 	c.Close()
 
 	if err := execCmd(t, "droplet", "recirculate", item.ID); err != nil {
-		t.Fatalf("recirculate on stagnant droplet should succeed: %v", err)
+		t.Fatalf("recirculate on pooled droplet should succeed: %v", err)
 	}
 
 	c2, _ := cistern.New(db, "ct")
@@ -549,12 +548,12 @@ func TestDropletRecirculate_WhenStagnant_DefaultsToCurrentCataractae(t *testing.
 	}
 }
 
-// TestDropletRecirculate_WhenStagnant_WithTo_SetsCurrentCataractae verifies that --to
-// overrides the target cataractae when recirculating a stagnant droplet.
-// Given a stagnant droplet at cataractae "review",
+// TestDropletRecirculate_WhenPooled_WithTo_SetsCurrentCataractae verifies that --to
+// overrides the target cataractae when recirculating a pooled droplet.
+// Given a pooled droplet at cataractae "review",
 // When ct droplet recirculate --to implement is called,
 // Then current_cataractae=implement and status=open and outcome="".
-func TestDropletRecirculate_WhenStagnant_WithTo_SetsCurrentCataractae(t *testing.T) {
+func TestDropletRecirculate_WhenPooled_WithTo_SetsCurrentCataractae(t *testing.T) {
 	t.Cleanup(func() { recirculateTo = "" })
 	db := filepath.Join(t.TempDir(), "test.db")
 	t.Setenv("CT_DB", db)
@@ -563,11 +562,11 @@ func TestDropletRecirculate_WhenStagnant_WithTo_SetsCurrentCataractae(t *testing
 	c, _ := cistern.New(db, "ct")
 	item, _ := c.Add("myrepo", "Task", "", 1, 3)
 	c.SetCataractae(item.ID, "review")
-	c.Escalate(item.ID, "timed out")
+	c.Pool(item.ID, "timed out")
 	c.Close()
 
 	if err := execCmd(t, "droplet", "recirculate", "--to", "implement", item.ID); err != nil {
-		t.Fatalf("recirculate --to on stagnant droplet should succeed: %v", err)
+		t.Fatalf("recirculate --to on pooled droplet should succeed: %v", err)
 	}
 
 	c2, _ := cistern.New(db, "ct")

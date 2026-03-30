@@ -10,17 +10,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MichielDean/cistern/internal/cistern"
 	"github.com/MichielDean/cistern/internal/aqueduct"
+	"github.com/MichielDean/cistern/internal/cistern"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
 
 const (
-	refreshInterval          = 2 * time.Second
-	idleRefreshInterval      = 5 * time.Second // slow rate when Castellarius is idle
-	recentEventLimit         = 5
-
+	refreshInterval     = 2 * time.Second
+	idleRefreshInterval = 5 * time.Second // slow rate when Castellarius is idle
+	recentEventLimit    = 5
 
 	// ANSI color codes
 	colorGreen  = "\033[32m"
@@ -33,18 +32,16 @@ const (
 	clearScreen = "\033[2J\033[H"
 )
 
-
-
 // CataractaeInfo describes the state of a single aqueduct — its name, which droplet it carries, and where in the cataractae chain that droplet is.
 type CataractaeInfo struct {
 	Name            string        `json:"name"`
-	RepoName        string        `json:"repo_name"`   // repository this aqueduct belongs to
+	RepoName        string        `json:"repo_name"` // repository this aqueduct belongs to
 	DropletID       string        `json:"droplet_id"`
-	Title           string        `json:"title"`       // human-readable title of the flowing droplet
+	Title           string        `json:"title"` // human-readable title of the flowing droplet
 	Step            string        `json:"step"`
-	Steps           []string      `json:"steps"`       // workflow step names in order
-	Elapsed         time.Duration `json:"elapsed"`     // nanoseconds; use elapsed/1e9 for seconds
-	CataractaeIndex  int          `json:"cataractae_index"` // 1-based index; 0 if unknown
+	Steps           []string      `json:"steps"`            // workflow step names in order
+	Elapsed         time.Duration `json:"elapsed"`          // nanoseconds; use elapsed/1e9 for seconds
+	CataractaeIndex int           `json:"cataractae_index"` // 1-based index; 0 if unknown
 	TotalCataractae int           `json:"total_cataractae"`
 }
 
@@ -65,8 +62,8 @@ type DashboardData struct {
 	DoneCount       int                `json:"done_count"`
 	Cataractae      []CataractaeInfo   `json:"cataractae"`
 	CisternItems    []*cistern.Droplet `json:"cistern_items"`   // flowing + queued
-	StagnantItems   []*cistern.Droplet `json:"stagnant_items"`  // all stagnant (escalated) droplets
-	RecentItems     []*cistern.Droplet `json:"recent_items"`    // recently closed/escalated
+	PooledItems     []*cistern.Droplet `json:"pooled_items"`    // all pooled droplets
+	RecentItems     []*cistern.Droplet `json:"recent_items"`    // recently closed/pooled
 	BlockedByMap    map[string]string  `json:"blocked_by_map"`  // droplet ID -> first blocking dep ID
 	FlowActivities  []FlowActivity     `json:"flow_activities"` // live narrative for in-progress droplets
 	FarmRunning     bool               `json:"farm_running"`
@@ -187,20 +184,20 @@ func fetchDashboardData(cfgPath, dbPath string) *DashboardData {
 		}
 	}
 
-	// Stagnant droplets: all items currently marked stagnant, newest first.
+	// Pooled droplets: all items currently marked pooled, newest first.
 	for _, item := range allItems {
-		if item.Status == "stagnant" {
-			data.StagnantItems = append(data.StagnantItems, item)
+		if item.Status == "pooled" {
+			data.PooledItems = append(data.PooledItems, item)
 		}
 	}
-	sort.Slice(data.StagnantItems, func(i, j int) bool {
-		return data.StagnantItems[i].UpdatedAt.After(data.StagnantItems[j].UpdatedAt)
+	sort.Slice(data.PooledItems, func(i, j int) bool {
+		return data.PooledItems[i].UpdatedAt.After(data.PooledItems[j].UpdatedAt)
 	})
 
-	// Recent flow: most recently updated delivered/stagnant items.
+	// Recent flow: most recently updated delivered/pooled items.
 	var recent []*cistern.Droplet
 	for _, item := range allItems {
-		if item.Status == "delivered" || item.Status == "stagnant" {
+		if item.Status == "delivered" || item.Status == "pooled" {
 			recent = append(recent, item)
 		}
 	}
@@ -248,7 +245,7 @@ func dashboardStateHash(d *DashboardData) string {
 		return ""
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "%d/%d/%d/%d/%v", d.FlowingCount, d.QueuedCount, d.DoneCount, len(d.StagnantItems), d.FarmRunning)
+	fmt.Fprintf(&b, "%d/%d/%d/%d/%v", d.FlowingCount, d.QueuedCount, d.DoneCount, len(d.PooledItems), d.FarmRunning)
 	for _, ch := range d.Cataractae {
 		fmt.Fprintf(&b, "|%s:%s:%s", ch.Name, ch.DropletID, ch.Step)
 	}
@@ -582,12 +579,12 @@ func renderDashboard(data *DashboardData) string {
 	}
 	sb.WriteString(sep + "\n")
 
-	// Stagnant droplets.
-	sb.WriteString("  STAGNANT\n")
-	if len(data.StagnantItems) == 0 {
-		sb.WriteString("  Stagnant: 0\n")
+	// Pooled droplets.
+	sb.WriteString("  POOLED\n")
+	if len(data.PooledItems) == 0 {
+		sb.WriteString("  Pooled: 0\n")
 	} else {
-		for _, item := range data.StagnantItems {
+		for _, item := range data.PooledItems {
 			elapsed := formatElapsed(time.Since(item.UpdatedAt))
 			sb.WriteString(fmt.Sprintf("  ✗  %-10s  %s  %s\n", item.ID, elapsed, item.Title))
 		}
@@ -626,7 +623,7 @@ func renderRecentLine(item *cistern.Droplet) string {
 	switch item.Status {
 	case "delivered":
 		icon = colorGreen + "✓" + colorReset
-	case "stagnant":
+	case "pooled":
 		icon = colorRed + "✗" + colorReset
 	default:
 		icon = "·"

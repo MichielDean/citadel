@@ -10,10 +10,10 @@ import (
 type Result string
 
 const (
-	ResultPass     Result = "pass"
-	ResultFail     Result = "fail"
+	ResultPass        Result = "pass"
+	ResultFail        Result = "fail"
 	ResultRecirculate Result = "recirculate"
-	ResultEscalate Result = "escalate"
+	ResultPool        Result = "pool"
 )
 
 // Outcome is the structured output from a completed workflow step.

@@ -33,18 +33,18 @@ type SkillRef struct {
 
 // WorkflowCataractae defines a single step in an aqueduct.
 type WorkflowCataractae struct {
-	Name    string       `yaml:"name"`
-	Type    CataractaeType     `yaml:"type"`
-	Identity string       `yaml:"identity,omitempty"`
-	Model   *string      `yaml:"model,omitempty"`
-	Context ContextLevel `yaml:"context,omitempty"`
+	Name     string         `yaml:"name"`
+	Type     CataractaeType `yaml:"type"`
+	Identity string         `yaml:"identity,omitempty"`
+	Model    *string        `yaml:"model,omitempty"`
+	Context  ContextLevel   `yaml:"context,omitempty"`
 
 	TimeoutMinutes int        `yaml:"timeout_minutes,omitempty"`
 	Skills         []SkillRef `yaml:"skills,omitempty"`
 	OnPass         string     `yaml:"on_pass,omitempty"`
 	OnFail         string     `yaml:"on_fail,omitempty"`
 	OnRecirculate  string     `yaml:"on_recirculate,omitempty"`
-	OnEscalate     string     `yaml:"on_escalate,omitempty"`
+	OnPool         string     `yaml:"on_pool,omitempty"`
 }
 
 // ComplexityLevel configures a single complexity tier.
@@ -108,12 +108,12 @@ type ProviderConfig struct {
 
 // RepoConfig defines a repository managed by the Castellarius.
 type RepoConfig struct {
-	Name         string          `yaml:"name"`
-	URL          string          `yaml:"url"`
-	WorkflowPath string          `yaml:"workflow_path"`
-	Cataractae   int             `yaml:"cataractae"`
-	Names        []string        `yaml:"names,omitempty"`
-	Prefix       string          `yaml:"prefix"`
+	Name         string   `yaml:"name"`
+	URL          string   `yaml:"url"`
+	WorkflowPath string   `yaml:"workflow_path"`
+	Cataractae   int      `yaml:"cataractae"`
+	Names        []string `yaml:"names,omitempty"`
+	Prefix       string   `yaml:"prefix"`
 	// Provider overrides the top-level provider config for this repo only.
 	Provider *ProviderConfig `yaml:"provider,omitempty"`
 }
@@ -121,10 +121,10 @@ type RepoConfig struct {
 // DroughtHook defines an action to run when the scheduler enters drought (idle) state.
 type DroughtHook struct {
 	Name             string `yaml:"name"`
-	Action           string `yaml:"action"`                      // built-in: "git_sync", "cataractae_generate", "worktree_prune", "db_vacuum", "events_prune", "tmp_cleanup", "restart_self" | "shell"
-	Command          string `yaml:"command,omitempty"`           // only for action: shell
-	Timeout          int    `yaml:"timeout_seconds,omitempty"`   // default 30s
-	KeepDays         int    `yaml:"keep_days,omitempty"`         // for events_prune: days to retain (default 30)
+	Action           string `yaml:"action"`                       // built-in: "git_sync", "cataractae_generate", "worktree_prune", "db_vacuum", "events_prune", "tmp_cleanup", "restart_self" | "shell"
+	Command          string `yaml:"command,omitempty"`            // only for action: shell
+	Timeout          int    `yaml:"timeout_seconds,omitempty"`    // default 30s
+	KeepDays         int    `yaml:"keep_days,omitempty"`          // for events_prune: days to retain (default 30)
 	RestartIfUpdated bool   `yaml:"restart_if_updated,omitempty"` // for git_sync: exit cleanly if workflow changed (supervisor restarts)
 }
 
@@ -161,9 +161,9 @@ type LLMConfig struct {
 }
 
 // ArchitectiConfig configures the Architecti autonomous diagnosis agent that
-// examines stagnant or blocked droplets. Architecti is always active as a
+// examines pooled droplets. Architecti is always active as a
 // serial queue drainer — no enable flag or threshold required. The scheduler
-// enqueues a droplet on every stagnant/blocked transition (one-to-one guarantee)
+// enqueues a droplet on every pooled transition (one-to-one guarantee)
 // and drains the queue serially in the background.
 type ArchitectiConfig struct {
 	// MaxFilesPerRun caps the number of files architecti may examine per
@@ -173,29 +173,29 @@ type ArchitectiConfig struct {
 
 // AqueductConfig is the top-level configuration for a Cistern instance.
 type AqueductConfig struct {
-	Repos                 []RepoConfig     `yaml:"repos"`
-	MaxCataractae         int              `yaml:"max_cataractae,omitempty"` // deprecated: no-op, cap is per-repo (pool size)
-	HandoffTokenThreshold int              `yaml:"handoff_token_threshold"`
-	RetentionDays         int              `yaml:"retention_days"`
-	CleanupInterval       string           `yaml:"cleanup_interval"`
+	Repos                 []RepoConfig `yaml:"repos"`
+	MaxCataractae         int          `yaml:"max_cataractae,omitempty"` // deprecated: no-op, cap is per-repo (pool size)
+	HandoffTokenThreshold int          `yaml:"handoff_token_threshold"`
+	RetentionDays         int          `yaml:"retention_days"`
+	CleanupInterval       string       `yaml:"cleanup_interval"`
 	// HeartbeatInterval controls how often the Castellarius scans in-progress
 	// droplets for orphaned or stalled sessions. Accepts Go duration strings
 	// (e.g. "30s", "1m"). Defaults to "30s" when empty.
-	HeartbeatInterval     string           `yaml:"heartbeat_interval,omitempty"`
-	DroughtHooks          []DroughtHook    `yaml:"drought_hooks,omitempty"`
+	HeartbeatInterval string        `yaml:"heartbeat_interval,omitempty"`
+	DroughtHooks      []DroughtHook `yaml:"drought_hooks,omitempty"`
 	// RateLimit configures rate limiting for the delivery cataractae API endpoint.
 	// Omit to use the built-in defaults (60 req/min per IP, 120 req/min per token).
-	RateLimit             *RateLimitConfig `yaml:"rate_limit,omitempty"`
+	RateLimit *RateLimitConfig `yaml:"rate_limit,omitempty"`
 	// DeliveryAddr is the TCP listen address for the delivery cataractae HTTP
 	// server (e.g. ":8080"). An empty string disables the HTTP server.
-	DeliveryAddr          string           `yaml:"delivery_addr,omitempty"`
+	DeliveryAddr string `yaml:"delivery_addr,omitempty"`
 	// Provider sets the default agent provider for all repos. Individual repos
 	// may override this with their own provider block.
 	// When omitted, the "claude" built-in preset is used.
-	Provider              *ProviderConfig  `yaml:"provider,omitempty"`
+	Provider *ProviderConfig `yaml:"provider,omitempty"`
 	// LLM configures the LLM API backend for AI-assisted features such as
 	// ct droplet add --filter. When omitted, the default anthropic preset is used.
-	LLM                   *LLMConfig       `yaml:"llm,omitempty"`
+	LLM *LLMConfig `yaml:"llm,omitempty"`
 
 	// DrainTimeoutMinutes is the maximum time (in minutes) the Castellarius
 	// will wait for in-flight sessions to signal an outcome after receiving
@@ -213,6 +213,6 @@ type AqueductConfig struct {
 	DashboardFontFamily string `yaml:"dashboard_font_family,omitempty"`
 
 	// Architecti configures the autonomous diagnosis agent that examines
-	// stagnant or blocked droplets. Omit to disable.
+	// pooled droplets. Omit to disable.
 	Architecti *ArchitectiConfig `yaml:"architecti,omitempty"`
 }

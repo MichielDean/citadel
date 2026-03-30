@@ -24,16 +24,16 @@ This helps the LLM reject or refine proposals for functionality that already exi
 
 ```bash
 ct droplet list                          # All droplets
-ct droplet list --status <status>        # Filter: open|in_progress|delivered|stagnant
+ct droplet list --status <status>        # Filter: open|in_progress|delivered|pooled
 ct droplet list --cancelled              # Show only cancelled droplets (audit purposes)
 ct droplet list --repo <repo>            # Filter by repo
 ct droplet list --watch                  # Live-refresh every 2 seconds (Ctrl-C to stop)
 ct droplet show <id>                     # Full detail
-ct droplet stats                         # Show counts by status (flowing, queued, delivered, stagnant)
+ct droplet stats                         # Show counts by status (flowing, queued, delivered, pooled)
 ct droplet add --title "..." --repo <r>  # Add new droplet (direct)
 ct droplet add --filter --title "..." --repo <r>  # Add with filtration (LLM-assisted)
 ct droplet restart <id>                  # Retry failed droplet
-ct droplet escalate <id>                 # Bump priority
+ct droplet pool <id>                    # Pool — cannot currently proceed
 ct droplet cancel <id>                   # Cancel droplet — won't be implemented or no longer needed
 ct droplet note <id> "..."               # Add a note
 ```
@@ -106,7 +106,7 @@ ct droplet issue list my-droplet --flagged-by qa --open
 
 ### Droplet Signaling (Terminal Outcomes)
 
-Agents use these commands to signal the outcome of their work. These commands work on both in-progress and stagnant droplets, automatically updating status as needed:
+Agents use these commands to signal the outcome of their work. These commands work on both in-progress and pooled droplets, automatically updating status as needed:
 
 ```bash
 ct droplet pass <id>                     # Work complete — advance to next stage
@@ -116,8 +116,8 @@ ct droplet recirculate <id>              # Needs revision — send back for rewo
 ct droplet recirculate <id> --notes "..." # Include feedback/issues
 ct droplet recirculate <id> --to <stage> # Recirculate to specific stage
 
-ct droplet block <id>                    # Blocked — waiting on external dependency
-ct droplet block <id> --notes "..."      # Include reason (e.g., "awaiting API key")
+ct droplet pool <id>                    # Pooled — cannot currently proceed
+ct droplet pool <id> --notes "..."      # Include reason (e.g., "awaiting API key")
 
 ct droplet cancel <id>                   # Cancel — won't be implemented
 ct droplet cancel <id> --notes "..."     # Include reason (e.g., "superseded by X")
@@ -127,14 +127,14 @@ ct droplet note <id> "..."               # Add a narrative note (for summaries o
 
 **Status Updates:**
 - **In-progress droplets**: Signal commands update the outcome field; Castellarius detects the outcome and routes accordingly
-- **Stagnant droplets**: Signal commands immediately update the status:
+- **Pooled droplets**: Signal commands immediately update the status:
   - `pass` → `status=delivered` (directly closed)
-  - `block` → Escalates with reason recorded in events
+  - `pool` → Sets status to pooled with reason recorded in events
   - `recirculate` → Reopens for the target stage (clears outcome to prevent routing loops)
 - **Terminal states** (delivered, cancelled): All signal commands reject with a clear error message — droplets in terminal states cannot be modified
 
 **Distinction:**
-- **block** = Waiting on external dependency, cannot proceed. Droplet will retry when unblocked.
+- **pool** = Cannot currently proceed. Droplet becomes pooled for recovery.
 - **cancel** = Won't be implemented. Droplet is closed; will not dispatch. Use for superseded work, filed-in-error items, or scope out-of-reach.
 
 ## Castellarius Daemon
@@ -190,7 +190,7 @@ ct architecti run --droplet <id>                    # Use a specific droplet as 
 ct architecti run --dry-run --droplet <id>         # Combine flags
 ```
 
-**Architecti** is the autonomous recovery agent that examines stagnant and blocked droplets and takes corrective action. Normally it is triggered automatically by the scheduler when droplets exceed the stagnation threshold. This command allows operators to invoke it manually for debugging or immediate intervention.
+**Architecti** is the autonomous recovery agent that examines pooled droplets and takes corrective action. Normally it is triggered automatically by the scheduler when droplets exceed the pool threshold. This command allows operators to invoke it manually for debugging or immediate intervention.
 
 ### Flags
 
@@ -204,7 +204,7 @@ ct architecti run --dry-run --droplet <id>         # Combine flags
 **Normal mode** — displays a summary of dispatched actions:
 ```
 Architecti completed. 3 action(s) dispatched:
-  restart  droplet-abc      implement          (reason: exceeded stagnation threshold)
+  restart  droplet-abc      implement          (reason: exceeded pooling threshold)
   file     repo-name        Urgent fix needed  (reason: critical diagnostics)
   note     droplet-def                         (reason: recovery attempt logged)
 ```
@@ -259,13 +259,13 @@ The flow dashboard displays a live view of the aqueduct system with sections:
 - Lists all open droplets not yet started
 - Sorted by priority (highest first)
 
-**Stagnant** — Escalated droplets that need intervention
-- Shows all droplets with stagnant status (blocked/stalled)
+**Pooled** — Droplets that cannot currently proceed
+- Shows all droplets with pooled status (cannot proceed)
 - Lists ID, time since last state change, and title
-- When count is zero, displays "Stagnant: 0" as a compact indicator
+- When count is zero, displays "Pooled: 0" as a compact indicator
 
-**Recent Flow** — Recently completed or escalated droplets
-- Shows delivered, cancelled, and escalated droplets with timestamps
+**Recent Flow** — Recently completed or pooled droplets
+- Shows delivered, cancelled, and pooled droplets with timestamps
 - Includes the most recent notes from each droplet
 
 **Refresh rate** — Dashboard polls every 2 seconds when droplets are flowing. During idle periods (no active flow and state unchanged), polling backs off to 5 seconds to reduce CPU usage.
@@ -285,7 +285,7 @@ The droplet browser provides three views:
 
 **Detail View**
 - **Header**: Droplet ID and title
-- **Meta**: Repo name, status (colored: green=in_progress, yellow=open, red=stagnant), current pipeline step
+- **Meta**: Repo name, status (colored: green=in_progress, yellow=open, red=pooled), current pipeline step
 - **Pipeline**: Visual indicator of your workflow steps with current step highlighted
   - Example: `implement → **review** → qa → delivery`
 - **Notes Timeline**: Chronological list of all cataractae notes with timestamps and author attribution
@@ -303,7 +303,7 @@ The droplet browser provides three views:
 **Detail View Actions** (dispatch directly without leaving the TUI)
 - `r` — **Restart** — Re-enter the pipeline at the start; prompts for optional reason
 - `x` — **Cancel** — Mark as cancelled (confirmation required: `y` or `n`)
-- `e` — **Escalate** — Raise priority to stagnant status (confirmation required: `y` or `n`)
+- `e` — **Pool** — Mark droplet as pooled (confirmation required: `y` or `n`)
 - `n` — **Add Note** — Append a manual note to the droplet; enter text and press Enter
 - `s` — **Set Step** — Jump to a different pipeline step; enter step name and press Enter
 

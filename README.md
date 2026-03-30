@@ -18,7 +18,7 @@ Cistern is an agentic delivery system built around a water metaphor. Droplets of
 | **Cataractae** | A gate along the aqueduct. Each cataractae implements, reviews, or diverts (LLMs working). |
 | **Recirculate** | Send a droplet back to a previous cataractae for further processing — revision from reviewer or QA. |
 | **Delivered** | A droplet that made it: PR merged, delivered. |
-| **Stagnant** | A droplet that can't flow without human intervention. |
+| **Pooled** | A droplet that cannot currently flow forward. |
 
 ![Cistern](Cistern.png)
 
@@ -148,7 +148,7 @@ repos:
 
 Repo names are validated case-insensitively — `ct droplet add --repo myproject` and `ct droplet add --repo MYPROJECT` both map to the canonical name `myproject` in the config.
 
-Aqueduct names are **concurrency slots** — they control how many droplets run in parallel per repo. Each active droplet gets its own isolated git worktree at `~/.cistern/sandboxes/<repo>/<droplet-id>/` on branch `feat/<droplet-id>`. Worktrees are created when a droplet enters the `implement` step and removed once it reaches a terminal state (`done`, `blocked`, `escalated`, or `human`).
+Aqueduct names are **concurrency slots** — they control how many droplets run in parallel per repo. Each active droplet gets its own isolated git worktree at `~/.cistern/sandboxes/<repo>/<droplet-id>/` on branch `feat/<droplet-id>`. Worktrees are created when a droplet enters the `implement` step and removed once it reaches a terminal state (`done`, `pooled`, or `human`).
 
 All per-droplet worktrees share a single primary clone object store at `~/.cistern/sandboxes/<repo>/_primary/` — objects are shared, only the working tree is per-droplet, keeping disk cost low. Each tmux session is named `<repo>-<aqueduct>`. Every `tmux ls` shows the cistern in motion:
 
@@ -221,9 +221,9 @@ Cataractae instructions can use Go template syntax to render content at spawn ti
 {{.Step.IsFirst}}           true if this is the first step
 {{.Step.IsLast}}            true if this is the last step
 {{.Step.OnPass}}            Name of next step after pass, or 'done'
-{{.Step.OnFail}}            Name of fail target, or 'blocked'
+{{.Step.OnFail}}            Name of fail target, or 'pooled'
 {{.Step.OnRecirculate}}     Name of recirculate target (empty if not configured)
-{{.Step.OnEscalate}}        Name of escalate target (empty if not configured)
+{{.Step.OnPool}}             Name of pool target (empty if not configured)
 {{.Step.ValidOutcomes}}     Slice of valid ct droplet commands with descriptions
 {{.Step.SkippedFor}}        Complexity levels this step is skipped for
 {{.Droplet.ID}}             Work item ID (e.g., 'ci-amg37')
@@ -250,8 +250,8 @@ Cataractae instructions can use Go template syntax to render content at spawn ti
 - ct droplet recirculate {{.Droplet.ID}} — return to {{.Step.OnRecirculate}}
 {{end}}
 
-**Block (genuinely blocked):**
-- ct droplet block {{.Droplet.ID}} — blocked waiting on external dependency
+**Pool (cannot currently proceed):**
+- ct droplet pool {{.Droplet.ID}} — cannot currently proceed
 ```
 
 **Static files pass through unchanged** — if a CLAUDE.md contains no template markers, it is used as-is. This maintains backward compatibility.
@@ -428,7 +428,7 @@ dashboard_font_family: 'Liberation Mono, DejaVu Sans Mono, Menlo, Consolas, mono
 #   per_token_requests: 120
 #   window: 1m
 
-# Architecti: autonomous diagnosis for stagnant/blocked droplets (always active).
+# Architecti: autonomous diagnosis for pooled droplets (always active).
 # Triggered by state-machine transitions; no polling threshold required.
 # Omit to use built-in defaults.
 architecti:
@@ -571,9 +571,9 @@ ct droplet close <id>                                             Mark delivered
 ct droplet reopen <id>                                            Return to cistern (status=open, cataractae unchanged)
 ct droplet restart <id> --cataractae delivery                     Re-enter at a specific cataractae (recovery)
 ct droplet restart <id> --cataractae delivery --notes "..."       Re-enter with a recovery note
-ct droplet purge --older-than 30d                                 Delete old delivered/stagnant droplets
+ct droplet purge --older-than 30d                                 Delete old delivered/pooled droplets
 ct droplet purge --older-than 24h --dry-run                       Preview what would be purged
-ct droplet escalate <id> --reason "..."                           Mark a droplet stagnant
+ct droplet pool <id> --notes "..."                               Mark a droplet pooled
 
 # Droplet outcomes — used by agent cataractae to signal completion
 ct droplet pass <id>                                              Advance to next cataractae
@@ -581,8 +581,8 @@ ct droplet pass <id> --notes "..."                                Advance with n
 ct droplet recirculate <id>                                       Send back to previous cataractae
 ct droplet recirculate <id> --to implement                        Send back to a named cataractae
 ct droplet recirculate <id> --notes "..."                         Recirculate with notes
-ct droplet block <id>                                             Mark genuinely blocked
-ct droplet block <id> --notes "..."                               Block with notes
+ct droplet pool <id>                                             Mark as pooled — cannot proceed
+ct droplet pool <id> --notes "..."                               Pool with notes
 
 # Human gate — critical droplets pause here before delivery
 ct droplet approve <id>                                           Approve a critical droplet for delivery
@@ -668,10 +668,10 @@ When a dispatch loop is detected, the Castellarius attempts ordered self-recover
 |---|---|
 | Dirty worktree | `git reset --hard HEAD && git clean -fd` on the droplet worktree |
 | Worktree missing or corrupt | Remove and recreate the worktree from the primary clone |
-| Feature branch missing from git (pathspec error) | Remove stale worktree directory and create a fresh branch from origin/main; if fresh-branch creation fails, escalate to stagnant |
+| Feature branch missing from git (pathspec error) | Remove stale worktree directory and create a fresh branch from origin/main; if fresh-branch creation fails, pool the droplet |
 | No applicable pattern found | Note the failure and retry next cycle |
 
-After **3 failed self-fix attempts**, the droplet is escalated to `stagnant` with a note describing the failure. Use `ct droplet show <id>` to inspect the recovery history, then `ct droplet restart <id> --cataractae <step>` to re-enter once the underlying issue is resolved.
+After **3 failed self-fix attempts**, the droplet is pooled with a note describing the failure. Use `ct droplet show <id>` to inspect the recovery history, then `ct droplet restart <id> --cataractae <step>` to re-enter once the underlying issue is resolved.
 
 Recovery attempts are attached as notes on the droplet and logged by the Castellarius with the prefix `dispatch-loop recovery:`. A successful agent spawn resets all counters — a droplet that recovers cleanly leaves no permanent trace.
 
@@ -679,26 +679,18 @@ Recovery attempts are attached as notes on the droplet and logged by the Castell
 
 ## Architecti: Autonomous Diagnosis Agent
 
-The Architecti is an autonomous recovery operator that diagnoses stagnant droplets and proposes corrective actions. It is always active — no configuration required to enable it.
+The Architecti is an autonomous recovery operator that diagnoses pooled droplets and proposes corrective actions. It is always active — no configuration required to enable it.
 
 ### When it runs
 
-The Architecti is invoked in the following scenarios:
-
-**State-transition triggers:**
-- When the Castellarius transitions a droplet to **stagnant** (no-route escalation, terminal blocked/human/escalate)
+A droplet triggers the Architecti exactly once per bad-state transition:
+- When the Castellarius transitions a droplet to **pooled** (no-route pool, terminal pooled/human)
 - When a droplet is **stuck routing** (in_progress with outcome set but failing to advance)
 - Each bad-state transition triggers **exactly one** Architecti invocation — never more. An invocation note is written before the agent runs, so the guarantee survives restarts.
 
-**Scheduled scans:**
-- On **Castellarius startup**, a scan runs to discover and enqueue any droplets already in stagnant or blocked state
-- On **each poll cycle** (scheduler tick), a scan runs to catch droplets that newly transitioned to bad state outside normal state-change detection
-
-All Architecti invocations use **note-based deduplication**: a droplet with an existing `[architecti]` invocation note is skipped, preventing repeated recovery attempts for the same stuck state.
-
 ### What it does
 
-The Architecti receives a comprehensive snapshot of the Castellarius state (all droplets with complete note history, sessions, infrastructure health, recent logs) and outputs a JSON array of recovery actions:
+The Architecti receives a comprehensive snapshot of the Castellarius state (all droplets, sessions, infrastructure health, recent logs) and outputs a JSON array of recovery actions:
 
 ```json
 [
@@ -787,8 +779,7 @@ ct droplet restart sc-gh7lg --cataractae implement \
 ```
 
 `restart` clears the assignee, outcome, and sets status back to `open` at the named cataractae.
-The Castellarius picks it up on the next tick. Works from any terminal state: delivered, blocked,
-stagnant, or open.
+The Castellarius picks it up on the next tick. Works from any terminal state: delivered, pooled, or open.
 
 This differs from `reopen` (which returns to `open` with the cataractae unchanged) and
 `recirculate` (which is an agent-issued signal during active processing). `restart` is for

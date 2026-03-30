@@ -76,7 +76,7 @@ ct droplet pass <id> --notes "No findings."
 ct droplet recirculate <id> --notes "3 findings. (1) missing error handling on GetReady at line 42. (2) nil dereference on empty response. (3) ..."
 ```
 
-Your outcome must be pass or recirculate only. Never use block. A reviewer finding
+Your outcome must be pass or recirculate only. Never use pool. A reviewer finding
 issues is normal — that is recirculate, not failure.
 
 **The rule is simple:** if you have ANY findings, the result MUST be `recirculate`.

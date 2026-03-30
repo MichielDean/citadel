@@ -23,8 +23,8 @@ cataractae:
         path: skills/cistern-github/SKILL.md
     timeout_minutes: 30
     on_pass: simplify
-    on_fail: blocked
-    on_escalate: human
+    on_fail: pooled
+    on_pool: human
 
   - name: simplify
     type: agent
@@ -42,7 +42,7 @@ cataractae:
     on_pass: review
     on_fail: implement
     on_recirculate: implement
-    on_escalate: human
+    on_pool: human
 
   - name: review
     type: agent
@@ -64,7 +64,7 @@ cataractae:
     on_pass: qa
     on_fail: implement
     on_recirculate: implement
-    on_escalate: human
+    on_pool: human
 
   - name: qa
     type: agent
@@ -80,7 +80,7 @@ cataractae:
     on_pass: security-review
     on_fail: implement
     on_recirculate: implement
-    on_escalate: human
+    on_pool: human
 
   - name: security-review
     type: agent
@@ -94,7 +94,7 @@ cataractae:
     on_pass: docs
     on_fail: implement
     on_recirculate: implement
-    on_escalate: human
+    on_pool: human
 
   - name: docs
     type: agent
@@ -110,7 +110,7 @@ cataractae:
     on_pass: delivery
     on_fail: implement
     on_recirculate: implement
-    on_escalate: human
+    on_pool: human
 
   - name: delivery
     type: agent
@@ -125,4 +125,4 @@ cataractae:
     timeout_minutes: 60
     on_pass: done
     on_recirculate: implement
-    on_escalate: human
+    on_pool: human

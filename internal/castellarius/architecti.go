@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
@@ -17,14 +16,14 @@ import (
 )
 
 const (
-	architectiSessionName              = "architecti"
-	architectiRateLimitWindow          = 24 * time.Hour
+	architectiSessionName               = "architecti"
+	architectiRateLimitWindow           = 24 * time.Hour
 	architectiRestartCastellariusFactor = 5 // lastTickAt must exceed this multiple of pollInterval
-	architectiSessionTimeout           = 10 * time.Minute
-	maxActionsPerRun                   = 1000 // cap total actions per invocation for defense-in-depth
+	architectiSessionTimeout            = 10 * time.Minute
+	maxActionsPerRun                    = 1000 // cap total actions per invocation for defense-in-depth
 
 	// architectiQueueCap is the capacity of the serial in-memory queue.
-	// Sized generously to accommodate transient bursts of stagnant transitions.
+	// Sized generously to accommodate transient bursts of pooled transitions.
 	architectiQueueCap = 64
 
 	// architectiDefaultMaxFilesPerRun is used when no ArchitectiConfig is present.
@@ -145,28 +144,6 @@ func (s *Castellarius) startArchitectiQueue(ctx context.Context) {
 	}()
 }
 
-// scanBadStates scans all repos for droplets in stagnant or blocked state that
-// have no existing [architecti] invocation note, and enqueues any found.
-// Called once at startup (after startArchitectiQueue) so pre-existing bad states
-// are caught on restart, and on each poll cycle so newly stagnant droplets that
-// slip through transition detection are caught.
-// Note-based dedup in tryEnqueueArchitecti prevents repeated invocations.
-func (s *Castellarius) scanBadStates() {
-	for _, repo := range s.config.Repos {
-		client := s.clients[repo.Name]
-		for _, status := range []string{"stagnant", "blocked"} {
-			items, err := client.List(repo.Name, status)
-			if err != nil {
-				s.logger.Error("scan: list failed", "repo", repo.Name, "status", status, "error", err)
-				continue
-			}
-			for _, item := range items {
-				s.tryEnqueueArchitecti(client, item)
-			}
-		}
-	}
-}
-
 // ArchitectiAction is a single action output by the Architecti agent.
 type ArchitectiAction struct {
 	Action     string `json:"action"`
@@ -246,7 +223,7 @@ func (s *Castellarius) buildArchitectiSnapshot(ctx context.Context, trigger *cis
 	// --- Droplet State Inventory ---
 	sb.WriteString("## Droplet State Inventory\n\n")
 
-	var allStagnant, allBlocked, allInProgress []*cistern.Droplet
+	var allPooled, allInProgress []*cistern.Droplet
 
 	for _, repo := range s.config.Repos {
 		if ctx.Err() != nil {
@@ -256,7 +233,7 @@ func (s *Castellarius) buildArchitectiSnapshot(ctx context.Context, trigger *cis
 		if !ok {
 			continue
 		}
-		for _, status := range []string{"stagnant", "blocked", "in_progress"} {
+		for _, status := range []string{"pooled", "in_progress"} {
 			items, err := client.List(repo.Name, status)
 			if err != nil {
 				s.logger.Warn("architecti: snapshot: list failed",
@@ -266,10 +243,8 @@ func (s *Castellarius) buildArchitectiSnapshot(ctx context.Context, trigger *cis
 			for _, item := range items {
 				repoByDroplet[item.ID] = repo.Name
 				switch status {
-				case "stagnant":
-					allStagnant = append(allStagnant, item)
-				case "blocked":
-					allBlocked = append(allBlocked, item)
+				case "pooled":
+					allPooled = append(allPooled, item)
 				case "in_progress":
 					allInProgress = append(allInProgress, item)
 				}
@@ -277,10 +252,7 @@ func (s *Castellarius) buildArchitectiSnapshot(ctx context.Context, trigger *cis
 		}
 	}
 
-	writeDropletTable(&sb, "### Stagnant Droplets", allStagnant, false)
-	s.writeDropletNotes(&sb, allStagnant, repoByDroplet)
-	writeDropletTable(&sb, "### Blocked Droplets", allBlocked, false)
-	s.writeDropletNotes(&sb, allBlocked, repoByDroplet)
+	writeDropletTable(&sb, "### Pooled Droplets", allPooled, false)
 
 	// In-progress: separate stuck-routing from active.
 	var stuckRouting, active []*cistern.Droplet
@@ -292,9 +264,7 @@ func (s *Castellarius) buildArchitectiSnapshot(ctx context.Context, trigger *cis
 		}
 	}
 	writeDropletTable(&sb, "### In-Progress Droplets", active, true)
-	s.writeDropletNotes(&sb, active, repoByDroplet)
 	writeDropletTable(&sb, "### Stuck Routing (outcome set, not yet routed)", stuckRouting, true)
-	s.writeDropletNotes(&sb, stuckRouting, repoByDroplet)
 
 	// --- Infrastructure Health ---
 	sb.WriteString("## Infrastructure Health\n\n")
@@ -383,50 +353,6 @@ func writeDropletTable(sb *strings.Builder, heading string, items []*cistern.Dro
 		}
 	}
 	sb.WriteString("\n")
-}
-
-// writeDropletNotes writes a "### Notes" subsection immediately after a droplet
-// table. For each droplet in the group it fetches notes via the client associated
-// with its repo. Notes are rendered in chronological order. Droplets with no
-// notes are omitted. GetNotes errors are logged as warnings and skipped so that
-// a note-fetch failure never aborts the snapshot.
-func (s *Castellarius) writeDropletNotes(sb *strings.Builder, droplets []*cistern.Droplet, repoByDroplet map[string]string) {
-	if len(droplets) == 0 {
-		return
-	}
-	sectionWritten := false
-	for _, d := range droplets {
-		repo, ok := repoByDroplet[d.ID]
-		if !ok {
-			continue
-		}
-		client, ok := s.clients[repo]
-		if !ok {
-			continue
-		}
-		notes, err := client.GetNotes(d.ID)
-		if err != nil {
-			s.logger.Warn("architecti: snapshot: get notes failed",
-				"droplet", d.ID, "error", err)
-			continue
-		}
-		if len(notes) == 0 {
-			continue
-		}
-		// Sort oldest-first so Architecti sees the full chronological history.
-		slices.SortFunc(notes, func(a, b cistern.CataractaeNote) int {
-			return a.CreatedAt.Compare(b.CreatedAt)
-		})
-		if !sectionWritten {
-			sb.WriteString("### Notes\n\n")
-			sectionWritten = true
-		}
-		fmt.Fprintf(sb, "#### %s\n", d.ID)
-		for _, n := range notes {
-			fmt.Fprintf(sb, "- [%s] %s: %s\n", n.CataractaeName, n.CreatedAt.UTC().Format(time.RFC3339), n.Content)
-		}
-		sb.WriteString("\n")
-	}
 }
 
 // parseArchitectiOutput extracts and validates the JSON action array from raw

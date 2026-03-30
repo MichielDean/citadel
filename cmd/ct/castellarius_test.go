@@ -283,7 +283,6 @@ func TestValidateWorkflowSkills_ErrorMentionsInstallCommand(t *testing.T) {
 	}
 }
 
-
 // writeMinimalConfig writes a minimal cistern.yaml with the given provider name
 // to a temp dir and returns the path to the config file.
 func writeMinimalConfig(t *testing.T, dir, providerName string) string {
@@ -478,9 +477,9 @@ func TestRepoQueueSummary_FlowingWithoutAssignee_ShowsIDAndCataractae(t *testing
 	}
 }
 
-func TestRepoQueueSummary_StagnantItems_NotCounted(t *testing.T) {
+func TestRepoQueueSummary_PooledItems_NotCounted(t *testing.T) {
 	items := []*cistern.Droplet{
-		{ID: "ct-aaa", Repo: "cistern", Status: "stagnant"},
+		{ID: "ct-aaa", Repo: "cistern", Status: "pooled"},
 		{ID: "ct-bbb", Repo: "cistern", Status: "delivered"},
 	}
 	got := repoQueueSummary("cistern", items)

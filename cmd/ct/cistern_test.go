@@ -203,7 +203,7 @@ func TestCisternListTableOutput(t *testing.T) {
 	listOutput = "table"
 }
 
-func TestCisternList_StagnantItems_NoFlowingMessage(t *testing.T) {
+func TestCisternList_PooledItems_NoFlowingMessage(t *testing.T) {
 	dir := t.TempDir()
 	db := filepath.Join(dir, "test.db")
 	t.Setenv("CT_DB", db)
@@ -212,13 +212,13 @@ func TestCisternList_StagnantItems_NoFlowingMessage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s1, _ := c.Add("repo", "Stagnant one", "", 1, 3)
-	s2, _ := c.Add("repo", "Stagnant two", "", 1, 3)
-	c.Escalate(s1.ID, "timed out")
-	c.Escalate(s2.ID, "timed out")
+	s1, _ := c.Add("repo", "Pooled one", "", 1, 3)
+	s2, _ := c.Add("repo", "Pooled two", "", 1, 3)
+	c.Pool(s1.ID, "timed out")
+	c.Pool(s2.ID, "timed out")
 	c.Close()
 
-	t.Run("status open filter with only stagnant items shows No flowing droplets message", func(t *testing.T) {
+	t.Run("status open filter with only pooled items shows No flowing droplets message", func(t *testing.T) {
 		listOutput = "table"
 		listRepo = ""
 		listStatus = "open"
@@ -231,7 +231,7 @@ func TestCisternList_StagnantItems_NoFlowingMessage(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 		})
-		want := "No flowing droplets. 2 droplet(s) stagnant."
+		want := "No flowing droplets. 2 droplet(s) pooled."
 		if strings.TrimSpace(out) != want {
 			t.Fatalf("expected %q, got %q", want, out)
 		}
@@ -259,7 +259,7 @@ func TestCisternList_StagnantItems_NoFlowingMessage(t *testing.T) {
 	})
 }
 
-func TestCisternList_FlowingAndStagnant_ShowsNoMessage(t *testing.T) {
+func TestCisternList_FlowingAndPooled_ShowsNoMessage(t *testing.T) {
 	// When flowing droplets exist, a filtered list returning no results must
 	// emit no message at all — neither "No flowing droplets." nor "Cistern dry."
 	dir := t.TempDir()
@@ -273,9 +273,9 @@ func TestCisternList_FlowingAndStagnant_ShowsNoMessage(t *testing.T) {
 	// Create one in_progress (flowing) droplet.
 	ip, _ := c.Add("repo", "In-progress work", "", 1, 3)
 	c.UpdateStatus(ip.ID, "in_progress")
-	// Create one stagnant droplet.
+	// Create one pooled droplet.
 	stuck, _ := c.Add("repo", "Stuck item", "", 1, 3)
-	c.Escalate(stuck.ID, "timed out")
+	c.Pool(stuck.ID, "timed out")
 	c.Close()
 
 	// Filter by --status open: no open droplets exist, so results are empty.
@@ -562,7 +562,7 @@ func TestDropletStats_EmptyDB(t *testing.T) {
 	buf.ReadFrom(r)
 	out := buf.String()
 
-	for _, want := range []string{"flowing", "queued", "delivered", "stagnant", "total"} {
+	for _, want := range []string{"flowing", "queued", "delivered", "pooled", "total"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output missing %q:\n%s", want, out)
 		}
@@ -574,7 +574,7 @@ func TestDropletStats_WithData(t *testing.T) {
 	db := filepath.Join(dir, "test.db")
 	t.Setenv("CT_DB", db)
 
-	// Seed: 2 queued, 1 flowing, 3 delivered, 1 stagnant.
+	// Seed: 2 queued, 1 flowing, 3 delivered, 1 pooled.
 	c, err := cistern.New(db, "ts")
 	if err != nil {
 		t.Fatal(err)
@@ -590,7 +590,7 @@ func TestDropletStats_WithData(t *testing.T) {
 	c.CloseItem(d1.ID)
 	c.CloseItem(d2.ID)
 	c.CloseItem(d3.ID)
-	c.Escalate(s1.ID, "stuck")
+	c.Pool(s1.ID, "stuck")
 	c.Close()
 
 	old := os.Stdout
@@ -614,7 +614,7 @@ func TestDropletStats_WithData(t *testing.T) {
 		{"flowing", "1"},
 		{"queued", "2"},
 		{"delivered", "3"},
-		{"stagnant", "1"},
+		{"pooled", "1"},
 		{"total", "7"},
 	}
 	for _, ch := range checks {
@@ -822,7 +822,7 @@ func TestDropletApprove(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Simulate scheduler routing to human gate.
-	c.UpdateStatus(item.ID, "stagnant")
+	c.UpdateStatus(item.ID, "pooled")
 	c.SetCataractae(item.ID, "human")
 	c.Close()
 
@@ -889,17 +889,17 @@ func TestDropletApprove_NotHumanGated(t *testing.T) {
 
 func TestDisplayStatusForDroplet_AwaitingApproval(t *testing.T) {
 	// Human-gated droplet should display as "awaiting".
-	d := &cistern.Droplet{Status: "stagnant", CurrentCataractae: "human"}
+	d := &cistern.Droplet{Status: "pooled", CurrentCataractae: "human"}
 	got := displayStatusForDroplet(d)
 	if got != "awaiting" {
 		t.Errorf("expected 'awaiting', got %q", got)
 	}
 
-	// Non-human stagnant droplet should display as "stagnant".
-	d2 := &cistern.Droplet{Status: "stagnant", CurrentCataractae: "implement"}
+	// Non-human pooled droplet should display as "pooled".
+	d2 := &cistern.Droplet{Status: "pooled", CurrentCataractae: "implement"}
 	got2 := displayStatusForDroplet(d2)
-	if got2 != "stagnant" {
-		t.Errorf("expected 'stagnant', got %q", got2)
+	if got2 != "pooled" {
+		t.Errorf("expected 'pooled', got %q", got2)
 	}
 
 	// Icon for awaiting should be present in statusIcon.
@@ -1055,22 +1055,22 @@ func TestDropletSearch(t *testing.T) {
 		}
 	})
 
-	t.Run("empty results with stagnant items shows No flowing droplets message", func(t *testing.T) {
-		// Use an isolated DB with only a stagnant item and no flowing droplets,
-		// so that stats.Flowing == 0 and the stagnant message is shown.
-		stagnantDir := t.TempDir()
-		stagnantDB := filepath.Join(stagnantDir, "stagnant.db")
-		t.Setenv("CT_DB", stagnantDB)
+	t.Run("empty results with pooled items shows No flowing droplets message", func(t *testing.T) {
+		// Use an isolated DB with only a pooled item and no flowing droplets,
+		// so that stats.Flowing == 0 and the pooled message is shown.
+		pooledDir := t.TempDir()
+		pooledDB := filepath.Join(pooledDir, "pooled.db")
+		t.Setenv("CT_DB", pooledDB)
 
-		cs, err := cistern.New(stagnantDB, "ts")
+		cs, err := cistern.New(pooledDB, "ts")
 		if err != nil {
 			t.Fatal(err)
 		}
 		stuck, _ := cs.Add("repo", "Stuck integration", "", 1, 3)
-		cs.Escalate(stuck.ID, "timed out")
+		cs.Pool(stuck.ID, "timed out")
 		cs.Close()
 
-		// Search for a term that matches nothing; stagnant item has title "Stuck integration".
+		// Search for a term that matches nothing; pooled item has title "Stuck integration".
 		searchQuery = "xyz-no-match"
 		searchStatus = ""
 		searchPriority = 0
@@ -1080,7 +1080,7 @@ func TestDropletSearch(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 		})
-		want := "No flowing droplets. 1 droplet(s) stagnant."
+		want := "No flowing droplets. 1 droplet(s) pooled."
 		if strings.TrimSpace(out) != want {
 			t.Fatalf("expected %q, got %q", want, out)
 		}

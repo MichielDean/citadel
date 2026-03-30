@@ -642,7 +642,7 @@ cataractae:
     type: agent
     identity: implementer
     on_pass: done
-    on_fail: blocked
+    on_fail: pooled
 `
 	wfPath := filepath.Join(t.TempDir(), "workflow.yaml")
 	if err := os.WriteFile(wfPath, []byte(wfContent), 0o644); err != nil {

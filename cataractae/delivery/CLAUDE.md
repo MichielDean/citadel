@@ -123,7 +123,7 @@ CHECKS=$(gh pr checks "$PR_URL")
 GH_EXIT=$?
 if [ $GH_EXIT -ne 0 ] && [ -z "$CHECKS" ]; then
   echo "ERROR: gh pr checks failed (exit $GH_EXIT)"
-  ct droplet block $DROPLET_ID --notes "gh pr checks failed (exit $GH_EXIT) — cannot verify CI — $PR_URL"
+  ct droplet pool $DROPLET_ID --notes "gh pr checks failed (exit $GH_EXIT) — cannot verify CI — $PR_URL"
   exit 1
 elif [ -z "$CHECKS" ]; then
   echo "No CI checks configured — proceeding to merge"
@@ -153,7 +153,7 @@ Classify each failing check before acting on it. Classification determines wheth
 - Schema mismatches: `field missing`, `type mismatch`, `unknown field`, `validation error`
 - Compilation errors in test or application code
 
-**Stagnant-eligible** — infrastructure failures the implementer cannot address (attempt counter does NOT apply):
+**Pooled-eligible** — infrastructure failures the implementer cannot address (attempt counter does NOT apply):
 - Port conflicts: `address already in use`, `bind: address already in use`
 - Container startup failures: `container exited with code`, `failed to start container`, `OOMKilled`
 - Service unavailable: `connection refused`, `no such host`, `dial tcp.*refused`, `i/o timeout`
@@ -162,9 +162,9 @@ Classify each failing check before acting on it. Classification determines wheth
 - Merge conflicts: branch is behind `origin/main`, CI detects out-of-date branch
 - Unresolved review comments: reviewer has requested changes
 
-For stagnant-eligible failures, signal immediately without incrementing the counter:
+For pooled-eligible failures, signal immediately without incrementing the counter:
 ```bash
-ct droplet block $DROPLET_ID --notes "Stagnant: <infrastructure failure> — $PR_URL"
+ct droplet pool $DROPLET_ID --notes "Pooled: <infrastructure failure> — $PR_URL"
 ```
 
 ### Counter-exempt handling
@@ -228,7 +228,7 @@ git fetch origin \
 STATE=$(gh pr view "$PR_URL" --json state --jq '.state')
 if [ "$STATE" != "MERGED" ]; then
   echo "ERROR: merge failed — state is $STATE"
-  ct droplet block $DROPLET_ID --notes "Merge failed: state=$STATE — $PR_URL"
+  ct droplet pool $DROPLET_ID --notes "Merge failed: state=$STATE — $PR_URL"
   exit 1
 fi
 echo "Confirmed: PR state is MERGED"
@@ -243,7 +243,7 @@ ct droplet pass $DROPLET_ID --notes "Delivered: $PR_URL — <one-line summary>"
 
 If merge is impossible after exhausting all options:
 ```bash
-ct droplet block $DROPLET_ID --notes "Cannot merge: <exact reason> — $PR_URL"
+ct droplet pool $DROPLET_ID --notes "Cannot merge: <exact reason> — $PR_URL"
 ```
 
 ## Rules
@@ -252,4 +252,4 @@ ct droplet block $DROPLET_ID --notes "Cannot merge: <exact reason> — $PR_URL"
 - go build + go test must pass before every push
 - Fix CI, conflicts, and review comments yourself — do not recirculate for routine failures
 - Recirculate after 2 failed fix attempts on the same code-level CI check (see Step 4 recirculate path)
-- Recirculate only for code-level failures — never recirculate for infrastructure/stagnant failures (block instead)
+- Recirculate only for code-level failures — never recirculate for infrastructure/pooled failures (pool instead)

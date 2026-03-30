@@ -46,9 +46,9 @@ type Config struct {
 	Repo             aqueduct.RepoConfig
 	Workflow         *aqueduct.Workflow
 	CisternClient    *cistern.Client
-	SandboxRoot      string // Override for sandbox root dir (default: ~/.cistern/sandboxes)
-	HandoffThreshold int    // Token threshold for session handoff (default: 150000)
-	SkipInitialClone bool   // Skip the startup clone (for tests with fake repo URLs)
+	SandboxRoot      string                  // Override for sandbox root dir (default: ~/.cistern/sandboxes)
+	HandoffThreshold int                     // Token threshold for session handoff (default: 150000)
+	SkipInitialClone bool                    // Skip the startup clone (for tests with fake repo URLs)
 	Preset           provider.ProviderPreset // Resolved provider preset; zero-value falls back to legacy claude path
 }
 
@@ -184,7 +184,7 @@ func (r *Runner) findWorkerByName(name string) *Worker {
 
 // SpawnStep prepares the sandbox and context for a step, then spawns the agent
 // session in tmux and returns immediately. The agent signals completion by calling
-// `ct droplet pass/recirculate/block <id>`, which the Castellarius observe loop
+// `ct droplet pass/recirculate/pool <id>`, which the Castellarius observe loop
 // detects on its next tick.
 //
 // sandboxDirOverride, if non-empty, is used as the sandbox directory instead of

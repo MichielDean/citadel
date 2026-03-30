@@ -152,7 +152,6 @@ func cataractaeInstructionsTemplate() string {
 3. **Signal outcome** — call one of:
    - ` + "`ct droplet pass <id> --notes \"...\"`" + `
    - ` + "`ct droplet recirculate <id> --notes \"...\"`" + `
-   - ` + "`ct droplet block <id> --notes \"...\"`" + `
+   - ` + "`ct droplet pool <id> --notes \"...\"`" + `
 `
 }
-

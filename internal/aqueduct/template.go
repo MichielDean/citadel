@@ -24,13 +24,13 @@ type StepTemplateContext struct {
 	IsLast bool
 	// OnPass is the next step name on success, or "done" if last.
 	OnPass string
-	// OnFail is the fail target, or "blocked" if not configured.
+	// OnFail is the fail target, or "pooled" if not configured.
 	OnFail string
 	// OnRecirculate is the recirculate target, or "" if not configured.
 	// Template authors should use {{if .Step.OnRecirculate}} to gate this section.
 	OnRecirculate string
-	// OnEscalate is the escalate target, or "human" if not configured.
-	OnEscalate string
+	// OnPool is the pool target, or "human" if not configured.
+	OnPool string
 	// ValidOutcomes lists the ct droplet commands valid for this step.
 	// pass is always included; recirculate is included only when OnRecirculate != "".
 	ValidOutcomes []ValidOutcome
@@ -50,8 +50,8 @@ type DropletTemplateContext struct {
 // TemplateContext is the top-level data passed to CLAUDE.md template rendering.
 // It maps to the three top-level template namespaces: .Step, .Droplet, .Pipeline.
 type TemplateContext struct {
-	Step     StepTemplateContext
-	Droplet  DropletTemplateContext
+	Step    StepTemplateContext
+	Droplet DropletTemplateContext
 	// Pipeline is the ordered slice of all step names in the workflow.
 	Pipeline []string
 }
@@ -77,11 +77,11 @@ func BuildStepTemplateContext(wf *Workflow, step *WorkflowCataractae) StepTempla
 	}
 	onFail := step.OnFail
 	if onFail == "" {
-		onFail = "blocked"
+		onFail = "pooled"
 	}
-	onEscalate := step.OnEscalate
-	if onEscalate == "" {
-		onEscalate = "human"
+	onPool := step.OnPool
+	if onPool == "" {
+		onPool = "human"
 	}
 
 	var outcomes []ValidOutcome
@@ -97,18 +97,11 @@ func BuildStepTemplateContext(wf *Workflow, step *WorkflowCataractae) StepTempla
 			Description: "send back to " + step.OnRecirculate + " with specific findings",
 		})
 	}
-	// block is always valid
+	// pool is always valid
 	outcomes = append(outcomes, ValidOutcome{
-		Command:     "ct droplet block <id>",
+		Command:     "ct droplet pool <id>",
 		Description: "cannot proceed, explain why",
 	})
-	// escalate only if configured
-	if step.OnEscalate != "" {
-		outcomes = append(outcomes, ValidOutcome{
-			Command:     "ct droplet escalate <id>",
-			Description: "escalate to " + onEscalate,
-		})
-	}
 
 	return StepTemplateContext{
 		Name:          step.Name,
@@ -118,7 +111,7 @@ func BuildStepTemplateContext(wf *Workflow, step *WorkflowCataractae) StepTempla
 		OnPass:        onPass,
 		OnFail:        onFail,
 		OnRecirculate: step.OnRecirculate,
-		OnEscalate:    onEscalate,
+		OnPool:        onPool,
 		ValidOutcomes: outcomes,
 	}
 }

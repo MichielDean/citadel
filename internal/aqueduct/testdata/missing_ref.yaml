@@ -4,4 +4,4 @@ cataractae:
     type: agent
     identity: implementer
     on_pass: nonexistent-step
-    on_fail: blocked
+    on_fail: pooled

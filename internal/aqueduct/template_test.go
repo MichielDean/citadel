@@ -15,7 +15,7 @@ func TestRenderTemplate_ImplementerWithoutRecirculate_RecirculateSectionAbsent(t
 		Name: "feature",
 		Cataractae: []WorkflowCataractae{
 			{Name: "implement", Type: CataractaeTypeAgent, Identity: "implementer",
-				OnPass: "review", OnFail: "blocked"},
+				OnPass: "review", OnFail: "pooled"},
 			{Name: "review", Type: CataractaeTypeAgent, Identity: "reviewer",
 				OnPass: "done", OnRecirculate: "implement"},
 		},
@@ -60,7 +60,7 @@ func TestRenderTemplate_ReviewerWithRecirculate_RecirculateSectionPresent(t *tes
 		Name: "feature",
 		Cataractae: []WorkflowCataractae{
 			{Name: "implement", Type: CataractaeTypeAgent, Identity: "implementer",
-				OnPass: "review", OnFail: "blocked"},
+				OnPass: "review", OnFail: "pooled"},
 			{Name: "review", Type: CataractaeTypeAgent, Identity: "reviewer",
 				OnPass: "done", OnRecirculate: "implement"},
 		},
@@ -185,7 +185,7 @@ func TestBuildStepTemplateContext_Position_IsFirstIsLast(t *testing.T) {
 }
 
 func TestBuildStepTemplateContext_RoutingDefaults(t *testing.T) {
-	// When OnFail/OnEscalate are not set, defaults should be applied.
+	// When OnFail/OnPool are not set, defaults should be applied.
 	wf := &Workflow{
 		Name: "test",
 		Cataractae: []WorkflowCataractae{
@@ -197,11 +197,11 @@ func TestBuildStepTemplateContext_RoutingDefaults(t *testing.T) {
 	if ctx.OnPass != "done" {
 		t.Errorf("OnPass = %q, want %q", ctx.OnPass, "done")
 	}
-	if ctx.OnFail != "blocked" {
-		t.Errorf("OnFail = %q, want %q", ctx.OnFail, "blocked")
+	if ctx.OnFail != "pooled" {
+		t.Errorf("OnFail = %q, want %q", ctx.OnFail, "pooled")
 	}
-	if ctx.OnEscalate != "human" {
-		t.Errorf("OnEscalate = %q, want %q", ctx.OnEscalate, "human")
+	if ctx.OnPool != "human" {
+		t.Errorf("OnPool = %q, want %q", ctx.OnPool, "human")
 	}
 	if ctx.OnRecirculate != "" {
 		t.Errorf("OnRecirculate = %q, want empty", ctx.OnRecirculate)
@@ -213,7 +213,7 @@ func TestBuildStepTemplateContext_ValidOutcomes_RecirculateOnlyWhenConfigured(t 
 		Name: "test",
 		Cataractae: []WorkflowCataractae{
 			{Name: "impl", Type: CataractaeTypeAgent, Identity: "implementer",
-				OnPass: "review", OnFail: "blocked"},
+				OnPass: "review", OnFail: "pooled"},
 			{Name: "review", Type: CataractaeTypeAgent, Identity: "reviewer",
 				OnPass: "done", OnRecirculate: "impl"},
 		},
@@ -243,38 +243,39 @@ func TestBuildStepTemplateContext_ValidOutcomes_RecirculateOnlyWhenConfigured(t 
 	}
 }
 
-func TestBuildStepTemplateContext_ValidOutcomes_EscalateOnlyWhenConfigured(t *testing.T) {
+func TestBuildStepTemplateContext_ValidOutcomes_PoolAlwaysPresent(t *testing.T) {
 	wf := &Workflow{
 		Name: "test",
 		Cataractae: []WorkflowCataractae{
 			{Name: "impl", Type: CataractaeTypeAgent, Identity: "implementer",
-				OnPass: "review", OnFail: "blocked"},
+				OnPass: "review", OnFail: "pooled"},
 			{Name: "review", Type: CataractaeTypeAgent, Identity: "reviewer",
-				OnPass: "done", OnEscalate: "human-review"},
+				OnPass: "done", OnPool: "human-review"},
 		},
 	}
 
-	// Implementer: no escalate configured — should be absent from ValidOutcomes.
+	// Implementer: pool is always present even when OnPool is not configured.
 	implCtx := BuildStepTemplateContext(wf, &wf.Cataractae[0])
+	hasPool := false
 	for _, o := range implCtx.ValidOutcomes {
-		if strings.Contains(o.Command, "escalate") {
-			t.Error("implementer ValidOutcomes should not contain escalate when OnEscalate is empty")
+		if strings.Contains(o.Command, "pool") {
+			hasPool = true
 		}
+	}
+	if !hasPool {
+		t.Error("implementer ValidOutcomes should always contain pool")
 	}
 
-	// Reviewer: escalate is configured — should be present with correct target.
+	// Reviewer: pool is present with command.
 	revCtx := BuildStepTemplateContext(wf, &wf.Cataractae[1])
-	hasEscalate := false
+	hasPool = false
 	for _, o := range revCtx.ValidOutcomes {
-		if strings.Contains(o.Command, "escalate") {
-			hasEscalate = true
-			if !strings.Contains(o.Description, "human-review") {
-				t.Errorf("escalate description should mention target 'human-review', got %q", o.Description)
-			}
+		if strings.Contains(o.Command, "pool") {
+			hasPool = true
 		}
 	}
-	if !hasEscalate {
-		t.Error("reviewer ValidOutcomes should contain escalate when OnEscalate is set")
+	if !hasPool {
+		t.Error("reviewer ValidOutcomes should contain pool when OnPool is set")
 	}
 }
 

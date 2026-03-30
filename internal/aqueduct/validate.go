@@ -92,14 +92,14 @@ func cataractaeRefs(s WorkflowCataractae) []cataractaeRef {
 		{"on_pass", s.OnPass},
 		{"on_fail", s.OnFail},
 		{"on_recirculate", s.OnRecirculate},
-		{"on_escalate", s.OnEscalate},
+		{"on_pool", s.OnPool},
 	}
 }
 
 // isTerminal returns true for built-in terminal states that are not step names.
 func isTerminal(name string) bool {
 	switch strings.ToLower(name) {
-	case "done", "blocked", "human", "escalate":
+	case "done", "pooled", "human", "pool":
 		return true
 	}
 	return false

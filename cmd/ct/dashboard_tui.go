@@ -59,9 +59,9 @@ var (
 
 // --- Messages ---
 
-type tuiTickMsg  time.Time
-type tuiAnimMsg  time.Time
-type tuiDataMsg  *DashboardData
+type tuiTickMsg time.Time
+type tuiAnimMsg time.Time
+type tuiDataMsg *DashboardData
 
 // tuiPeekNewWindowErrMsg is sent when tmuxNewWindowFunc fails, triggering a
 // fallback to the inline capture-pane overlay.
@@ -78,8 +78,8 @@ type dashboardTUIModel struct {
 	cfgPath         string
 	dbPath          string
 	data            *DashboardData
-	frame           int    // animation frame counter — increments every animInterval
-	scrollY         int    // scroll offset in lines (0 = top)
+	frame           int // animation frame counter — increments every animInterval
+	scrollY         int // scroll offset in lines (0 = top)
 	width           int
 	height          int
 	peekActive      bool
@@ -343,7 +343,9 @@ func (m dashboardTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.scrollY = 999999 // clamped in View()
 		case "pgup", "ctrl+u":
 			m.scrollY -= m.height / 2
-			if m.scrollY < 0 { m.scrollY = 0 }
+			if m.scrollY < 0 {
+				m.scrollY = 0
+			}
 		case "pgdown", "ctrl+d":
 			m.scrollY += m.height / 2
 		}
@@ -354,7 +356,9 @@ func (m dashboardTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.scrollY > 0 {
 				m.scrollY -= 3
 			}
-			if m.scrollY < 0 { m.scrollY = 0 }
+			if m.scrollY < 0 {
+				m.scrollY = 0
+			}
 		case tea.MouseButtonWheelDown:
 			m.scrollY += 3
 		}
@@ -394,9 +398,9 @@ func (m dashboardTUIModel) View() string {
 	parts = append(parts, m.viewCistern()...)
 	parts = append(parts, sep)
 
-	// 5. Stagnant droplets — dedicated panel, always visible.
-	parts = append(parts, tuiStyleHeader.Render("  STAGNANT"))
-	parts = append(parts, m.viewStagnant()...)
+	// 5. Pooled droplets — dedicated panel, always visible.
+	parts = append(parts, tuiStyleHeader.Render("  POOLED"))
+	parts = append(parts, m.viewPooled()...)
 	parts = append(parts, sep)
 
 	// 6. Recent flow.
@@ -408,17 +412,25 @@ func (m dashboardTUIModel) View() string {
 	footer := tuiStyleFooter.Render("  q quit  r refresh  ↑↓/jk scroll  g/G top/bottom  p peek")
 
 	// Apply scroll: render full content, slice visible window.
-	full  := strings.Join(parts, "\n")
+	full := strings.Join(parts, "\n")
 	lines := strings.Split(full, "\n")
 	total := len(lines)
 	// Reserve 1 line for the pinned footer.
 	viewH := m.height - 1
-	if viewH < 1 { viewH = 1 }
+	if viewH < 1 {
+		viewH = 1
+	}
 	maxScroll := total - viewH
-	if maxScroll < 0 { maxScroll = 0 }
-	if m.scrollY > maxScroll { m.scrollY = maxScroll }
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	if m.scrollY > maxScroll {
+		m.scrollY = maxScroll
+	}
 	end := m.scrollY + viewH
-	if end > total { end = total }
+	if end > total {
+		end = total
+	}
 	visible := lines[m.scrollY:end]
 	return strings.Join(visible, "\n") + "\n" + footer
 }
@@ -521,10 +533,10 @@ func (m dashboardTUIModel) viewAqueductRow(ch CataractaeInfo) string {
 //
 // Example — implement done, review active, deliver pending:
 //
-//	  virgo  ci-abc12  3m
-//	  implement      review       deliver
-//	               ][                       ← top: implement gate raised
-//	  │██████████████│░░░░░░░░░][░░░░░│    ← bottom: deliver gate closed
+//	virgo  ci-abc12  3m
+//	implement      review       deliver
+//	             ][                       ← top: implement gate raised
+//	│██████████████│░░░░░░░░░][░░░░░│    ← bottom: deliver gate closed
 func (m dashboardTUIModel) viewAqueductProgress(ch CataractaeInfo) string {
 	g := tuiStyleGreen
 
@@ -807,7 +819,7 @@ func (m dashboardTUIModel) tuiFlowGraphRow(ch CataractaeInfo) (graphLine, infoLi
 
 	if len(ch.Steps) == 0 {
 		if ch.DropletID == "" {
-			return "  " + namePfx+"  (idle)", ""
+			return "  " + namePfx + "  (idle)", ""
 		}
 		return "  " + tuiStyleGreen.Render(namePfx) + "  " + ch.Step, ""
 	}
@@ -847,7 +859,7 @@ func (m dashboardTUIModel) tuiFlowGraphRow(ch CataractaeInfo) (graphLine, infoLi
 		infoLine = strings.Repeat(" ", activeVisualCol) +
 			"↑ " +
 			tuiStyleGreen.Render(ch.Name) +
-			" · "+ch.DropletID +
+			" · " + ch.DropletID +
 			"  " + elapsed +
 			"  " + tuiStyleGreen.Render(bar)
 		if ch.Title != "" {
@@ -911,8 +923,8 @@ func (m dashboardTUIModel) viewInlineFlowNotes(ch CataractaeInfo) []string {
 
 	// Header: droplet ID + step + title.
 	stepStr := tuiStyleGreen.Render(fa.Step)
-	idStr   := tuiStyleHeader.Render(fa.DropletID)
-	title   := "  " + truncate(fa.Title, maxW-30)
+	idStr := tuiStyleHeader.Render(fa.DropletID)
+	title := "  " + truncate(fa.Title, maxW-30)
 	var lines []string
 	lines = append(lines, fmt.Sprintf("  %s  %s%s", idStr, stepStr, title))
 
@@ -931,9 +943,9 @@ func (m dashboardTUIModel) viewInlineFlowNotes(ch CataractaeInfo) []string {
 				ts = note.CreatedAt.Local().Format("15:04")
 			}
 
-			who  := "[" + note.CataractaeName + "]"
+			who := "[" + note.CataractaeName + "]"
 			text := firstMeaningfulLine(note.Content)
-			text  = truncate(text, maxW-30)
+			text = truncate(text, maxW-30)
 			lines = append(lines,
 				fmt.Sprintf("    › %s  %s  %s", who, text, ts),
 			)
@@ -964,7 +976,7 @@ func (m dashboardTUIModel) viewCistern() []string {
 
 func (m dashboardTUIModel) viewCisternRow(item *cistern.Droplet) string {
 	age := time.Since(item.CreatedAt).Round(time.Minute)
-	id  := padRight(item.ID, 10)
+	id := padRight(item.ID, 10)
 
 	// Blocked?
 	blockedBy, isBlocked := m.data.BlockedByMap[item.ID]
@@ -1008,22 +1020,22 @@ func (m dashboardTUIModel) viewCisternRow(item *cistern.Droplet) string {
 	)
 }
 
-// viewStagnant renders the stagnant droplets panel.
-// When no stagnant droplets exist it renders a compact count label ("Stagnant: 0")
+// viewPooled renders the pooled droplets panel.
+// When no pooled droplets exist it renders a compact count label ("Pooled: 0")
 // so the operator always knows the section is present. When droplets are present
 // the section expands to a full list showing ID, time since last state change, and title.
-func (m dashboardTUIModel) viewStagnant() []string {
-	if len(m.data.StagnantItems) == 0 {
-		return []string{"  " + tuiStyleDim.Render("Stagnant: 0")}
+func (m dashboardTUIModel) viewPooled() []string {
+	if len(m.data.PooledItems) == 0 {
+		return []string{"  " + tuiStyleDim.Render("Pooled: 0")}
 	}
-	lines := make([]string, 0, len(m.data.StagnantItems))
-	for _, item := range m.data.StagnantItems {
-		lines = append(lines, m.viewStagnantRow(item))
+	lines := make([]string, 0, len(m.data.PooledItems))
+	for _, item := range m.data.PooledItems {
+		lines = append(lines, m.viewPooledRow(item))
 	}
 	return lines
 }
 
-func (m dashboardTUIModel) viewStagnantRow(item *cistern.Droplet) string {
+func (m dashboardTUIModel) viewPooledRow(item *cistern.Droplet) string {
 	icon := tuiStyleRed.Render("✗")
 	id := padRight(item.ID, 10)
 	elapsed := formatElapsed(time.Since(item.UpdatedAt))
@@ -1065,7 +1077,7 @@ func (m dashboardTUIModel) viewRecentRow(item *cistern.Droplet) string {
 	switch item.Status {
 	case "delivered":
 		icon = tuiStyleGreen.Render("✓")
-	case "stagnant":
+	case "pooled":
 		icon = tuiStyleRed.Render("✗")
 	default:
 		icon = "·"
@@ -1103,7 +1115,6 @@ func tuiPadCenter(s string, width int) string {
 	right := total - left
 	return strings.Repeat(" ", left) + s + strings.Repeat(" ", right)
 }
-
 
 // RunDashboardTUI runs the Bubble Tea TUI dashboard using the alternate screen.
 func RunDashboardTUI(cfgPath, dbPath string) error {

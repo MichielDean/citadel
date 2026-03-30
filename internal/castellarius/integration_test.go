@@ -189,7 +189,7 @@ func intWorkflow() *aqueduct.Workflow {
 				Name:   "implement",
 				Type:   aqueduct.CataractaeTypeAgent,
 				OnPass: "done",
-				OnFail: "blocked",
+				OnFail: "pooled",
 			},
 		},
 	}

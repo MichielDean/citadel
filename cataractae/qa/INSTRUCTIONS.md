@@ -103,9 +103,9 @@ ct droplet pass <id> --notes "All tests pass. Good coverage including edge cases
 ct droplet recirculate <id> --notes "Tests pass but quality is insufficient:\n1. No error path test for GetReady when DB is locked\n2. TestAssign only covers the happy path"
 ```
 
-**Block (genuine ambiguity about requirements that needs human input):**
+**Pool (genuine ambiguity about requirements that needs human input):**
 ```
-ct droplet block <id> --notes "Escalating: requirements ambiguity — <specific question>"
+ct droplet pool <id> --notes "Pooled: requirements ambiguity — <specific question>"
 ```
 
 **Cancel (won't be implemented — superseded, filed in error, or no longer needed):**
@@ -113,7 +113,7 @@ ct droplet block <id> --notes "Escalating: requirements ambiguity — <specific 
 ct droplet cancel <id> --notes "<reason>"
 ```
 
-`block` = waiting on something external. `cancel` = will not be implemented.
+`pool` = waiting on something external. `cancel` = will not be implemented.
 
 **Do not approve work just because tests pass.** Passing tests with no meaningful
 assertions, no edge cases, and no error coverage is a recirculate.
@@ -132,7 +132,7 @@ Full stop. The word "advisory" does not belong in a QA note.
 The only valid outcomes are:
 - **pass** — everything is correct, nothing needs fixing
 - **recirculate** — something needs fixing, here is exactly what
-- **block** — genuine external blocker requiring human input
+- **pool** — genuine external blocker requiring human input
 
 If you are tempted to write "advisory" or "non-blocking", ask yourself: "Would I
 want this in the codebase I maintain?" If not, recirculate. If yes, don't mention

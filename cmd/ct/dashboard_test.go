@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MichielDean/cistern/internal/cistern"
 	"github.com/MichielDean/cistern/internal/aqueduct"
+	"github.com/MichielDean/cistern/internal/cistern"
 )
 
 // --- helpers ---
@@ -280,9 +280,9 @@ func TestRenderDashboard_ContainsExpectedSections(t *testing.T) {
 	steps := []string{"implement", "review", "merge"}
 	data := &DashboardData{
 		CataractaeCount: 2,
-		FlowingCount:   1,
-		QueuedCount:    1,
-		DoneCount:      3,
+		FlowingCount:    1,
+		QueuedCount:     1,
+		DoneCount:       3,
 		Cataractae: []CataractaeInfo{
 			{Name: "virgo", DropletID: "ci-abc12", Step: "implement", Steps: steps, CataractaeIndex: 1, TotalCataractae: 3, Elapsed: 2*time.Minute + 14*time.Second},
 			{Name: "marcia", Steps: steps},
@@ -319,12 +319,12 @@ func TestRenderDashboard_ContainsExpectedSections(t *testing.T) {
 	if !strings.Contains(out, "queued") {
 		t.Error("output missing queued count")
 	}
-	// Stagnant section always present.
-	if !strings.Contains(out, "STAGNANT") {
-		t.Error("output missing STAGNANT section")
+	// Pooled section always present.
+	if !strings.Contains(out, "POOLED") {
+		t.Error("output missing POOLED section")
 	}
-	if !strings.Contains(out, "Stagnant: 0") {
-		t.Error("output missing 'Stagnant: 0' for empty stagnant list")
+	if !strings.Contains(out, "Pooled: 0") {
+		t.Error("output missing 'Pooled: 0' for empty pooled list")
 	}
 	// Recent flow section.
 	if !strings.Contains(out, "RECENT FLOW") {
@@ -339,39 +339,39 @@ func TestRenderDashboard_ContainsExpectedSections(t *testing.T) {
 	}
 }
 
-func TestRenderDashboard_StagnantSection_ShowsRowsWithIDAndElapsed(t *testing.T) {
+func TestRenderDashboard_PooledSection_ShowsRowsWithIDAndElapsed(t *testing.T) {
 	steps := []string{"implement", "review"}
 	updatedAt := time.Now().Add(-3 * time.Hour)
 	data := &DashboardData{
 		Cataractae: []CataractaeInfo{
 			{Name: "virgo", Steps: steps},
 		},
-		StagnantItems: []*cistern.Droplet{
-			{ID: "ci-stg01", Title: "stagnant one", Status: "stagnant", UpdatedAt: updatedAt},
-			{ID: "ci-stg02", Title: "stagnant two", Status: "stagnant", UpdatedAt: updatedAt},
+		PooledItems: []*cistern.Droplet{
+			{ID: "ci-stg01", Title: "pooled one", Status: "pooled", UpdatedAt: updatedAt},
+			{ID: "ci-stg02", Title: "pooled two", Status: "pooled", UpdatedAt: updatedAt},
 		},
 		FetchedAt: time.Now(),
 	}
 
 	out := renderDashboard(data)
 
-	// STAGNANT header must be present.
-	if !strings.Contains(out, "STAGNANT") {
-		t.Error("output missing STAGNANT header")
+	// POOLED header must be present.
+	if !strings.Contains(out, "POOLED") {
+		t.Error("output missing POOLED header")
 	}
 	// Each row must contain the droplet ID.
-	for _, item := range data.StagnantItems {
+	for _, item := range data.PooledItems {
 		if !strings.Contains(out, item.ID) {
-			t.Errorf("output missing stagnant droplet ID %q", item.ID)
+			t.Errorf("output missing pooled droplet ID %q", item.ID)
 		}
 	}
 	// elapsed for 3h = "180m 0s" via formatElapsed
 	if !strings.Contains(out, "180m") {
-		t.Error("output missing elapsed time (180m) for stagnant droplets")
+		t.Error("output missing elapsed time (180m) for pooled droplets")
 	}
-	// "Stagnant: 0" must NOT appear when there are rows.
-	if strings.Contains(out, "Stagnant: 0") {
-		t.Error("output should not show 'Stagnant: 0' when stagnant items are present")
+	// "Pooled: 0" must NOT appear when there are rows.
+	if strings.Contains(out, "Pooled: 0") {
+		t.Error("output should not show 'Pooled: 0' when pooled items are present")
 	}
 }
 
@@ -384,7 +384,7 @@ func TestRenderFlowGraphRow_ActiveStep(t *testing.T) {
 		Step:            "review",
 		Steps:           []string{"implement", "review", "qa"},
 		Elapsed:         3*time.Minute + 12*time.Second,
-		CataractaeIndex:  2,
+		CataractaeIndex: 2,
 		TotalCataractae: 3,
 	}
 	graphLine, infoLine := renderFlowGraphRow(ch)
@@ -467,7 +467,7 @@ func TestRenderFlowGraphRow_PointerAligned(t *testing.T) {
 		DropletID:       "ci-abc",
 		Step:            "review",
 		Steps:           []string{"implement", "review", "qa"},
-		CataractaeIndex:  2,
+		CataractaeIndex: 2,
 		TotalCataractae: 3,
 	}
 	graphLine, infoLine := renderFlowGraphRow(ch)
@@ -529,15 +529,15 @@ func TestRenderFlowGraphRow_PointerAligned(t *testing.T) {
 	}
 }
 
-// --- TestFetchDashboardData_StagnantItems ---
+// --- TestFetchDashboardData_PooledItems ---
 
-// TestFetchDashboardData_StagnantItems_PopulatedCorrectly verifies that stagnant
-// droplets are collected into StagnantItems separately from RecentItems.
+// TestFetchDashboardData_PooledItems_PopulatedCorrectly verifies that pooled
+// droplets are collected into PooledItems separately from RecentItems.
 //
-// Given: a database with one stagnant droplet and one delivered droplet
+// Given: a database with one pooled droplet and one delivered droplet
 // When:  fetchDashboardData is called
-// Then:  StagnantItems contains only the stagnant droplet
-func TestFetchDashboardData_StagnantItems_PopulatedCorrectly(t *testing.T) {
+// Then:  PooledItems contains only the pooled droplet
+func TestFetchDashboardData_PooledItems_PopulatedCorrectly(t *testing.T) {
 	cfgPath := tempCfg(t)
 	dbPath := tempDB(t)
 
@@ -546,10 +546,10 @@ func TestFetchDashboardData_StagnantItems_PopulatedCorrectly(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Add a stagnant item and a delivered item.
-	stagnant, _ := c.Add("myrepo", "Stuck Feature", "", 1, 2)
+	// Add a pooled item and a delivered item.
+	pooled, _ := c.Add("myrepo", "Stuck Feature", "", 1, 2)
 	c.GetReady("myrepo")
-	c.Escalate(stagnant.ID, "test escalation")
+	c.Pool(pooled.ID, "test pooling")
 
 	delivered, _ := c.Add("myrepo", "Done Feature", "", 1, 2)
 	c.GetReady("myrepo")
@@ -558,21 +558,21 @@ func TestFetchDashboardData_StagnantItems_PopulatedCorrectly(t *testing.T) {
 
 	data := fetchDashboardData(cfgPath, dbPath)
 
-	if len(data.StagnantItems) != 1 {
-		t.Errorf("StagnantItems len = %d, want 1", len(data.StagnantItems))
+	if len(data.PooledItems) != 1 {
+		t.Errorf("PooledItems len = %d, want 1", len(data.PooledItems))
 	}
-	if len(data.StagnantItems) > 0 && data.StagnantItems[0].ID != stagnant.ID {
-		t.Errorf("StagnantItems[0].ID = %q, want %q", data.StagnantItems[0].ID, stagnant.ID)
+	if len(data.PooledItems) > 0 && data.PooledItems[0].ID != pooled.ID {
+		t.Errorf("PooledItems[0].ID = %q, want %q", data.PooledItems[0].ID, pooled.ID)
 	}
 }
 
-// TestFetchDashboardData_StagnantItems_EmptyWhenNoneStagnant verifies that
-// StagnantItems is nil/empty when no droplets are stagnant.
+// TestFetchDashboardData_PooledItems_EmptyWhenNonePooled verifies that
+// PooledItems is nil/empty when no droplets are pooled.
 //
 // Given: a database with only delivered and open droplets
 // When:  fetchDashboardData is called
-// Then:  StagnantItems is empty
-func TestFetchDashboardData_StagnantItems_EmptyWhenNoneStagnant(t *testing.T) {
+// Then:  PooledItems is empty
+func TestFetchDashboardData_PooledItems_EmptyWhenNonePooled(t *testing.T) {
 	cfgPath := tempCfg(t)
 	dbPath := tempDB(t)
 
@@ -587,122 +587,120 @@ func TestFetchDashboardData_StagnantItems_EmptyWhenNoneStagnant(t *testing.T) {
 
 	data := fetchDashboardData(cfgPath, dbPath)
 
-	if len(data.StagnantItems) != 0 {
-		t.Errorf("StagnantItems len = %d, want 0 when no stagnant droplets", len(data.StagnantItems))
+	if len(data.PooledItems) != 0 {
+		t.Errorf("PooledItems len = %d, want 0 when no pooled droplets", len(data.PooledItems))
 	}
 }
 
-// --- TestViewStagnant TUI section ---
+// --- TestViewPooled TUI section ---
 
-// TestViewStagnant_WhenEmpty_ShowsCompactLabel verifies that the stagnant panel
-// renders as a compact count label "Stagnant: 0" when no droplets are stagnant.
+// TestViewPooled_WhenEmpty_ShowsCompactLabel verifies that the pooled panel
+// renders as a compact count label "Pooled: 0" when no droplets are pooled.
 //
-// Given: a TUI model with an empty StagnantItems list
-// When:  viewStagnant is called
-// Then:  the output contains "Stagnant: 0"
-func TestViewStagnant_WhenEmpty_ShowsCompactLabel(t *testing.T) {
+// Given: a TUI model with an empty PooledItems list
+// When:  viewPooled is called
+// Then:  the output contains "Pooled: 0"
+func TestViewPooled_WhenEmpty_ShowsCompactLabel(t *testing.T) {
 	m := newDashboardTUIModel("", "")
-	m.data = &DashboardData{StagnantItems: nil}
+	m.data = &DashboardData{PooledItems: nil}
 
-	lines := m.viewStagnant()
+	lines := m.viewPooled()
 	out := strings.Join(lines, "\n")
 	stripped := stripANSITest(out)
 
-	if !strings.Contains(stripped, "Stagnant: 0") {
-		t.Errorf("viewStagnant (empty) should contain 'Stagnant: 0', got: %q", stripped)
+	if !strings.Contains(stripped, "Pooled: 0") {
+		t.Errorf("viewPooled (empty) should contain 'Pooled: 0', got: %q", stripped)
 	}
 }
 
-// TestViewStagnant_WhenPresent_ShowsFullList verifies that the stagnant panel
+// TestViewPooled_WhenPresent_ShowsFullList verifies that the pooled panel
 // expands to a full list showing ID, title, and elapsed time.
 //
-// Given: a TUI model with two stagnant droplets
-// When:  viewStagnant is called
+// Given: a TUI model with two pooled droplets
+// When:  viewPooled is called
 // Then:  both droplet IDs and titles appear in the output
-func TestViewStagnant_WhenPresent_ShowsFullList(t *testing.T) {
+func TestViewPooled_WhenPresent_ShowsFullList(t *testing.T) {
 	m := newDashboardTUIModel("", "")
 	m.width = 120
 	now := time.Now()
 	m.data = &DashboardData{
-		StagnantItems: []*cistern.Droplet{
-			{ID: "ci-stag1", Title: "Broken pipeline", Status: "stagnant", UpdatedAt: now.Add(-30 * time.Minute)},
-			{ID: "ci-stag2", Title: "Failing review", Status: "stagnant", UpdatedAt: now.Add(-2 * time.Hour)},
+		PooledItems: []*cistern.Droplet{
+			{ID: "ci-stag1", Title: "Broken pipeline", Status: "pooled", UpdatedAt: now.Add(-30 * time.Minute)},
+			{ID: "ci-stag2", Title: "Failing review", Status: "pooled", UpdatedAt: now.Add(-2 * time.Hour)},
 		},
 	}
 
-	lines := m.viewStagnant()
+	lines := m.viewPooled()
 	out := strings.Join(lines, "\n")
 	stripped := stripANSITest(out)
 
 	for _, want := range []string{"ci-stag1", "ci-stag2", "Broken pipeline", "Failing review"} {
 		if !strings.Contains(stripped, want) {
-			t.Errorf("viewStagnant should contain %q, got: %q", want, stripped)
+			t.Errorf("viewPooled should contain %q, got: %q", want, stripped)
 		}
 	}
 	// Should NOT show the compact label when items are present.
-	if strings.Contains(stripped, "Stagnant: 0") {
-		t.Error("viewStagnant should not show 'Stagnant: 0' when droplets are present")
+	if strings.Contains(stripped, "Pooled: 0") {
+		t.Error("viewPooled should not show 'Pooled: 0' when droplets are present")
 	}
 }
 
-// TestViewStagnant_ShowsElapsedTime verifies that the time since last state
-// change is included in each stagnant row.
+// TestViewPooled_ShowsElapsedTime verifies that the time since last state
+// change is included in each pooled row.
 //
-// Given: a stagnant droplet updated 45 seconds ago
-// When:  viewStagnant is called
+// Given: a pooled droplet updated 45 seconds ago
+// When:  viewPooled is called
 // Then:  the elapsed time ("45s") appears in the row
-func TestViewStagnant_ShowsElapsedTime(t *testing.T) {
+func TestViewPooled_ShowsElapsedTime(t *testing.T) {
 	m := newDashboardTUIModel("", "")
 	m.width = 120
 	m.data = &DashboardData{
-		StagnantItems: []*cistern.Droplet{
-			{ID: "ci-stag1", Title: "Stuck", Status: "stagnant", UpdatedAt: time.Now().Add(-45 * time.Second)},
+		PooledItems: []*cistern.Droplet{
+			{ID: "ci-stag1", Title: "Stuck", Status: "pooled", UpdatedAt: time.Now().Add(-45 * time.Second)},
 		},
 	}
 
-	lines := m.viewStagnant()
+	lines := m.viewPooled()
 	out := stripANSITest(strings.Join(lines, "\n"))
 
 	if !strings.Contains(out, "45s") {
-		t.Errorf("viewStagnant row should contain elapsed time '45s', got: %q", out)
+		t.Errorf("viewPooled row should contain elapsed time '45s', got: %q", out)
 	}
 }
 
-// TestTUIView_ContainsStagnantSection verifies that the TUI View() output
-// includes the STAGNANT section header.
+// TestTUIView_ContainsPooledSection verifies that the TUI View() output
+// includes the POOLED section header.
 //
-// Given: a TUI model with data loaded (no stagnant items)
+// Given: a TUI model with data loaded (no pooled items)
 // When:  View() is called
-// Then:  the output contains "STAGNANT"
-func TestTUIView_ContainsStagnantSection(t *testing.T) {
+// Then:  the output contains "POOLED"
+func TestTUIView_ContainsPooledSection(t *testing.T) {
 	m := newDashboardTUIModel("", "")
 	m.width = 120
 	m.height = 50
 	m.data = &DashboardData{
-		StagnantItems: nil,
-		FetchedAt:     time.Now(),
+		PooledItems: nil,
+		FetchedAt:   time.Now(),
 	}
 
 	out := m.View()
 	stripped := stripANSITest(out)
 
-	if !strings.Contains(stripped, "STAGNANT") {
-		t.Errorf("TUI View should contain STAGNANT section header, got (first 500 chars): %q", stripped[:min(500, len(stripped))])
+	if !strings.Contains(stripped, "POOLED") {
+		t.Errorf("TUI View should contain POOLED section header, got (first 500 chars): %q", stripped[:min(500, len(stripped))])
 	}
 }
 
 func TestRenderDashboard_AqueductsClosedWhenNoCataractae(t *testing.T) {
 	data := &DashboardData{
-		Cataractae:   []CataractaeInfo{},
-		FetchedAt: time.Now(),
+		Cataractae: []CataractaeInfo{},
+		FetchedAt:  time.Now(),
 	}
 	out := renderDashboard(data)
 	if !strings.Contains(out, "No aqueducts configured") {
 		t.Error("expected 'No aqueducts configured' when no channels configured")
 	}
 }
-
-
 
 // --- TestProgressBar ---
 

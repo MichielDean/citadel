@@ -51,7 +51,7 @@ type Session struct {
 
 // Spawn creates a new tmux session running the agent and returns immediately.
 // The Castellarius observe loop detects completion via the outcome field in the DB —
-// agents signal their outcome by calling `ct droplet pass/recirculate/block <id>`.
+// agents signal their outcome by calling `ct droplet pass/recirculate/pool <id>`.
 // When the session exits for any reason the heartbeat detects the dead tmux session
 // and resets the droplet for re-dispatch. If a session log file exists at
 // ~/.cistern/session-logs/<id>.log the heartbeat reads and logs the tail for diagnostics.
@@ -417,7 +417,7 @@ EACH AQUEDUCT FLOWS THE DROPLET THROUGH ITS CATARACTAE.
 4. Signal your outcome before exiting. You MUST call one of:
      ct droplet pass <id> --notes "..."
      ct droplet recirculate <id> --notes "..."
-     ct droplet block <id> --notes "..."
+     ct droplet pool <id> --notes "..."
    A cataractae that exits without signaling leaves the droplet stranded.
 
 Your role persona and skill instructions follow.
@@ -566,7 +566,6 @@ func (s *Session) isAgentAlive() bool {
 	}
 	return slices.Contains(s.Preset.ProcessNames, current)
 }
-
 
 // claudePathFn resolves the path to the claude executable. It is a variable so
 // tests can substitute it to inject a known absolute path without modifying the

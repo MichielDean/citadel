@@ -88,7 +88,7 @@ func (t *dispatchLoopTracker) incrementFix(dropletID string) int {
 //
 //  1. Dirty worktree → hard-reset + clean
 //  2. Missing or corrupt worktree → remove + recreate
-//  3. Persistent failure after dispatchMaxSelfFix attempts → escalate to stagnant
+//  3. Persistent failure after dispatchMaxSelfFix attempts → pool (cannot proceed)
 func (s *Castellarius) recoverDispatchLoop(client CisternClient, item *cistern.Droplet, repo aqueduct.RepoConfig) {
 	if s.sandboxRoot == "" {
 		return
@@ -101,18 +101,18 @@ func (s *Castellarius) recoverDispatchLoop(client CisternClient, item *cistern.D
 
 	if fixAttempt > dispatchMaxSelfFix {
 		reason := fmt.Sprintf("dispatch-loop: stuck after %d self-fix attempts — manual intervention required", dispatchMaxSelfFix)
-		s.logger.Error("dispatch-loop recovery: escalating after max self-fix attempts",
+		s.logger.Error("dispatch-loop recovery: pooling after max self-fix attempts",
 			"droplet", item.ID,
 		)
 		s.addNote(client, item.ID, "dispatch-loop", reason)
-		if err := client.Escalate(item.ID, reason); err != nil {
-			s.logger.Error("dispatch-loop recovery: escalate failed", "droplet", item.ID, "error", err)
+		if err := client.Pool(item.ID, reason); err != nil {
+			s.logger.Error("dispatch-loop recovery: pool failed", "droplet", item.ID, "error", err)
 		}
 		s.dispatchLoop.reset(item.ID)
 		return
 	}
 
-	// After any non-escalation recovery path, clear the failure window so the
+	// After any non-pool recovery path, clear the failure window so the
 	// loop can be re-detected if recovery did not help.
 	defer s.dispatchLoop.resetFailures(item.ID)
 
@@ -158,48 +158,24 @@ func (s *Castellarius) recoverDispatchLoop(client CisternClient, item *cistern.D
 			"droplet", item.ID,
 			"attempt", attempt,
 		)
-		repoMu := s.repoMu[repo.Name]
-		repoMu.Lock()
 		removeDropletWorktree(primaryDir, s.sandboxRoot, repo.Name, item.ID)
-		// Prune stale worktree registry entries so git worktree add does not
-		// fail with "a branch named feat/X already exists" when the worktree
-		// directory was deleted externally, leaving a stale .git/worktrees entry.
-		prune := exec.Command("git", "worktree", "prune")
-		prune.Dir = primaryDir
-		if pruneErr := prune.Run(); pruneErr != nil {
-			s.logger.Warn("dispatch-loop recovery: git worktree prune failed — proceeding anyway",
-				"droplet", item.ID, "error", pruneErr)
-		}
-		var prepErr, rmErr, freshErr error
-		var branchMissing bool
-		_, prepErr = prepareDropletWorktree(primaryDir, s.sandboxRoot, repo.Name, item.ID)
-		if prepErr != nil && strings.Contains(prepErr.Error(), "did not match any file(s) known to git") {
-			branchMissing = true
-			// The feature branch no longer exists in git. Remove any lingering
-			// directory left by the failed resume and try again — this time the
-			// new-worktree path will create a fresh branch from origin/main.
-			s.logger.Warn("dispatch-loop recovery: feature branch missing from git — creating fresh branch from origin/main",
-				"droplet", item.ID, "branch", branch)
-			rmErr = os.RemoveAll(worktreePath)
-			if rmErr != nil {
-				s.logger.Warn("dispatch-loop recovery: os.RemoveAll failed — skipping fresh-branch retry",
-					"droplet", item.ID, "branch", branch, "error", rmErr)
-			} else {
-				_, freshErr = prepareDropletWorktree(primaryDir, s.sandboxRoot, repo.Name, item.ID)
-			}
-		}
-		repoMu.Unlock()
-
-		if prepErr != nil {
-			if branchMissing {
-				if rmErr != nil {
-					s.escalateDroplet(client, item.ID,
+		if _, err := prepareDropletWorktree(primaryDir, s.sandboxRoot, repo.Name, item.ID); err != nil {
+			if strings.Contains(err.Error(), "did not match any file(s) known to git") {
+				// The feature branch no longer exists in git. Remove any lingering
+				// directory left by the failed resume and try again — this time the
+				// new-worktree path will create a fresh branch from origin/main.
+				s.logger.Warn("dispatch-loop recovery: feature branch missing from git — creating fresh branch from origin/main",
+					"droplet", item.ID, "branch", branch)
+				if rmErr := os.RemoveAll(worktreePath); rmErr != nil {
+					s.logger.Warn("dispatch-loop recovery: os.RemoveAll failed — skipping fresh-branch retry",
+						"droplet", item.ID, "branch", branch, "error", rmErr)
+					s.poolDroplet(client, item.ID,
 						fmt.Sprintf("dispatch-loop recovery: could not remove stale worktree directory: %v", rmErr))
 					return
 				}
-				if freshErr != nil {
-					s.escalateDroplet(client, item.ID,
-						fmt.Sprintf("dispatch-loop recovery: branch %s missing, fresh-branch creation failed: %v", branch, freshErr))
+				if _, err2 := prepareDropletWorktree(primaryDir, s.sandboxRoot, repo.Name, item.ID); err2 != nil {
+					s.poolDroplet(client, item.ID,
+						fmt.Sprintf("dispatch-loop recovery: branch %s missing, fresh-branch creation failed: %v", branch, err2))
 				} else {
 					s.addNote(client, item.ID, "dispatch-loop",
 						fmt.Sprintf("dispatch-loop recovery: %s — fresh branch created from origin/main (branch %s was missing, attempt %s)",
@@ -207,10 +183,10 @@ func (s *Castellarius) recoverDispatchLoop(client CisternClient, item *cistern.D
 				}
 			} else {
 				s.logger.Error("dispatch-loop recovery: recreate worktree failed",
-					"droplet", item.ID, "error", prepErr)
+					"droplet", item.ID, "error", err)
 				s.addNote(client, item.ID, "dispatch-loop",
 					fmt.Sprintf("dispatch-loop recovery: %s — worktree recreate failed (attempt %s): %v",
-						item.ID, attempt, prepErr))
+						item.ID, attempt, err))
 			}
 			return
 		}
@@ -221,7 +197,7 @@ func (s *Castellarius) recoverDispatchLoop(client CisternClient, item *cistern.D
 	}
 
 	// No applicable recovery — if the loop persists, fixAttempt will eventually
-	// exceed dispatchMaxSelfFix and escalate.
+	// exceed dispatchMaxSelfFix and pool.
 	s.logger.Warn("dispatch-loop recovery: no applicable recovery found",
 		"droplet", item.ID,
 		"attempt", attempt,
@@ -231,12 +207,12 @@ func (s *Castellarius) recoverDispatchLoop(client CisternClient, item *cistern.D
 			item.ID, attempt))
 }
 
-// escalateDroplet notes, escalates the droplet to stagnant, and resets the
+// poolDroplet notes, pools the droplet, and resets the
 // dispatch tracker. It is a terminal operation — callers must return after it.
-func (s *Castellarius) escalateDroplet(client CisternClient, dropletID, reason string) {
+func (s *Castellarius) poolDroplet(client CisternClient, dropletID, reason string) {
 	s.addNote(client, dropletID, "dispatch-loop", reason)
-	if err := client.Escalate(dropletID, reason); err != nil {
-		s.logger.Error("dispatch-loop recovery: escalate failed", "droplet", dropletID, "error", err)
+	if err := client.Pool(dropletID, reason); err != nil {
+		s.logger.Error("dispatch-loop recovery: pool failed", "droplet", dropletID, "error", err)
 	}
 	s.dispatchLoop.reset(dropletID)
 }

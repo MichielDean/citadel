@@ -890,13 +890,13 @@ func TestTabApp_Detail_X_Key_OpensConfirmOverlay_ForCancel(t *testing.T) {
 	}
 }
 
-// TestTabApp_Detail_E_Key_OpensConfirmOverlay_ForEscalate verifies that pressing 'e'
-// activates the confirmation overlay for the escalate action.
+// TestTabApp_Detail_E_Key_OpensConfirmOverlay_ForPool verifies that pressing 'e'
+// activates the confirmation overlay for the pool action.
 //
 // Given: a model in Detail tab with a loaded droplet
 // When:  'e' is pressed
-// Then:  overlayMode=overlayConfirm, overlayAction=actionEscalate
-func TestTabApp_Detail_E_Key_OpensConfirmOverlay_ForEscalate(t *testing.T) {
+// Then:  overlayMode=overlayConfirm, overlayAction=actionPool
+func TestTabApp_Detail_E_Key_OpensConfirmOverlay_ForPool(t *testing.T) {
 	m := detailModelWithDroplet()
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
@@ -905,8 +905,8 @@ func TestTabApp_Detail_E_Key_OpensConfirmOverlay_ForEscalate(t *testing.T) {
 	if um.overlayMode != overlayConfirm {
 		t.Errorf("overlayMode = %d, want overlayConfirm (%d)", um.overlayMode, overlayConfirm)
 	}
-	if um.overlayAction != actionEscalate {
-		t.Errorf("overlayAction = %q, want %q", um.overlayAction, actionEscalate)
+	if um.overlayAction != actionPool {
+		t.Errorf("overlayAction = %q, want %q", um.overlayAction, actionPool)
 	}
 }
 
@@ -1132,13 +1132,13 @@ func TestTabApp_Detail_ConfirmOverlay_Y_ClosesOverlayAndReturnsCmd(t *testing.T)
 // TestTabApp_Detail_ConfirmOverlay_N_DismissesOverlay verifies that pressing 'n'
 // in the confirm overlay closes it without executing any action.
 //
-// Given: a model with overlayConfirm active for escalate action
+// Given: a model with overlayConfirm active for pool action
 // When:  'n' is pressed
 // Then:  overlayMode=overlayNone, cmd is nil
 func TestTabApp_Detail_ConfirmOverlay_N_DismissesOverlay(t *testing.T) {
 	m := detailModelWithDroplet()
 	m.overlayMode = overlayConfirm
-	m.overlayAction = actionEscalate
+	m.overlayAction = actionPool
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
 	um := updated.(tabAppModel)
@@ -1495,17 +1495,17 @@ func TestExecActionCmd_Cancel_SetsDropletCancelled(t *testing.T) {
 	}
 }
 
-// TestExecActionCmd_Escalate_SetsDropletStagnant verifies that execActionCmd
-// with actionEscalate sets the droplet status to "stagnant".
+// TestExecActionCmd_Pool_SetsDropletPooled verifies that execActionCmd
+// with actionPool sets the droplet status to "pooled".
 //
 // Given: a real cistern DB with an open droplet
-// When:  execActionCmd with actionEscalate is executed
-// Then:  tuiActionResultMsg.err is nil and droplet status is "stagnant"
-func TestExecActionCmd_Escalate_SetsDropletStagnant(t *testing.T) {
+// When:  execActionCmd with actionPool is executed
+// Then:  tuiActionResultMsg.err is nil and droplet status is "pooled"
+func TestExecActionCmd_Pool_SetsDropletPooled(t *testing.T) {
 	dbPath, id := newTestDBWithDroplet(t)
 	m := newTabAppModel("", dbPath)
 
-	cmd := m.execActionCmd(id, actionEscalate, "")
+	cmd := m.execActionCmd(id, actionPool, "")
 	msg := cmd()
 
 	am, ok := msg.(tuiActionResultMsg)
@@ -1528,8 +1528,8 @@ func TestExecActionCmd_Escalate_SetsDropletStagnant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d.Status != "stagnant" {
-		t.Errorf("status = %q, want %q", d.Status, "stagnant")
+	if d.Status != "pooled" {
+		t.Errorf("status = %q, want %q", d.Status, "pooled")
 	}
 }
 

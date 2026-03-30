@@ -128,17 +128,17 @@ If the provider remains degraded, investigate:
 
 ### Cataractae Signaled Recirculate But No on_recirculate Route Configured
 
-If you see a diagnostic note like: `"cataractae 'foo' signaled recirculate but has no on_recirculate route configured"`, the droplet is blocked because an agent incorrectly used `ct droplet recirculate` instead of `ct droplet pass` or `ct droplet block`.
+If you see a diagnostic note like: `"cataractae 'foo' signaled recirculate but has no on_recirculate route configured"`, the droplet is blocked because an agent incorrectly used `ct droplet recirculate` instead of `ct droplet pass` or `ct droplet pool`.
 
 **Common causes:**
 - Agent mistakenly called recirculate when the task was complete (should be `pass`)
-- Agent called recirculate to report a blocking issue (should be `block` with notes)
+- Agent called recirculate to report a blocking issue (should be `pool` with notes)
 - Aqueduct config is missing the `on_recirculate` route for this step (configuration error)
 
 **Fix:**
 1. Check the droplet notes to understand what the agent intended: `ct droplet show <id>`
 2. If the agent's work is complete, approve it: `ct droplet note <id> "Approving..." && ct droplet pass <id>`
-3. If there's a real issue blocking the droplet, escalate it: `ct droplet block <id> --notes "..."`
+3. If there's a real issue blocking the droplet, pool it: `ct droplet pool <id> --notes "..."`
 4. If the aqueduct config is wrong, fix the `aqueduct.yaml` routing for that step and recirculate the droplet manually back to the offending step
 
 ## Missing Skills (stage does nothing / skipped)

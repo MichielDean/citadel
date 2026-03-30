@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MichielDean/cistern/internal/cistern"
 	"github.com/MichielDean/cistern/internal/aqueduct"
+	"github.com/MichielDean/cistern/internal/cistern"
 )
 
 // newTestLogger creates a slog.Logger backed by buf for test inspection.
@@ -36,18 +36,18 @@ type mockClient struct {
 	mu                  sync.Mutex
 	readyItems          []*cistern.Droplet
 	readyCalls          int
-	steps               map[string]string              // id → current step (for assertions)
-	items               map[string]*cistern.Droplet    // id → item (for List/SetOutcome)
+	steps               map[string]string           // id → current step (for assertions)
+	items               map[string]*cistern.Droplet // id → item (for List/SetOutcome)
 	notes               map[string][]cistern.CataractaeNote
-	escalated           map[string]string
+	pooled              map[string]string
 	attached            []attachedNote
 	closed              map[string]bool
 	lastReviewedCommits map[string]string
-	addNoteErr          error // if set, AddNote returns this error
-	getNotesErr         error // if set, GetNotes returns this error
-	getReadyErr         error // if set, GetReady returns this error once then clears
-	listErr             error // if set, List returns this error
-	assignErr           error // if set, Assign returns this error
+	addNoteErr          error             // if set, AddNote returns this error
+	getNotesErr         error             // if set, GetNotes returns this error
+	getReadyErr         error             // if set, GetReady returns this error once then clears
+	listErr             error             // if set, List returns this error
+	assignErr           error             // if set, Assign returns this error
 	cancelled           map[string]string // id → cancel reason
 	filed               []filedDroplet    // FileDroplet calls
 	assignCalls         int               // total Assign call count
@@ -62,7 +62,7 @@ func newMockClient() *mockClient {
 		steps:               make(map[string]string),
 		items:               make(map[string]*cistern.Droplet),
 		notes:               make(map[string][]cistern.CataractaeNote),
-		escalated:           make(map[string]string),
+		pooled:              make(map[string]string),
 		closed:              make(map[string]bool),
 		lastReviewedCommits: make(map[string]string),
 		cancelled:           make(map[string]string),
@@ -163,10 +163,10 @@ func (m *mockClient) GetNotes(id string) ([]cistern.CataractaeNote, error) {
 	return m.notes[id], nil
 }
 
-func (m *mockClient) Escalate(id, reason string) error {
+func (m *mockClient) Pool(id, reason string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.escalated[id] = reason
+	m.pooled[id] = reason
 	return nil
 }
 
@@ -321,7 +321,7 @@ func testWorkflow() *aqueduct.Workflow {
 				Name:   "implement",
 				Type:   aqueduct.CataractaeTypeAgent,
 				OnPass: "review",
-				OnFail: "blocked",
+				OnFail: "pooled",
 			},
 			{
 				Name:          "review",
@@ -360,9 +360,9 @@ func testScheduler(client CisternClient, runner CataractaeRunner) *Castellarius 
 func TestRoute(t *testing.T) {
 	step := aqueduct.WorkflowCataractae{
 		OnPass:        "review",
-		OnFail:        "blocked",
+		OnFail:        "pooled",
 		OnRecirculate: "implement",
-		OnEscalate:    "human",
+		OnPool:        "human",
 	}
 
 	tests := []struct {
@@ -370,10 +370,10 @@ func TestRoute(t *testing.T) {
 		want   string
 	}{
 		{ResultPass, "review"},
-		{ResultFail, "blocked"},
+		{ResultFail, "pooled"},
 		{ResultRecirculate, "implement"},
-		{ResultEscalate, "human"},
-		{Result("unknown"), "blocked"},
+		{ResultPool, "human"},
+		{Result("unknown"), "pooled"},
 	}
 
 	for _, tt := range tests {
@@ -385,7 +385,7 @@ func TestRoute(t *testing.T) {
 }
 
 func TestIsTerminal(t *testing.T) {
-	for _, name := range []string{"done", "blocked", "human", "escalate", "Done", "BLOCKED"} {
+	for _, name := range []string{"done", "pooled", "human", "pool", "Done", "POOLED"} {
 		if !isTerminal(name) {
 			t.Errorf("isTerminal(%q) = false, want true", name)
 		}
@@ -410,7 +410,7 @@ func TestCurrentStep_FirstStep(t *testing.T) {
 func TestCurrentStep_FromCurrentStep(t *testing.T) {
 	wf := testWorkflow()
 	item := &cistern.Droplet{
-		ID:               "b1",
+		ID:                "b1",
 		CurrentCataractae: "review",
 	}
 
@@ -423,7 +423,7 @@ func TestCurrentStep_FromCurrentStep(t *testing.T) {
 func TestCurrentStep_UnknownStep(t *testing.T) {
 	wf := testWorkflow()
 	item := &cistern.Droplet{
-		ID:               "b1",
+		ID:                "b1",
 		CurrentCataractae: "nonexistent",
 	}
 
@@ -507,14 +507,14 @@ func TestTick_TerminalDone(t *testing.T) {
 	}
 }
 
-func TestTick_TerminalBlocked(t *testing.T) {
+func TestTick_TerminalPooled(t *testing.T) {
 	client := newMockClient()
 	client.readyItems = []*cistern.Droplet{
 		{ID: "b1", CurrentCataractae: "implement"},
 	}
 
 	runner := newMockRunner(client)
-	runner.outcomes["implement"] = "block" // block → ResultFail → OnFail = "blocked"
+	runner.outcomes["implement"] = "fail" // fail → ResultFail → OnFail = "pooled"
 
 	sched := testScheduler(client, runner)
 	sched.Tick(context.Background())
@@ -526,8 +526,8 @@ func TestTick_TerminalBlocked(t *testing.T) {
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	if _, ok := client.escalated["b1"]; !ok {
-		t.Error("expected item escalated for terminal 'blocked'")
+	if _, ok := client.pooled["b1"]; !ok {
+		t.Error("expected item pooled for terminal 'pooled'")
 	}
 }
 
@@ -583,12 +583,12 @@ func TestTick_CrashRequeue(t *testing.T) {
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	// Item stays at "implement" — not advanced, not escalated.
+	// Item stays at "implement" — not advanced, not pooled.
 	if client.steps["b1"] != "implement" {
 		t.Errorf("expected step to remain 'implement' after crash, got %q", client.steps["b1"])
 	}
-	if _, ok := client.escalated["b1"]; ok {
-		t.Error("should not escalate on crash — just requeue")
+	if _, ok := client.pooled["b1"]; ok {
+		t.Error("should not pool on crash — just requeue")
 	}
 }
 
@@ -640,12 +640,12 @@ func TestTick_RecirculateAutoPromotesToPass(t *testing.T) {
 	client.mu.Lock()
 	defer client.mu.Unlock()
 
-	// Should route via on_pass → "review", not escalate.
+	// Should route via on_pass → "review", not pool.
 	if client.steps["b1"] != "review" {
 		t.Errorf("expected auto-promote to route to review, got %q", client.steps["b1"])
 	}
-	if _, ok := client.escalated["b1"]; ok {
-		t.Error("expected no escalation when recirculate auto-promotes via on_pass")
+	if _, ok := client.pooled["b1"]; ok {
+		t.Error("expected no pooling when recirculate auto-promotes via on_pass")
 	}
 	// Warning note must be attached.
 	var hasNote bool
@@ -660,16 +660,16 @@ func TestTick_RecirculateAutoPromotesToPass(t *testing.T) {
 	}
 }
 
-func TestTick_RecirculateNoPassRoute_StillEscalates(t *testing.T) {
+func TestTick_RecirculateNoPassRoute_StillPools(t *testing.T) {
 	// A step with neither on_recirculate nor on_pass: recirculate cannot be promoted,
-	// so the droplet must still escalate.
+	// so the droplet must still pool.
 	wf := &aqueduct.Workflow{
 		Name: "test",
 		Cataractae: []aqueduct.WorkflowCataractae{
 			{
 				Name:   "implement",
 				Type:   aqueduct.CataractaeTypeAgent,
-				OnFail: "blocked",
+				OnFail: "pooled",
 				// OnPass and OnRecirculate intentionally omitted.
 			},
 		},
@@ -690,8 +690,8 @@ func TestTick_RecirculateNoPassRoute_StillEscalates(t *testing.T) {
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	if _, ok := client.escalated["b2"]; !ok {
-		t.Error("expected escalation when neither on_recirculate nor on_pass exists")
+	if _, ok := client.pooled["b2"]; !ok {
+		t.Error("expected pooling when neither on_recirculate nor on_pass exists")
 	}
 }
 
@@ -714,7 +714,7 @@ func TestTick_RecirculateNoRoute_BlocksWithDiagnosticNote(t *testing.T) {
 				{
 					Name:   "implement",
 					Type:   aqueduct.CataractaeTypeAgent,
-					OnFail: "blocked",
+					OnFail: "pooled",
 					// Intentionally no OnPass and no OnRecirculate
 				},
 				{
@@ -738,11 +738,11 @@ func TestTick_RecirculateNoRoute_BlocksWithDiagnosticNote(t *testing.T) {
 	sched.Tick(context.Background())
 	time.Sleep(10 * time.Millisecond)
 
-	// Then: droplet is blocked/escalated.
+	// Then: droplet is pooled.
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	if _, ok := client.escalated["b1"]; !ok {
-		t.Fatal("expected droplet to be blocked/escalated when no on_recirculate route exists")
+	if _, ok := client.pooled["b1"]; !ok {
+		t.Fatal("expected droplet to be pooled when no on_recirculate route exists")
 	}
 
 	// And: a diagnostic note naming the step and missing route is attached.
@@ -1055,57 +1055,6 @@ func TestTick_PerRepoIsolation(t *testing.T) {
 	}
 }
 
-func TestTick_ScanBadStates_ExistingStagnantDroplet_Enqueued(t *testing.T) {
-	// Given: a stagnant droplet exists with no invocation note before the tick
-	client := newMockClient()
-	client.items["d-001"] = &cistern.Droplet{ID: "d-001", Repo: "test-repo", Status: "stagnant"}
-	sched := testScheduler(client, newMockRunner(client))
-
-	// When: tick runs
-	sched.Tick(context.Background())
-
-	// Then: droplet is in the architectiQueue — scanBadStates ran at the end of tick
-	select {
-	case got := <-sched.architectiQueue:
-		if got.ID != "d-001" {
-			t.Errorf("queue got droplet ID %q, want %q", got.ID, "d-001")
-		}
-	default:
-		t.Fatal("expected d-001 in architectiQueue after tick, but queue was empty")
-	}
-}
-
-func TestRun_StartupScan_ExistingStagnantDroplet_Enqueued(t *testing.T) {
-	// Given: a stagnant droplet exists before Castellarius starts
-	client := newMockClient()
-	client.items["d-001"] = &cistern.Droplet{ID: "d-001", Repo: "test-repo", Status: "stagnant"}
-
-	runner := newMockRunner(client)
-	sched := testScheduler(client, runner)
-	// Inject a no-op runArchitectiFn so the drainer does not attempt real invocations.
-	sched.runArchitectiFn = func(_ context.Context, _ *cistern.Droplet, _ aqueduct.ArchitectiConfig) error {
-		return nil
-	}
-
-	// Use a pre-cancelled context — Run exits immediately after the startup scan.
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	sched.Run(ctx) //nolint:errcheck
-
-	// Then: invocation note present — startup scanBadStates called tryEnqueueArchitecti.
-	// Removing s.scanBadStates() from Run() would leave this test failing.
-	client.mu.Lock()
-	notes := client.notes["d-001"]
-	client.mu.Unlock()
-
-	for _, n := range notes {
-		if n.CataractaeName == "architecti" && strings.HasPrefix(n.Content, architectiInvocationNotePrefix) {
-			return
-		}
-	}
-	t.Error("expected architecti invocation note after startup scan, but none found")
-}
-
 func TestRun_CancelledContext(t *testing.T) {
 	client := newMockClient()
 	runner := newMockRunner(nil)
@@ -1285,11 +1234,11 @@ func criticalWorkflow() *aqueduct.Workflow {
 	return &aqueduct.Workflow{
 		Name: "feature",
 		Cataractae: []aqueduct.WorkflowCataractae{
-			{Name: "implement", Type: aqueduct.CataractaeTypeAgent, OnPass: "adversarial-review", OnFail: "blocked"},
+			{Name: "implement", Type: aqueduct.CataractaeTypeAgent, OnPass: "adversarial-review", OnFail: "pooled"},
 			{Name: "adversarial-review", Type: aqueduct.CataractaeTypeAgent, OnPass: "qa", OnFail: "implement", OnRecirculate: "implement"},
 			{Name: "qa", Type: aqueduct.CataractaeTypeAgent, OnPass: "docs", OnFail: "implement"},
-			{Name: "docs", Type: aqueduct.CataractaeTypeAgent, OnPass: "delivery", OnFail: "implement", OnRecirculate: "implement", OnEscalate: "human"},
-			{Name: "delivery", Type: aqueduct.CataractaeTypeAgent, OnPass: "done", OnRecirculate: "implement", OnEscalate: "human"},
+			{Name: "docs", Type: aqueduct.CataractaeTypeAgent, OnPass: "delivery", OnFail: "implement", OnRecirculate: "implement", OnPool: "human"},
+			{Name: "delivery", Type: aqueduct.CataractaeTypeAgent, OnPass: "done", OnRecirculate: "implement", OnPool: "human"},
 		},
 		Complexity: aqueduct.ComplexityConfig{
 			Standard: aqueduct.ComplexityLevel{Level: 1},
@@ -1307,7 +1256,7 @@ func TestComplexity_CriticalHumanGateBeforeMerge(t *testing.T) {
 	}
 
 	runner := newMockRunner(client)
-	// default outcome "pass"; docs.OnPass = "delivery" → critical → "human" → escalate
+	// default outcome "pass"; docs.OnPass = "delivery" → critical → "human" → pool
 
 	config := aqueduct.AqueductConfig{
 		Repos: []aqueduct.RepoConfig{
@@ -1328,9 +1277,9 @@ func TestComplexity_CriticalHumanGateBeforeMerge(t *testing.T) {
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	// docs passes → next is delivery → critical requires human gate → should escalate.
-	if _, ok := client.escalated["crit-1"]; !ok {
-		t.Errorf("expected critical droplet escalated to human before delivery, got step %q", client.steps["crit-1"])
+	// docs passes → next is delivery → critical requires human gate → should pool.
+	if _, ok := client.pooled["crit-1"]; !ok {
+		t.Errorf("expected critical droplet pooled to human before delivery, got step %q", client.steps["crit-1"])
 	}
 }
 
@@ -1395,9 +1344,9 @@ func TestComplexity_HumanGateSetsCurrentCataractae(t *testing.T) {
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	// Human gate: escalated and current_cataractae must be set to "human".
-	if _, ok := client.escalated["crit-2"]; !ok {
-		t.Errorf("expected critical droplet escalated, not found in escalated map")
+	// Human gate: pooled and current_cataractae must be set to "human".
+	if _, ok := client.pooled["crit-2"]; !ok {
+		t.Errorf("expected critical droplet pooled, not found in pooled map")
 	}
 	if client.steps["crit-2"] != "human" {
 		t.Errorf("expected current_cataractae='human', got %q", client.steps["crit-2"])
@@ -1406,13 +1355,14 @@ func TestComplexity_HumanGateSetsCurrentCataractae(t *testing.T) {
 
 func TestParseOutcome(t *testing.T) {
 	tests := []struct {
-		outcome         string
-		wantResult      Result
-		wantRecircTo    string
+		outcome      string
+		wantResult   Result
+		wantRecircTo string
 	}{
 		{"pass", ResultPass, ""},
 		{"recirculate", ResultRecirculate, ""},
 		{"recirculate:implement", ResultRecirculate, "implement"},
+		{"pool", ResultPool, ""},
 		{"block", ResultFail, ""},
 		{"unknown", ResultFail, ""},
 	}
@@ -1473,11 +1423,11 @@ func TestObserve_HeadNotAdvanced(t *testing.T) {
 
 	client := newMockClient()
 	item := &cistern.Droplet{
-		ID:               "ph-1",
+		ID:                "ph-1",
 		CurrentCataractae: "implement",
-		Assignee:         "alpha",
-		Status:           "in_progress",
-		Outcome:          "pass",
+		Assignee:          "alpha",
+		Status:            "in_progress",
+		Outcome:           "pass",
 	}
 	client.items["ph-1"] = item
 
@@ -1529,11 +1479,11 @@ func TestObserve_HeadAdvanced(t *testing.T) {
 
 	client := newMockClient()
 	item := &cistern.Droplet{
-		ID:               "ph-2",
+		ID:                "ph-2",
 		CurrentCataractae: "implement",
-		Assignee:         "alpha",
-		Status:           "in_progress",
-		Outcome:          "pass",
+		Assignee:          "alpha",
+		Status:            "in_progress",
+		Outcome:           "pass",
 	}
 	client.items["ph-2"] = item
 
@@ -1587,11 +1537,11 @@ func TestObserve_HeadAdvanced(t *testing.T) {
 func TestObserve_FirstPass(t *testing.T) {
 	client := newMockClient()
 	item := &cistern.Droplet{
-		ID:               "ph-3",
+		ID:                "ph-3",
 		CurrentCataractae: "implement",
-		Assignee:         "alpha",
-		Status:           "in_progress",
-		Outcome:          "pass",
+		Assignee:          "alpha",
+		Status:            "in_progress",
+		Outcome:           "pass",
 	}
 	client.items["ph-3"] = item
 	// lastReviewedCommits["ph-3"] is empty — first pass.
@@ -1612,11 +1562,11 @@ func TestObserve_FirstPass(t *testing.T) {
 }
 
 // TestObserve_ExternallyChangedStatus_FreesPoolSlot verifies that when a droplet's
-// status is changed to 'cancelled' or 'stagnant' externally while in_progress (without
+// status is changed to 'cancelled' or 'pooled' externally while in_progress (without
 // signaling an outcome), the observe phase detects it, kills the agent session, and
 // releases the aqueduct pool slot.
 func TestObserve_ExternallyChangedStatus_FreesPoolSlot(t *testing.T) {
-	for _, extStatus := range []string{"cancelled", "stagnant"} {
+	for _, extStatus := range []string{"cancelled", "pooled"} {
 		t.Run(extStatus, func(t *testing.T) {
 			var logBuf bytes.Buffer
 			client := newMockClient()
@@ -2738,7 +2688,7 @@ func TestRemoveDropletWorktree_LogsWorktreeDeleted(t *testing.T) {
 	}
 	buf.Reset()
 
-	removeDropletWorktreeWithLogger(l, primary, sandboxRoot, repoName, "ci-wt-del", false)
+	removeDropletWorktreeWithLogger(l, primary, sandboxRoot, repoName, "ci-wt-del")
 
 	out := buf.String()
 	if !strings.Contains(out, "worktree deleted") {
@@ -2746,11 +2696,6 @@ func TestRemoveDropletWorktree_LogsWorktreeDeleted(t *testing.T) {
 	}
 	if !strings.Contains(out, "ci-wt-del") {
 		t.Errorf("log missing droplet ID; got: %s", out)
-	}
-
-	// Branch deletion is the guarded invariant — assert it directly.
-	if branchExists(t, primary, "feat/ci-wt-del") {
-		t.Error("feat/ci-wt-del should have been deleted by removeDropletWorktreeWithLogger")
 	}
 }
 
@@ -2767,7 +2712,7 @@ func TestRemoveDropletWorktree_LogsWarn_WhenWorktreeMissing(t *testing.T) {
 	dropletID := "ci-wt-missing"
 
 	// Do NOT create the worktree — removal should fail.
-	removeDropletWorktreeWithLogger(l, primary, sandboxRoot, repoName, dropletID, false)
+	removeDropletWorktreeWithLogger(l, primary, sandboxRoot, repoName, dropletID)
 
 	out := buf.String()
 	if strings.Contains(out, "worktree deleted") {

@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MichielDean/cistern/internal/cistern"
 	"github.com/MichielDean/cistern/internal/aqueduct"
+	"github.com/MichielDean/cistern/internal/cistern"
 )
 
 // featureWorkflow returns the full 4-step feature pipeline matching
@@ -19,20 +19,20 @@ func featureWorkflow() *aqueduct.Workflow {
 			{
 				Name:           "implement",
 				Type:           aqueduct.CataractaeTypeAgent,
-				Identity: "implementer",
+				Identity:       "implementer",
 				Context:        aqueduct.ContextFullCodebase,
 				TimeoutMinutes: 30,
 				OnPass:         "review",
-				OnFail:         "blocked",
+				OnFail:         "pooled",
 			},
 			{
-				Name:       "review",
-				Type:       aqueduct.CataractaeTypeAgent,
-				Identity: "reviewer",
-				Context:    aqueduct.ContextDiffOnly,
-				OnPass:     "qa",
+				Name:          "review",
+				Type:          aqueduct.CataractaeTypeAgent,
+				Identity:      "reviewer",
+				Context:       aqueduct.ContextDiffOnly,
+				OnPass:        "qa",
 				OnRecirculate: "implement",
-				OnEscalate: "human",
+				OnPool:        "human",
 			},
 			{
 				Name:     "qa",
@@ -48,7 +48,7 @@ func featureWorkflow() *aqueduct.Workflow {
 				Identity:      "delivery",
 				OnPass:        "done",
 				OnRecirculate: "implement",
-				OnEscalate:    "human",
+				OnPool:        "human",
 			},
 		},
 	}
@@ -61,14 +61,14 @@ func featureWorkflow() *aqueduct.Workflow {
 // a terminal state. Unlike the queue-based mockClient, this simulates
 // an item that persists in the work queue until completion.
 type pipelineClient struct {
-	mu        sync.Mutex
-	item      cistern.Droplet
-	stepLog   []string       // every Assign call in order
-	attached  []attachedNote // notes attached by steps
-	notes     []cistern.CataractaeNote
-	escalated string
-	attempts  map[string]int
-	terminal  bool
+	mu       sync.Mutex
+	item     cistern.Droplet
+	stepLog  []string       // every Assign call in order
+	attached []attachedNote // notes attached by steps
+	notes    []cistern.CataractaeNote
+	pooled   string
+	attempts map[string]int
+	terminal bool
 }
 
 func newPipelineClient(item cistern.Droplet) *pipelineClient {
@@ -146,9 +146,9 @@ func (c *pipelineClient) AddNote(id, fromStep, notes string) error {
 	defer c.mu.Unlock()
 	c.attached = append(c.attached, attachedNote{id, fromStep, notes})
 	c.notes = append(c.notes, cistern.CataractaeNote{
-		DropletID:     id,
+		DropletID:      id,
 		CataractaeName: fromStep,
-		Content:       notes,
+		Content:        notes,
 	})
 	return nil
 }
@@ -161,10 +161,10 @@ func (c *pipelineClient) GetNotes(id string) ([]cistern.CataractaeNote, error) {
 	return result, nil
 }
 
-func (c *pipelineClient) Escalate(id, reason string) error {
+func (c *pipelineClient) Pool(id, reason string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.escalated = reason
+	c.pooled = reason
 	c.terminal = true
 	return nil
 }
@@ -220,10 +220,10 @@ func resultToOutcome(r Result) string {
 		return "pass"
 	case ResultRecirculate:
 		return "recirculate"
-	case ResultEscalate:
-		return "escalate"
+	case ResultPool:
+		return "pool"
 	default: // ResultFail and anything unknown
-		return "block"
+		return "fail"
 	}
 }
 
@@ -329,7 +329,7 @@ func TestSmoke_FeatureWorkflow_HappyPath(t *testing.T) {
 		"implement": {{Result: ResultPass, Notes: "added comment in main.go"}},
 		"review":    {{Result: ResultPass, Notes: "diff clean, no issues found"}},
 		"qa":        {{Result: ResultPass, Notes: "all tests pass (go test ./...)"}},
-		"delivery": {{Result: ResultPass, Notes: "PR delivered to main"}},
+		"delivery":  {{Result: ResultPass, Notes: "PR delivered to main"}},
 	})
 
 	sched := smokeScheduler(client, runner)
@@ -410,9 +410,9 @@ func TestSmoke_FeatureWorkflow_HappyPath(t *testing.T) {
 		}
 	}
 
-	// No escalation.
-	if client.escalated != "" {
-		t.Errorf("unexpected escalation: %s", client.escalated)
+	// No pooling.
+	if client.pooled != "" {
+		t.Errorf("unexpected pooling: %s", client.pooled)
 	}
 }
 
@@ -434,7 +434,7 @@ func TestSmoke_FeatureWorkflow_RecirculateLoop(t *testing.T) {
 			{Result: ResultRecirculate, Notes: "missing error handling on line 42"},
 			{Result: ResultPass, Notes: "recirculate looks good"},
 		},
-		"qa":    {{Result: ResultPass, Notes: "tests pass"}},
+		"qa":       {{Result: ResultPass, Notes: "tests pass"}},
 		"delivery": {{Result: ResultPass, Notes: "delivered"}},
 	})
 
@@ -456,12 +456,12 @@ func TestSmoke_FeatureWorkflow_RecirculateLoop(t *testing.T) {
 
 	// Step log for the revision loop.
 	wantLog := []string{
-		"implement", "review",    // 1st implement → review
-		"review", "implement",    // review(recirculate) → implement
-		"implement", "review",    // 2nd implement → review
-		"review", "qa",           // review(pass) → qa
-		"qa", "delivery",            // qa → delivery
-		"delivery", "done",          // delivery → done
+		"implement", "review", // 1st implement → review
+		"review", "implement", // review(recirculate) → implement
+		"implement", "review", // 2nd implement → review
+		"review", "qa", // review(pass) → qa
+		"qa", "delivery", // qa → delivery
+		"delivery", "done", // delivery → done
 	}
 	if len(client.stepLog) != len(wantLog) {
 		t.Fatalf("step log = %v (len %d), want len %d",
@@ -501,7 +501,7 @@ func TestSmoke_NotesForwarding(t *testing.T) {
 		"implement": {{Result: ResultPass, Notes: "impl: wrote the feature"}},
 		"review":    {{Result: ResultPass, Notes: "review: code is clean"}},
 		"qa":        {{Result: ResultPass, Notes: "qa: 42 tests pass"}},
-		"delivery": {{Result: ResultPass, Notes: "delivery: PR merged"}},
+		"delivery":  {{Result: ResultPass, Notes: "delivery: PR merged"}},
 	})
 
 	sched := smokeScheduler(client, runner)
@@ -581,13 +581,13 @@ func TestSmoke_QAFailReturnsToImplement(t *testing.T) {
 
 	// Verify qa failure routed back to implement (not blocked).
 	wantLog := []string{
-		"implement", "review",    // 1st implement → review
-		"review", "qa",           // 1st review → qa
-		"qa", "implement",        // qa(fail) → implement
-		"implement", "review",    // 2nd implement → review
-		"review", "qa",           // 2nd review → qa
-		"qa", "delivery",            // qa(pass) → delivery
-		"delivery", "done",          // delivery → done
+		"implement", "review", // 1st implement → review
+		"review", "qa", // 1st review → qa
+		"qa", "implement", // qa(fail) → implement
+		"implement", "review", // 2nd implement → review
+		"review", "qa", // 2nd review → qa
+		"qa", "delivery", // qa(pass) → delivery
+		"delivery", "done", // delivery → done
 	}
 	if len(client.stepLog) != len(wantLog) {
 		t.Fatalf("step log = %v (len %d), want len %d",

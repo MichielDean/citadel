@@ -26,11 +26,11 @@ const (
 
 // Action constants identify the pending Detail-panel action.
 const (
-	actionCancel   = "cancel"
-	actionEscalate = "escalate"
-	actionRestart  = "restart"
-	actionAddNote  = "addnote"
-	actionSetStep  = "setstep"
+	actionCancel  = "cancel"
+	actionPool    = "pool"
+	actionRestart = "restart"
+	actionAddNote = "addnote"
+	actionSetStep = "setstep"
 )
 
 // tuiDetailDataMsg carries notes fetched for the Detail panel.
@@ -62,8 +62,8 @@ type tabAppModel struct {
 	data *DashboardData
 
 	// Active view: tabDroplets, tabDetail, or tabPeek.
-	tab              int
-	cursor           int // cursor position in the Droplets list
+	tab               int
+	cursor            int // cursor position in the Droplets list
 	dropletsScrollTop int // viewport line offset for the Droplets list
 
 	// Detail panel state — populated when the Detail view opens.
@@ -76,7 +76,7 @@ type tabAppModel struct {
 
 	// Action overlay state — populated when an action keybinding is pressed.
 	overlayMode   int    // overlayNone, overlayConfirm, or overlayText
-	overlayAction string // pending action (actionCancel, actionEscalate, …)
+	overlayAction string // pending action (actionCancel, actionPool, …)
 	overlayInput  string // text being typed in overlayText mode
 	overlayErr    string // error message from the most recent action (empty = none)
 
@@ -124,7 +124,7 @@ func (m tabAppModel) fetchDetailCmd(dropletID string) tea.Cmd {
 
 // execActionCmd opens the DB and executes the named action for dropletID.
 // input is the user-supplied text for text-entry actions; it is ignored for
-// confirm-only actions (cancel, escalate).
+// confirm-only actions (cancel, pool).
 func (m tabAppModel) execActionCmd(dropletID, action, input string) tea.Cmd {
 	dbPath := m.dbPath
 	return func() tea.Msg {
@@ -137,8 +137,8 @@ func (m tabAppModel) execActionCmd(dropletID, action, input string) tea.Cmd {
 		switch action {
 		case actionCancel:
 			execErr = c.Cancel(dropletID, "")
-		case actionEscalate:
-			execErr = c.Escalate(dropletID, "")
+		case actionPool:
+			execErr = c.Pool(dropletID, "")
 		case actionRestart:
 			execErr = c.Assign(dropletID, "", input)
 		case actionAddNote:
@@ -504,7 +504,7 @@ func (m tabAppModel) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "e":
 			if m.detailDroplet != nil {
 				m.overlayMode = overlayConfirm
-				m.overlayAction = actionEscalate
+				m.overlayAction = actionPool
 			}
 		case "n":
 			if m.detailDroplet != nil {
@@ -690,8 +690,8 @@ func (m tabAppModel) viewDetail() string {
 		switch m.overlayAction {
 		case actionCancel:
 			prompt = "cancel this droplet?"
-		case actionEscalate:
-			prompt = "escalate this droplet?"
+		case actionPool:
+			prompt = "pool this droplet?"
 		default:
 			prompt = m.overlayAction + "?"
 		}
@@ -713,7 +713,7 @@ func (m tabAppModel) viewDetail() string {
 		if m.overlayErr != "" {
 			footer = tuiStyleRed.Render("  error: " + m.overlayErr)
 		} else {
-			footer = tuiStyleFooter.Render("  esc back  ↑↓/jk scroll  g/G top/bottom  p peek  r restart  x cancel  e escalate  n note  s step")
+			footer = tuiStyleFooter.Render("  esc back  ↑↓/jk scroll  g/G top/bottom  p peek  r restart  x cancel  e pool  n note  s step")
 		}
 	}
 
@@ -732,8 +732,8 @@ func (m tabAppModel) viewDetail() string {
 	switch d.Status {
 	case "in_progress":
 		statusStr = tuiStyleGreen.Render("in_progress")
-	case "stagnant":
-		statusStr = tuiStyleRed.Render("stagnant")
+	case "pooled":
+		statusStr = tuiStyleRed.Render("pooled")
 	case "open":
 		statusStr = tuiStyleYellow.Render("open")
 	default:
