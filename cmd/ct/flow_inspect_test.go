@@ -73,7 +73,7 @@ func TestFlowInspectCisternCounts(t *testing.T) {
 	if err := c.UpdateStatus(item2.ID, "in_progress"); err != nil {
 		t.Fatal(err)
 	}
-	// escalated item
+	// pooled item
 	item3, err := c.Add("repo", "pooled item", "", 2, 2)
 	if err != nil {
 		t.Fatal(err)

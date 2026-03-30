@@ -1132,7 +1132,7 @@ func TestTabApp_Detail_ConfirmOverlay_Y_ClosesOverlayAndReturnsCmd(t *testing.T)
 // TestTabApp_Detail_ConfirmOverlay_N_DismissesOverlay verifies that pressing 'n'
 // in the confirm overlay closes it without executing any action.
 //
-// Given: a model with overlayConfirm active for escalate action
+// Given: a model with overlayConfirm active for pool action
 // When:  'n' is pressed
 // Then:  overlayMode=overlayNone, cmd is nil
 func TestTabApp_Detail_ConfirmOverlay_N_DismissesOverlay(t *testing.T) {

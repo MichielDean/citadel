@@ -39,7 +39,7 @@ type mockClient struct {
 	steps               map[string]string              // id → current step (for assertions)
 	items               map[string]*cistern.Droplet    // id → item (for List/SetOutcome)
 	notes               map[string][]cistern.CataractaeNote
-	escalated           map[string]string
+	pooled              map[string]string
 	attached            []attachedNote
 	closed              map[string]bool
 	lastReviewedCommits map[string]string
@@ -62,7 +62,7 @@ func newMockClient() *mockClient {
 		steps:               make(map[string]string),
 		items:               make(map[string]*cistern.Droplet),
 		notes:               make(map[string][]cistern.CataractaeNote),
-		escalated:           make(map[string]string),
+		pooled:              make(map[string]string),
 		closed:              make(map[string]bool),
 		lastReviewedCommits: make(map[string]string),
 		cancelled:           make(map[string]string),
@@ -166,7 +166,7 @@ func (m *mockClient) GetNotes(id string) ([]cistern.CataractaeNote, error) {
 func (m *mockClient) Pool(id, reason string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.escalated[id] = reason
+	m.pooled[id] = reason
 	return nil
 }
 
@@ -526,7 +526,7 @@ func TestTick_TerminalPooled(t *testing.T) {
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	if _, ok := client.escalated["b1"]; !ok {
+	if _, ok := client.pooled["b1"]; !ok {
 		t.Error("expected item pooled for terminal 'pooled'")
 	}
 }
@@ -583,12 +583,12 @@ func TestTick_CrashRequeue(t *testing.T) {
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	// Item stays at "implement" — not advanced, not escalated.
+	// Item stays at "implement" — not advanced, not pooled.
 	if client.steps["b1"] != "implement" {
 		t.Errorf("expected step to remain 'implement' after crash, got %q", client.steps["b1"])
 	}
-	if _, ok := client.escalated["b1"]; ok {
-		t.Error("should not escalate on crash — just requeue")
+	if _, ok := client.pooled["b1"]; ok {
+		t.Error("should not pool on crash — just requeue")
 	}
 }
 
@@ -640,12 +640,12 @@ func TestTick_RecirculateAutoPromotesToPass(t *testing.T) {
 	client.mu.Lock()
 	defer client.mu.Unlock()
 
-	// Should route via on_pass → "review", not escalate.
+	// Should route via on_pass → "review", not pool.
 	if client.steps["b1"] != "review" {
 		t.Errorf("expected auto-promote to route to review, got %q", client.steps["b1"])
 	}
-	if _, ok := client.escalated["b1"]; ok {
-		t.Error("expected no escalation when recirculate auto-promotes via on_pass")
+	if _, ok := client.pooled["b1"]; ok {
+		t.Error("expected no pooling when recirculate auto-promotes via on_pass")
 	}
 	// Warning note must be attached.
 	var hasNote bool
@@ -660,9 +660,9 @@ func TestTick_RecirculateAutoPromotesToPass(t *testing.T) {
 	}
 }
 
-func TestTick_RecirculateNoPassRoute_StillEscalates(t *testing.T) {
+func TestTick_RecirculateNoPassRoute_StillPools(t *testing.T) {
 	// A step with neither on_recirculate nor on_pass: recirculate cannot be promoted,
-	// so the droplet must still escalate.
+	// so the droplet must still pool.
 	wf := &aqueduct.Workflow{
 		Name: "test",
 		Cataractae: []aqueduct.WorkflowCataractae{
@@ -690,8 +690,8 @@ func TestTick_RecirculateNoPassRoute_StillEscalates(t *testing.T) {
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	if _, ok := client.escalated["b2"]; !ok {
-		t.Error("expected escalation when neither on_recirculate nor on_pass exists")
+	if _, ok := client.pooled["b2"]; !ok {
+		t.Error("expected pooling when neither on_recirculate nor on_pass exists")
 	}
 }
 
@@ -741,7 +741,7 @@ func TestTick_RecirculateNoRoute_BlocksWithDiagnosticNote(t *testing.T) {
 	// Then: droplet is pooled.
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	if _, ok := client.escalated["b1"]; !ok {
+	if _, ok := client.pooled["b1"]; !ok {
 		t.Fatal("expected droplet to be pooled when no on_recirculate route exists")
 	}
 
@@ -1307,7 +1307,7 @@ func TestComplexity_CriticalHumanGateBeforeMerge(t *testing.T) {
 	}
 
 	runner := newMockRunner(client)
-	// default outcome "pass"; docs.OnPass = "delivery" → critical → "human" → escalate
+	// default outcome "pass"; docs.OnPass = "delivery" → critical → "human" → pool
 
 	config := aqueduct.AqueductConfig{
 		Repos: []aqueduct.RepoConfig{
@@ -1328,9 +1328,9 @@ func TestComplexity_CriticalHumanGateBeforeMerge(t *testing.T) {
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	// docs passes → next is delivery → critical requires human gate → should escalate.
-	if _, ok := client.escalated["crit-1"]; !ok {
-		t.Errorf("expected critical droplet escalated to human before delivery, got step %q", client.steps["crit-1"])
+	// docs passes → next is delivery → critical requires human gate → should pool.
+	if _, ok := client.pooled["crit-1"]; !ok {
+		t.Errorf("expected critical droplet pooled to human before delivery, got step %q", client.steps["crit-1"])
 	}
 }
 
@@ -1395,9 +1395,9 @@ func TestComplexity_HumanGateSetsCurrentCataractae(t *testing.T) {
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	// Human gate: escalated and current_cataractae must be set to "human".
-	if _, ok := client.escalated["crit-2"]; !ok {
-		t.Errorf("expected critical droplet escalated, not found in escalated map")
+	// Human gate: pooled and current_cataractae must be set to "human".
+	if _, ok := client.pooled["crit-2"]; !ok {
+		t.Errorf("expected critical droplet pooled, not found in pooled map")
 	}
 	if client.steps["crit-2"] != "human" {
 		t.Errorf("expected current_cataractae='human', got %q", client.steps["crit-2"])

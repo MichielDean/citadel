@@ -1017,7 +1017,7 @@ func TestListRecentEvents_WithEvents(t *testing.T) {
 	c := testClient(t)
 	item, _ := c.Add("myrepo", "Task", "", 1, 3)
 
-	// AddNote writes to cataractae_notes; Escalate writes to events.
+	// AddNote writes to cataractae_notes; Pool writes to events.
 	c.AddNote(item.ID, "implement", "wrote the code")
 	c.Pool(item.ID, "needs human review")
 
@@ -1684,7 +1684,7 @@ func TestPool_ClearsAssignedAqueduct(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got.AssignedAqueduct != "" {
-		t.Errorf("AssignedAqueduct after Escalate = %q, want empty string", got.AssignedAqueduct)
+		t.Errorf("AssignedAqueduct after Pool = %q, want empty string", got.AssignedAqueduct)
 	}
 }
 

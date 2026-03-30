@@ -259,7 +259,7 @@ func TestCisternList_PooledItems_NoFlowingMessage(t *testing.T) {
 	})
 }
 
-func TestCisternList_FlowingAndStagnant_ShowsNoMessage(t *testing.T) {
+func TestCisternList_FlowingAndPooled_ShowsNoMessage(t *testing.T) {
 	// When flowing droplets exist, a filtered list returning no results must
 	// emit no message at all — neither "No flowing droplets." nor "Cistern dry."
 	dir := t.TempDir()
