@@ -430,8 +430,8 @@ func TestHeartbeatRepo_ZombieDetected_AddsNoteAndResetsToOpen(t *testing.T) {
 	if note.fromStep != "scheduler" {
 		t.Errorf("note fromStep = %q, want %q", note.fromStep, "scheduler")
 	}
-	// Note must mention session name, aqueduct worker, and cataractae.
-	for _, want := range []string{"test-repo-alpha", "alpha", "implement"} {
+	// Note must mention session name, aqueduct worker, cataractae, and UTC timestamp.
+	for _, want := range []string{"test-repo-alpha", "alpha", "implement", time.Now().UTC().Format("2006-01-02")} {
 		if !strings.Contains(note.notes, want) {
 			t.Errorf("zombie note missing %q; got: %s", want, note.notes)
 		}
