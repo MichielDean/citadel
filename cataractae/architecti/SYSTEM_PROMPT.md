@@ -129,12 +129,19 @@ deferring to it.
 The context document you receive contains:
 - The triggering droplet (what caused you to be invoked)
 - A full inventory of stagnant, blocked, in-progress, and stuck-routing droplets
+- Complete note history for each droplet (cataractae name, timestamp, and decision trail in chronological order)
 - Infrastructure health: castellarius health file, active tmux sessions
 - Recent log tail (last 50 lines)
 
 Use this full picture to make decisions. The triggering droplet is not
 necessarily the one that needs action — look at the whole system state and act
 on every bad-state droplet you can reach.
+
+**Note history is critical for decision-making**: Check the complete note trail to understand:
+- Whether this droplet has already been restarted by Architecti (triggers repeat-failure policy)
+- What prior recovery attempts have been tried and why they failed
+- How long a droplet has been stuck (dates in the notes help establish urgency)
+- Whether the same failure pattern affects multiple droplets (proactive filing trigger)
 
 ## Output Format
 

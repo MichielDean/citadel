@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -255,7 +256,9 @@ func (s *Castellarius) buildArchitectiSnapshot(ctx context.Context, trigger *cis
 	}
 
 	writeDropletTable(&sb, "### Stagnant Droplets", allStagnant, false)
+	s.writeDropletNotes(&sb, allStagnant, repoByDroplet)
 	writeDropletTable(&sb, "### Blocked Droplets", allBlocked, false)
+	s.writeDropletNotes(&sb, allBlocked, repoByDroplet)
 
 	// In-progress: separate stuck-routing from active.
 	var stuckRouting, active []*cistern.Droplet
@@ -267,7 +270,9 @@ func (s *Castellarius) buildArchitectiSnapshot(ctx context.Context, trigger *cis
 		}
 	}
 	writeDropletTable(&sb, "### In-Progress Droplets", active, true)
+	s.writeDropletNotes(&sb, active, repoByDroplet)
 	writeDropletTable(&sb, "### Stuck Routing (outcome set, not yet routed)", stuckRouting, true)
+	s.writeDropletNotes(&sb, stuckRouting, repoByDroplet)
 
 	// --- Infrastructure Health ---
 	sb.WriteString("## Infrastructure Health\n\n")
@@ -356,6 +361,50 @@ func writeDropletTable(sb *strings.Builder, heading string, items []*cistern.Dro
 		}
 	}
 	sb.WriteString("\n")
+}
+
+// writeDropletNotes writes a "### Notes" subsection immediately after a droplet
+// table. For each droplet in the group it fetches notes via the client associated
+// with its repo. Notes are rendered in chronological order. Droplets with no
+// notes are omitted. GetNotes errors are logged as warnings and skipped so that
+// a note-fetch failure never aborts the snapshot.
+func (s *Castellarius) writeDropletNotes(sb *strings.Builder, droplets []*cistern.Droplet, repoByDroplet map[string]string) {
+	if len(droplets) == 0 {
+		return
+	}
+	sectionWritten := false
+	for _, d := range droplets {
+		repo, ok := repoByDroplet[d.ID]
+		if !ok {
+			continue
+		}
+		client, ok := s.clients[repo]
+		if !ok {
+			continue
+		}
+		notes, err := client.GetNotes(d.ID)
+		if err != nil {
+			s.logger.Warn("architecti: snapshot: get notes failed",
+				"droplet", d.ID, "error", err)
+			continue
+		}
+		if len(notes) == 0 {
+			continue
+		}
+		// Sort oldest-first so Architecti sees the full chronological history.
+		slices.SortFunc(notes, func(a, b cistern.CataractaeNote) int {
+			return a.CreatedAt.Compare(b.CreatedAt)
+		})
+		if !sectionWritten {
+			sb.WriteString("### Notes\n\n")
+			sectionWritten = true
+		}
+		fmt.Fprintf(sb, "#### %s\n", d.ID)
+		for _, n := range notes {
+			fmt.Fprintf(sb, "- [%s] %s: %s\n", n.CataractaeName, n.CreatedAt.UTC().Format(time.RFC3339), n.Content)
+		}
+		sb.WriteString("\n")
+	}
 }
 
 // parseArchitectiOutput extracts and validates the JSON action array from raw

@@ -44,6 +44,7 @@ type mockClient struct {
 	closed              map[string]bool
 	lastReviewedCommits map[string]string
 	addNoteErr          error // if set, AddNote returns this error
+	getNotesErr         error // if set, GetNotes returns this error
 	getReadyErr         error // if set, GetReady returns this error once then clears
 	listErr             error // if set, List returns this error
 	assignErr           error // if set, Assign returns this error
@@ -156,6 +157,9 @@ func (m *mockClient) AddNote(id, fromStep, notes string) error {
 func (m *mockClient) GetNotes(id string) ([]cistern.CataractaeNote, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.getNotesErr != nil {
+		return nil, m.getNotesErr
+	}
 	return m.notes[id], nil
 }
 

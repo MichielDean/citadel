@@ -690,7 +690,7 @@ A droplet triggers the Architecti exactly once per bad-state transition:
 
 ### What it does
 
-The Architecti receives a comprehensive snapshot of the Castellarius state (all droplets, sessions, infrastructure health, recent logs) and outputs a JSON array of recovery actions:
+The Architecti receives a comprehensive snapshot of the Castellarius state (all droplets with complete note history, sessions, infrastructure health, recent logs) and outputs a JSON array of recovery actions:
 
 ```json
 [

@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Architecti snapshot: include full note history for all droplets (ci-jmw48)
+
+The Architecti snapshot now includes the complete note history for every droplet, giving the recovery agent full visibility into the decision trail and prior recovery attempts.
+
+**Key changes:**
+- **Full note history**: `buildArchitectiSnapshot()` now fetches and renders all notes for stagnant, blocked, in-progress, and stuck-routing droplets
+- **Chronological ordering**: Notes are displayed oldest-first so Architecti sees the complete timeline of attempts and decisions
+- **Note metadata**: Each note includes the cataractae name and RFC3339 timestamp for full audit trail visibility
+- **Graceful error handling**: If `GetNotes()` fails for a droplet, the error is logged as a warning and the snapshot continues — a missing notes block is preferable to aborting the entire snapshot
+- **Omission of empty notes**: Droplets with no notes produce no notes subsection, keeping the snapshot concise
+
+**Format per droplet:**
+```
+#### ci-xxxx
+- [qa] 2024-01-15T10:00:00Z: criterion not met: response body must include X-Request-ID header
+- [architecti] 2024-01-15T11:00:00Z: Architecti restart → implement: QA rejected: '...'
+```
+
+**Impact**: Architecti now has complete visibility into why droplets are stuck and whether previous recovery attempts have been tried, enabling more informed decisions about restart vs. cancel+file actions and preventing repeat failures from consuming resources endlessly.
+
 ### Architecti: aggressive recovery posture — restart by default, file systemic issues proactively (ci-wnxtn)
 
 Architecti has been reconfigured from a conservative to aggressive recovery posture. It now defaults to restarting stagnant droplets, proactively files systemic issues affecting multiple droplets, and decisively cancels droplets that fail repeatedly rather than attempting endless restarts.
