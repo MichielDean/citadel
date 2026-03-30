@@ -848,12 +848,14 @@ func (s *Castellarius) observeRepo(_ context.Context, repo aqueduct.RepoConfig) 
 		assignee := item.Assignee
 
 		// cleanupBranch removes the per-droplet worktree.
-		// Called at terminal states and no-route escalation — non-terminal routes keep
-		// the worktree so the next dispatch cycle can resume incrementally.
-		cleanupBranch := func() {
+		// When keepBranch is true the worktree directory is detached but the
+		// feature branch ref is preserved so a future prepareDropletWorktree
+		// call can resume from the existing commits (stagnant/blocked/escalate).
+		// When keepBranch is false (done/cancelled) the branch is deleted too.
+		cleanupBranch := func(keepBranch bool) {
 			if s.sandboxRoot != "" {
 				primaryDir := filepath.Join(s.sandboxRoot, repo.Name, "_primary")
-				removeDropletWorktree(primaryDir, s.sandboxRoot, repo.Name, item.ID)
+				removeDropletWorktreeWithLogger(slog.Default(), primaryDir, s.sandboxRoot, repo.Name, item.ID, keepBranch)
 			}
 		}
 
@@ -945,7 +947,7 @@ func (s *Castellarius) observeRepo(_ context.Context, repo aqueduct.RepoConfig) 
 			}
 			reason := fmt.Sprintf("no route from step %q for outcome %q", step.Name, item.Outcome)
 			s.logger.Warn("observe: no route", "droplet", item.ID)
-			cleanupBranch()
+			cleanupBranch(true) // no-route → always stagnant, keep branch
 			if err := client.Escalate(item.ID, reason); err != nil {
 				s.logger.Error("observe: escalate failed", "droplet", item.ID, "error", err)
 			}
@@ -960,10 +962,11 @@ func (s *Castellarius) observeRepo(_ context.Context, repo aqueduct.RepoConfig) 
 		}
 
 		if isTerminal(next) {
-			cleanupBranch()
+			nextLower := strings.ToLower(next)
+			cleanupBranch(nextLower != "done") // keep branch unless truly done
 			s.handleTerminal(client, item.ID, next, step.Name)
 			// Blocked/human/escalate terminals become stagnant: enqueue for Architecti.
-			if strings.ToLower(next) != "done" {
+			if nextLower != "done" {
 				s.tryEnqueueArchitecti(client, item)
 			}
 			continue
@@ -1017,7 +1020,7 @@ func (s *Castellarius) observeRepo(_ context.Context, repo aqueduct.RepoConfig) 
 			pool.Release(w)
 			if s.sandboxRoot != "" {
 				primaryDir := filepath.Join(s.sandboxRoot, repo.Name, "_primary")
-				removeDropletWorktree(primaryDir, s.sandboxRoot, repo.Name, item.ID)
+				removeDropletWorktreeWithLogger(slog.Default(), primaryDir, s.sandboxRoot, repo.Name, item.ID, extStatus == "stagnant")
 			}
 			s.logger.Info("aqueduct freed: droplet changed externally",
 				"aqueduct", item.Assignee, "droplet", item.ID, "status", extStatus)
@@ -1825,17 +1828,19 @@ func prepareDropletWorktreeWithLogger(logger *slog.Logger, primaryDir, sandboxRo
 		return "", fmt.Errorf("mkdir for worktree %s: %w", worktreePath, err)
 	}
 
-	// First try attaching to an existing branch (handles crash-between-branch-create-and-worktree-add).
+	// First try attaching to an existing branch (handles crash-between-branch-create-and-worktree-add
+	// and stagnant resume where keepBranch=true preserved the branch ref).
 	addExisting := exec.Command("git", "worktree", "add", worktreePath, branch)
 	addExisting.Dir = primaryDir
-	if out, err := addExisting.CombinedOutput(); err != nil {
+	freshBranch := false
+	if _, err := addExisting.CombinedOutput(); err != nil {
 		// Branch doesn't exist yet — create it fresh from origin/main.
 		addNew := exec.Command("git", "worktree", "add", "-b", branch, worktreePath, "origin/main")
 		addNew.Dir = primaryDir
 		if out2, err2 := addNew.CombinedOutput(); err2 != nil {
 			return "", fmt.Errorf("git worktree add %s in %s: %w: %s", worktreePath, primaryDir, err2, out2)
 		}
-		_ = out // first attempt output discarded; only the second failure matters
+		freshBranch = true
 	}
 
 	for _, args := range [][]string{
@@ -1849,16 +1854,17 @@ func prepareDropletWorktreeWithLogger(logger *slog.Logger, primaryDir, sandboxRo
 		}
 	}
 
-	// Hard-reset to origin/main to guarantee a clean baseline — the worktree
-	// may inherit local modifications from the primary clone.
-	reset := exec.Command("git", "reset", "--hard", "origin/main")
-	reset.Dir = worktreePath
-	if out, err := reset.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("git reset in %s: %w: %s", worktreePath, err, out)
+	if freshBranch {
+		// Hard-reset to origin/main to guarantee a clean baseline for a new branch.
+		reset := exec.Command("git", "reset", "--hard", "origin/main")
+		reset.Dir = worktreePath
+		if out, err := reset.CombinedOutput(); err != nil {
+			return "", fmt.Errorf("git reset in %s: %w: %s", worktreePath, err, out)
+		}
+		clean := exec.Command("git", "clean", "-fd")
+		clean.Dir = worktreePath
+		_ = clean.Run()
 	}
-	clean := exec.Command("git", "clean", "-fd")
-	clean.Dir = worktreePath
-	_ = clean.Run()
 
 	logger.Info("worktree created",
 		"droplet", dropletID, "path", worktreePath,
@@ -1870,20 +1876,25 @@ func prepareDropletWorktreeWithLogger(logger *slog.Logger, primaryDir, sandboxRo
 // unregisters it from git, and deletes the feature branch from the primary
 // clone. Errors are ignored — best-effort cleanup.
 func removeDropletWorktree(primaryDir, sandboxRoot, repoName, dropletID string) {
-	removeDropletWorktreeWithLogger(slog.Default(), primaryDir, sandboxRoot, repoName, dropletID)
+	removeDropletWorktreeWithLogger(slog.Default(), primaryDir, sandboxRoot, repoName, dropletID, false)
 }
 
 // removeDropletWorktreeWithLogger is the logger-parameterized implementation
 // of removeDropletWorktree, used directly in tests.
-func removeDropletWorktreeWithLogger(logger *slog.Logger, primaryDir, sandboxRoot, repoName, dropletID string) {
+// When keepBranch is true, the worktree directory is detached but the feature
+// branch ref is preserved in the primary clone so a subsequent
+// prepareDropletWorktree call can resume from the existing commits.
+func removeDropletWorktreeWithLogger(logger *slog.Logger, primaryDir, sandboxRoot, repoName, dropletID string, keepBranch bool) {
 	worktreePath := filepath.Join(sandboxRoot, repoName, dropletID)
 	rm := exec.Command("git", "worktree", "remove", "--force", worktreePath)
 	rm.Dir = primaryDir
 	rmErr := rm.Run()
 
-	del := exec.Command("git", "branch", "-D", "feat/"+dropletID)
-	del.Dir = primaryDir
-	_ = del.Run()
+	if !keepBranch {
+		del := exec.Command("git", "branch", "-D", "feat/"+dropletID)
+		del.Dir = primaryDir
+		_ = del.Run()
+	}
 
 	if rmErr != nil {
 		logger.Warn("worktree deletion failed", "droplet", dropletID, "path", worktreePath, "error", rmErr)

@@ -1,6 +1,8 @@
 package castellarius
 
 import (
+	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -248,23 +250,12 @@ func TestPrepareDropletWorktree_NewWorktree_CreatesOnFeatureBranch(t *testing.T)
 	}
 }
 
-// TestPrepareDropletWorktree_NewWorktree_ResetsToOriginMain verifies that even
-// when an existing feat/<id> branch is ahead of origin/main (e.g. from a prior
-// manual hotfix), the new worktree is reset to origin/main before being handed
-// to the agent — preventing dirty state from bleeding in.
-func TestPrepareDropletWorktree_NewWorktree_ResetsToOriginMain(t *testing.T) {
+// TestPrepareDropletWorktree_FreshBranch_StartsAtOriginMain verifies that when
+// the feature branch does not yet exist, the new worktree is created from
+// origin/main and the worktree is clean — no dirty state from the primary clone.
+func TestPrepareDropletWorktree_FreshBranch_StartsAtOriginMain(t *testing.T) {
 	primaryDir := makeBareAndClone(t)
 	sandboxRoot := t.TempDir()
-
-	// Advance feat/drop-dirty beyond origin/main to simulate a prior manual edit
-	// that left the branch ahead of the remote.
-	branchMustRun(t, branchGitCmd(primaryDir, "checkout", "-b", "feat/drop-dirty"))
-	if err := os.WriteFile(filepath.Join(primaryDir, "hotfix.go"), []byte("// hotfix\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	branchMustRun(t, branchGitCmd(primaryDir, "add", "."))
-	branchMustRun(t, branchGitCmd(primaryDir, "commit", "-m", "manual hotfix on feat branch"))
-	branchMustRun(t, branchGitCmd(primaryDir, "checkout", "main"))
 
 	originMainSHA := func() string {
 		out, err := exec.Command("git", "-C", primaryDir, "rev-parse", "origin/main").Output()
@@ -274,7 +265,7 @@ func TestPrepareDropletWorktree_NewWorktree_ResetsToOriginMain(t *testing.T) {
 		return strings.TrimSpace(string(out))
 	}()
 
-	worktreePath, err := prepareDropletWorktree(primaryDir, sandboxRoot, "myrepo", "drop-dirty")
+	worktreePath, err := prepareDropletWorktree(primaryDir, sandboxRoot, "myrepo", "drop-fresh")
 	if err != nil {
 		t.Fatalf("prepareDropletWorktree: %v", err)
 	}
@@ -288,8 +279,7 @@ func TestPrepareDropletWorktree_NewWorktree_ResetsToOriginMain(t *testing.T) {
 	}()
 
 	if worktreeHEAD != originMainSHA {
-		t.Errorf("worktree HEAD = %s, want origin/main = %s (reset --hard did not work)",
-			worktreeHEAD, originMainSHA)
+		t.Errorf("worktree HEAD = %s, want origin/main = %s", worktreeHEAD, originMainSHA)
 	}
 
 	// Worktree must be clean after creation.
@@ -299,5 +289,128 @@ func TestPrepareDropletWorktree_NewWorktree_ResetsToOriginMain(t *testing.T) {
 	}
 	if strings.TrimSpace(string(statusOut)) != "" {
 		t.Errorf("worktree is not clean after prepareDropletWorktree:\n%s", statusOut)
+	}
+}
+
+// --- keepBranch / stagnant-resume tests ---
+
+// newBranchLifecycleLogger creates a slog.Logger that writes to w.
+// Pass io.Discard for tests that don't assert log output.
+func newBranchLifecycleLogger(w io.Writer) *slog.Logger {
+	return slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: slog.LevelDebug}))
+}
+
+// TestRemoveDropletWorktree_KeepBranch_WhenStagnant_PreservesFeatureBranch verifies
+// that when keepBranch=true the worktree directory is removed but the feature
+// branch ref survives in the primary clone (stagnant path).
+func TestRemoveDropletWorktree_KeepBranch_WhenStagnant_PreservesFeatureBranch(t *testing.T) {
+	// Given: a worktree created for a droplet with a commit on the feature branch.
+	primaryDir := makeBareAndClone(t)
+	sandboxRoot := t.TempDir()
+	l := newBranchLifecycleLogger(io.Discard)
+
+	worktreePath, err := prepareDropletWorktreeWithLogger(l, primaryDir, sandboxRoot, "myrepo", "drop-stagnant")
+	if err != nil {
+		t.Fatalf("prepareDropletWorktree: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(worktreePath, "work.go"), []byte("// work\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	branchMustRun(t, branchGitCmd(worktreePath, "add", "."))
+	branchMustRun(t, branchGitCmd(worktreePath, "commit", "-m", "agent work"))
+
+	// When: stagnant cleanup — keepBranch=true.
+	removeDropletWorktreeWithLogger(l, primaryDir, sandboxRoot, "myrepo", "drop-stagnant", true)
+
+	// Then: worktree directory is gone.
+	if _, statErr := os.Stat(worktreePath); statErr == nil {
+		t.Error("worktree directory should have been removed on stagnant cleanup")
+	}
+
+	// Then: feature branch still exists in primary clone.
+	if !branchExists(t, primaryDir, "feat/drop-stagnant") {
+		t.Error("feat/drop-stagnant should be preserved in primary clone after stagnant cleanup")
+	}
+}
+
+// TestRemoveDropletWorktree_DeletesBranchAndDir_WhenDone verifies that when
+// keepBranch=false both the worktree directory and the feature branch are
+// removed (done/cancelled path).
+func TestRemoveDropletWorktree_DeletesBranchAndDir_WhenDone(t *testing.T) {
+	// Given: a worktree created for a droplet.
+	primaryDir := makeBareAndClone(t)
+	sandboxRoot := t.TempDir()
+	l := newBranchLifecycleLogger(io.Discard)
+
+	worktreePath, err := prepareDropletWorktreeWithLogger(l, primaryDir, sandboxRoot, "myrepo", "drop-done")
+	if err != nil {
+		t.Fatalf("prepareDropletWorktree: %v", err)
+	}
+
+	// When: done/cancelled cleanup — keepBranch=false.
+	removeDropletWorktreeWithLogger(l, primaryDir, sandboxRoot, "myrepo", "drop-done", false)
+
+	// Then: worktree directory is gone.
+	if _, statErr := os.Stat(worktreePath); statErr == nil {
+		t.Error("worktree directory should have been removed on done cleanup")
+	}
+
+	// Then: feature branch is deleted.
+	if branchExists(t, primaryDir, "feat/drop-done") {
+		t.Error("feat/drop-done should have been deleted on done cleanup")
+	}
+}
+
+// TestPrepareDropletWorktree_ResumesFromExistingBranch_AfterStagnantCleanup verifies
+// that after a stagnant cleanup (worktree dir removed, branch preserved) a
+// subsequent prepareDropletWorktree call attaches to the existing branch via
+// the no-b path, retaining all prior commits.
+func TestPrepareDropletWorktree_ResumesFromExistingBranch_AfterStagnantCleanup(t *testing.T) {
+	// Given: a worktree created, agent commits some work, stagnant cleanup runs.
+	primaryDir := makeBareAndClone(t)
+	sandboxRoot := t.TempDir()
+	l := newBranchLifecycleLogger(io.Discard)
+
+	worktreePath, err := prepareDropletWorktreeWithLogger(l, primaryDir, sandboxRoot, "myrepo", "drop-resume-stagnant")
+	if err != nil {
+		t.Fatalf("prepareDropletWorktree (first): %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(worktreePath, "impl.go"), []byte("// implementation\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	branchMustRun(t, branchGitCmd(worktreePath, "add", "."))
+	branchMustRun(t, branchGitCmd(worktreePath, "commit", "-m", "implement work"))
+
+	beforeSHA, err := exec.Command("git", "-C", worktreePath, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatalf("rev-parse before: %v", err)
+	}
+
+	// Stagnant cleanup: remove worktree dir but keep branch.
+	removeDropletWorktreeWithLogger(l, primaryDir, sandboxRoot, "myrepo", "drop-resume-stagnant", true)
+
+	if _, statErr := os.Stat(worktreePath); statErr == nil {
+		t.Fatal("worktree directory should be gone after stagnant cleanup")
+	}
+
+	// When: Architecti restarts the droplet — prepareDropletWorktree is called again.
+	newWorktreePath, err := prepareDropletWorktreeWithLogger(l, primaryDir, sandboxRoot, "myrepo", "drop-resume-stagnant")
+	if err != nil {
+		t.Fatalf("prepareDropletWorktree (resume): %v", err)
+	}
+
+	// Then: the same branch is checked out (no fresh branch from origin/main).
+	if got := currentBranch(t, newWorktreePath); got != "feat/drop-resume-stagnant" {
+		t.Errorf("HEAD branch after resume = %q, want feat/drop-resume-stagnant", got)
+	}
+
+	// Then: prior commits are intact — HEAD matches the commit from before cleanup.
+	afterSHA, err := exec.Command("git", "-C", newWorktreePath, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatalf("rev-parse after: %v", err)
+	}
+	before, after := strings.TrimSpace(string(beforeSHA)), strings.TrimSpace(string(afterSHA))
+	if before != after {
+		t.Errorf("prior commits lost: HEAD before=%s after=%s", before, after)
 	}
 }

@@ -2738,7 +2738,7 @@ func TestRemoveDropletWorktree_LogsWorktreeDeleted(t *testing.T) {
 	}
 	buf.Reset()
 
-	removeDropletWorktreeWithLogger(l, primary, sandboxRoot, repoName, "ci-wt-del")
+	removeDropletWorktreeWithLogger(l, primary, sandboxRoot, repoName, "ci-wt-del", false)
 
 	out := buf.String()
 	if !strings.Contains(out, "worktree deleted") {
@@ -2746,6 +2746,11 @@ func TestRemoveDropletWorktree_LogsWorktreeDeleted(t *testing.T) {
 	}
 	if !strings.Contains(out, "ci-wt-del") {
 		t.Errorf("log missing droplet ID; got: %s", out)
+	}
+
+	// Branch deletion is the guarded invariant — assert it directly.
+	if branchExists(t, primary, "feat/ci-wt-del") {
+		t.Error("feat/ci-wt-del should have been deleted by removeDropletWorktreeWithLogger")
 	}
 }
 
@@ -2762,7 +2767,7 @@ func TestRemoveDropletWorktree_LogsWarn_WhenWorktreeMissing(t *testing.T) {
 	dropletID := "ci-wt-missing"
 
 	// Do NOT create the worktree — removal should fail.
-	removeDropletWorktreeWithLogger(l, primary, sandboxRoot, repoName, dropletID)
+	removeDropletWorktreeWithLogger(l, primary, sandboxRoot, repoName, dropletID, false)
 
 	out := buf.String()
 	if strings.Contains(out, "worktree deleted") {

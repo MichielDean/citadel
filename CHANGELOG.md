@@ -36,6 +36,27 @@ The Architecti snapshot now includes the complete note history for every droplet
 
 **Impact**: Architecti now has complete visibility into why droplets are stuck and whether previous recovery attempts have been tried, enabling more informed decisions about restart vs. cancel+file actions and preventing repeat failures from consuming resources endlessly.
 
+### Fix: preserve feature branch when droplet goes stagnant — enables proper commit preservation on restart (ci-r67uy)
+
+This fix addresses a data-loss bug in the droplet lifecycle where commits from prior implementation cycles were silently discarded when a droplet was restarted after going stagnant.
+
+**Problem**: When a droplet was escalated to stagnant (no-route escalation or terminal statuses like blocked/human/escalate), the Castellarius unconditionally deleted the feature branch via `git branch -D`. When Architecti restarted the droplet, `prepareDropletWorktree` had no existing branch to attach to and created a fresh one from `origin/main`, silently discarding all commits from the prior cycle. Reviewers repeatedly saw "branch identical to main" after a restart.
+
+**Fix**: Added `keepBranch bool` parameter to internal function `removeDropletWorktreeWithLogger()`:
+- When `keepBranch=true`: Detaches the worktree directory but **preserves** the feature branch in the primary clone
+- When `keepBranch=false`: Fully cleans up (worktree + branch deletion) for true terminal states like "done" or external "cancelled"
+
+**Call sites updated**:
+1. **No-route escalation** → `keepBranch=true` — commits survive stagnation
+2. **isTerminal() path** → `keepBranch=(next != "done")` — preserve for blocked/escalate, delete only for done
+3. **External status change** → `keepBranch=(extStatus == "stagnant")` — preserve on stagnant, delete on cancelled
+
+**Result**: When a droplet is restarted after stagnation, `prepareDropletWorktree` reattaches to the existing feature branch (no `-b` flag), and all prior commits are intact. No more silent data loss.
+
+**Impact**: Stagnant droplet recovery (via Architecti restart or manual restart) now preserves commits from the prior cycle. Combined with the Architecti aggressive restart policy, failed droplets can now be recovered without requiring implementers to re-do their work.
+
+**Testing**: Unit tests verify stagnant cleanup (branch preserved), done/cancelled cleanup (branch deleted), and worktree resume cycle (commits intact after reattachment).
+
 ### Architecti: aggressive recovery posture — restart by default, file systemic issues proactively (ci-wnxtn)
 
 Architecti has been reconfigured from a conservative to aggressive recovery posture. It now defaults to restarting stagnant droplets, proactively files systemic issues affecting multiple droplets, and decisively cancels droplets that fail repeatedly rather than attempting endless restarts.
