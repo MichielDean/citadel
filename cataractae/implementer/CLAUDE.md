@@ -157,6 +157,8 @@ Use the `ct` CLI (the item ID is in CONTEXT.md):
 ct droplet pass <id> --notes "Implemented X using TDD. Added N tests covering happy path, edge cases, and error paths. All tests pass."
 ```
 
+**NEVER use recirculate.** Recirculate is the reviewer's signal. If you have addressed open issues, signal pass — the reviewer will verify. You cannot resolve your own issues; only the reviewer can close them. Signaling recirculate from implement causes a routing failure.
+
 **Block (genuinely blocked — waiting on external dependency or fundamentally unclear requirements):**
 ```
 ct droplet block <id> --notes "Blocked: <specific reason>"

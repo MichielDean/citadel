@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Architecti: aggressive recovery posture — restart by default, file systemic issues proactively (ci-wnxtn)
+
+Architecti has been reconfigured from a conservative to aggressive recovery posture. It now defaults to restarting stagnant droplets, proactively files systemic issues affecting multiple droplets, and decisively cancels droplets that fail repeatedly rather than attempting endless restarts.
+
+**Key changes:**
+- **Restart is default**: Any identifiable, transient failure now triggers a restart (rate-limited to once per droplet per 24h). Note alone is only valid when the cause requires human decision.
+- **Proactive systemic filing**: When the snapshot reveals a pattern affecting multiple droplets (e.g., broken CI check, missing tool, systematic routing failure), Architecti files a new bug droplet to fix the root cause without waiting for human notice.
+- **Repeat failure policy**: If a droplet has been restarted by Architecti before and stagnates again with the same failure, Architecti cancels it and files a bug droplet rather than attempting another restart — preventing infinite loops.
+- **No-action policy**: "Do nothing" is never acceptable for a droplet in a bad state. Every invocation must result in at least one action: restart, cancel, file, or a note that explicitly explains why action is impossible and what human decision is needed.
+
+**Decision order** (updated):
+1. **Restart** — default for transient failures (was #4, now #1)
+2. **Cancel + File** — for repeat failures (new policy)
+3. **File** — for structural issues visible in the snapshot (new proactive requirement)
+4. **Note** — only when action is impossible, with explicit human-decision justification (was #2)
+5. **Restart castellarius** — scheduler hung detection (unchanged, last resort)
+
+**Impact**: Stagnant droplets are now recovered more aggressively rather than languishing with only notes. A systemic issue (like a broken test suite) that blocks multiple PRs will now be automatically filed as a fix droplet instead of requiring manual discovery.
+
+**Acceptance criteria met**: Decision order leads with restart; cancel+file enforces repeat-failure policy; proactive filing section added; no-action policy requires explicit justification.
+
 ### ct droplet pass/block/recirculate: correctly update status when called outside a session (ci-k6w66)
 
 The `ct droplet pass`, `ct droplet block`, and `ct droplet recirculate` commands now correctly update droplet status when called on stagnant or blocked droplets (i.e., droplets not in an active cataractae session). Previously, these commands only updated the outcome field, relying on Castellarius to detect and advance the status. Stagnant droplets were never picked up for routing, leaving them in their original status despite the outcome being set.
