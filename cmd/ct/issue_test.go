@@ -267,12 +267,12 @@ func TestDropletPass_NoIssues(t *testing.T) {
 
 // --- pass: pooled / terminal status tests ---
 
-// TestDropletPass_WhenStagnant_SetsStatusDelivered verifies that passing a pooled
+// TestDropletPass_WhenPooled_SetsStatusDelivered verifies that passing a pooled
 // droplet immediately sets status=delivered without Castellarius involvement.
 // Given a pooled droplet with no open issues,
 // When ct droplet pass is called,
 // Then status=delivered and outcome=pass.
-func TestDropletPass_WhenStagnant_SetsStatusDelivered(t *testing.T) {
+func TestDropletPass_WhenPooled_SetsStatusDelivered(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "test.db")
 	t.Setenv("CT_DB", db)
 	t.Setenv("CT_NO_ASCII_LOGO", "1")
@@ -485,12 +485,12 @@ func TestDropletPool_WhenCancelled_ReturnsError(t *testing.T) {
 
 // --- recirculate: pooled / terminal status tests ---
 
-// TestDropletRecirculate_WhenStagnant_SetsStatusOpen verifies that recirculating a
+// TestDropletRecirculate_WhenPooled_SetsStatusOpen verifies that recirculating a
 // pooled droplet immediately sets status=open and clears outcome.
 // Given a pooled droplet,
 // When ct droplet recirculate is called,
 // Then status=open and outcome="" (Assign clears outcome).
-func TestDropletRecirculate_WhenStagnant_SetsStatusOpen(t *testing.T) {
+func TestDropletRecirculate_WhenPooled_SetsStatusOpen(t *testing.T) {
 	t.Cleanup(func() { recirculateTo = "" })
 	db := filepath.Join(t.TempDir(), "test.db")
 	t.Setenv("CT_DB", db)
@@ -517,12 +517,12 @@ func TestDropletRecirculate_WhenStagnant_SetsStatusOpen(t *testing.T) {
 	}
 }
 
-// TestDropletRecirculate_WhenStagnant_DefaultsToCurrentCataractae verifies that when
+// TestDropletRecirculate_WhenPooled_DefaultsToCurrentCataractae verifies that when
 // --to is not provided, recirculate targets the droplet's current_cataractae.
 // Given a pooled droplet at cataractae "implement",
 // When ct droplet recirculate is called without --to,
 // Then current_cataractae remains "implement".
-func TestDropletRecirculate_WhenStagnant_DefaultsToCurrentCataractae(t *testing.T) {
+func TestDropletRecirculate_WhenPooled_DefaultsToCurrentCataractae(t *testing.T) {
 	t.Cleanup(func() { recirculateTo = "" })
 	db := filepath.Join(t.TempDir(), "test.db")
 	t.Setenv("CT_DB", db)
@@ -549,12 +549,12 @@ func TestDropletRecirculate_WhenStagnant_DefaultsToCurrentCataractae(t *testing.
 	}
 }
 
-// TestDropletRecirculate_WhenStagnant_WithTo_SetsCurrentCataractae verifies that --to
+// TestDropletRecirculate_WhenPooled_WithTo_SetsCurrentCataractae verifies that --to
 // overrides the target cataractae when recirculating a pooled droplet.
 // Given a pooled droplet at cataractae "review",
 // When ct droplet recirculate --to implement is called,
 // Then current_cataractae=implement and status=open and outcome="".
-func TestDropletRecirculate_WhenStagnant_WithTo_SetsCurrentCataractae(t *testing.T) {
+func TestDropletRecirculate_WhenPooled_WithTo_SetsCurrentCataractae(t *testing.T) {
 	t.Cleanup(func() { recirculateTo = "" })
 	db := filepath.Join(t.TempDir(), "test.db")
 	t.Setenv("CT_DB", db)

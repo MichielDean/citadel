@@ -204,7 +204,7 @@ ct architecti run --dry-run --droplet <id>         # Combine flags
 **Normal mode** — displays a summary of dispatched actions:
 ```
 Architecti completed. 3 action(s) dispatched:
-  restart  droplet-abc      implement          (reason: exceeded stagnation threshold)
+  restart  droplet-abc      implement          (reason: exceeded pooling threshold)
   file     repo-name        Urgent fix needed  (reason: critical diagnostics)
   note     droplet-def                         (reason: recovery attempt logged)
 ```

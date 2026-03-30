@@ -594,7 +594,7 @@ func TestFetchDashboardData_PooledItems_EmptyWhenNonePooled(t *testing.T) {
 
 // --- TestViewPooled TUI section ---
 
-// TestViewStagnant_WhenEmpty_ShowsCompactLabel verifies that the pooled panel
+// TestViewPooled_WhenEmpty_ShowsCompactLabel verifies that the pooled panel
 // renders as a compact count label "Pooled: 0" when no droplets are pooled.
 //
 // Given: a TUI model with an empty PooledItems list
@@ -613,7 +613,7 @@ func TestViewPooled_WhenEmpty_ShowsCompactLabel(t *testing.T) {
 	}
 }
 
-// TestViewStagnant_WhenPresent_ShowsFullList verifies that the pooled panel
+// TestViewPooled_WhenPresent_ShowsFullList verifies that the pooled panel
 // expands to a full list showing ID, title, and elapsed time.
 //
 // Given: a TUI model with two pooled droplets
@@ -645,7 +645,7 @@ func TestViewPooled_WhenPresent_ShowsFullList(t *testing.T) {
 	}
 }
 
-// TestViewStagnant_ShowsElapsedTime verifies that the time since last state
+// TestViewPooled_ShowsElapsedTime verifies that the time since last state
 // change is included in each pooled row.
 //
 // Given: a pooled droplet updated 45 seconds ago

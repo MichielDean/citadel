@@ -562,7 +562,7 @@ var architectiRunCmd = &cobra.Command{
 
 Architecti is the autonomous recovery agent that examines pooled
 droplets and takes corrective action (restart, cancel, file, note). Normally it
-is triggered automatically by the scheduler when droplets exceed the stagnation
+is triggered automatically by the scheduler when droplets exceed the pooling
 threshold.
 
 This command runs the same path manually, allowing operators to invoke it for

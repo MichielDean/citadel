@@ -1058,11 +1058,11 @@ func TestDropletSearch(t *testing.T) {
 	t.Run("empty results with pooled items shows No flowing droplets message", func(t *testing.T) {
 		// Use an isolated DB with only a pooled item and no flowing droplets,
 		// so that stats.Flowing == 0 and the pooled message is shown.
-		stagnantDir := t.TempDir()
-		stagnantDB := filepath.Join(stagnantDir, "pooled.db")
-		t.Setenv("CT_DB", stagnantDB)
+		pooledDir := t.TempDir()
+		pooledDB := filepath.Join(pooledDir, "pooled.db")
+		t.Setenv("CT_DB", pooledDB)
 
-		cs, err := cistern.New(stagnantDB, "ts")
+		cs, err := cistern.New(pooledDB, "ts")
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -355,7 +355,7 @@ func TestGetNotes_Empty(t *testing.T) {
 	}
 }
 
-func TestEscalate(t *testing.T) {
+func TestPool(t *testing.T) {
 	c := testClient(t)
 	item, _ := c.Add("myrepo", "Task", "", 1, 3)
 
@@ -1661,9 +1661,9 @@ func TestCloseItem_ClearsAssignedAqueduct(t *testing.T) {
 	}
 }
 
-// TestEscalate_ClearsAssignedAqueduct verifies that escalating a droplet to pooled
+// TestPool_ClearsAssignedAqueduct verifies that pooling a droplet
 // removes assigned_aqueduct so no ghost assignments linger.
-func TestEscalate_ClearsAssignedAqueduct(t *testing.T) {
+func TestPool_ClearsAssignedAqueduct(t *testing.T) {
 	c := testClient(t)
 	item, _ := c.Add("myrepo", "Stuck task", "", 1, 2)
 	c.SetAssignedAqueduct(item.ID, "cistern-beta")
