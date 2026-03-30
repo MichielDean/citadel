@@ -669,7 +669,7 @@ func TestRecirculate_AllowedFromReviewer(t *testing.T) {
 	c, _ := cistern.New(db, "ct")
 	item, _ := c.Add("myrepo", "Task", "", 1, 3)
 	c.SetCataractae(item.ID, "implement")
-	c.Escalate(item.ID, "timed out")
+	c.Pool(item.ID, "timed out")
 	c.Close()
 
 	if err := execCmd(t, "droplet", "recirculate", item.ID); err != nil {
