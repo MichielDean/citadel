@@ -128,7 +128,7 @@ ct droplet issue reject <issue-id> --evidence ""             Reject as invalid w
 
 Key invariants:
 - Implementers cannot resolve or reject issues — only reviewer cataractae may.
-- A droplet with open issues cannot be passed — it must recirculate.
+- Droplets can be passed regardless of open issues — reviewers and QA use issues for feedback, not as a gate.
 - Resolution requires evidence (test name, line reference, or command output).
 
 ## Named Aqueducts
