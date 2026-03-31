@@ -19,6 +19,7 @@ const (
 	architectiRestartCastellariusFactor = 5 // lastTickAt must exceed this multiple of pollInterval
 	architectiSessionTimeout            = 10 * time.Minute
 	maxActionsPerRun                    = 1000 // cap total actions per invocation for defense-in-depth
+	ArchitectiDefaultMaxFilesPerRun     = 10   // default cap on "file" actions per ad-hoc invocation
 
 	// architectiRestartNotePrefix is the prefix of the note written when Architecti
 	// successfully restarts a droplet. Used by the escalation check to detect prior

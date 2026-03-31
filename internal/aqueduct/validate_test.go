@@ -1,6 +1,5 @@
 package aqueduct
 
-
 // minimalValidConfig returns the smallest valid AqueductConfig for use as a
 // base in table-driven tests.
 func minimalValidConfig() AqueductConfig {

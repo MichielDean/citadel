@@ -615,7 +615,7 @@ Use --droplet <id> to provide a specific droplet as trigger context.`,
 		}
 
 		ctx := context.Background()
-		snapshot, rawOutput, actions, err := sched.RunArchitectiAdHoc(ctx, trigger, 10, architectiRunDryRun)
+		snapshot, rawOutput, actions, err := sched.RunArchitectiAdHoc(ctx, trigger, castellarius.ArchitectiDefaultMaxFilesPerRun, architectiRunDryRun)
 		if err != nil {
 			return err
 		}
