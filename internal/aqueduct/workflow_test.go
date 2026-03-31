@@ -739,7 +739,7 @@ func TestTrackerConfig_ResolvedToken_EnvVarTakesPrecedenceOverLiteral(t *testing
 // TestTrackerConfig_ResolvedToken_FallsBackToTokenWhenEnvUnset verifies that when
 // TokenEnv is set but the variable is not in the environment, Token is returned.
 func TestTrackerConfig_ResolvedToken_FallsBackToTokenWhenEnvUnset(t *testing.T) {
-	// Ensure the variable is not set.
+	// Set the variable to empty string — os.Getenv returns "" for both unset and empty, so this exercises the fallback path.
 	t.Setenv("TEST_TRACKER_MISSING", "")
 	tc := TrackerConfig{Token: "fallback-token", TokenEnv: "TEST_TRACKER_MISSING"}
 	if got := tc.ResolvedToken(); got != "fallback-token" {
