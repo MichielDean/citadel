@@ -253,17 +253,13 @@ func TestArchitectiAction_File_CreatesNewDroplet(t *testing.T) {
 		t.Errorf("unexpected error: %v", err)
 	}
 	client.mu.Lock()
-	filedCount := len(client.filed)
-	var filedItem filedDroplet
-	if filedCount > 0 {
-		filedItem = client.filed[0]
-	}
+	filed := client.filed
 	client.mu.Unlock()
-	if filedCount != 1 {
-		t.Errorf("filed count = %d, want 1", filedCount)
+	if len(filed) != 1 {
+		t.Fatalf("filed count = %d, want 1", len(filed))
 	}
-	if filedItem.Title != "Fix the thing" {
-		t.Errorf("filed title = %q, want %q", filedItem.Title, "Fix the thing")
+	if filed[0].Title != "Fix the thing" {
+		t.Errorf("filed title = %q, want %q", filed[0].Title, "Fix the thing")
 	}
 }
 
