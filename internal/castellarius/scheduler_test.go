@@ -2893,6 +2893,64 @@ func TestHeartbeatRepo_TmuxAliveAgentDead_WritesNoteKillsSessionAndResetsDroplet
 	}
 }
 
+// TestHeartbeatRepo_TmuxAliveAgentDead_RecentDispatch_SkipsZombieHandling verifies
+// that the minimum age guard prevents false-positive zombie kills during the
+// startup window when tmux is alive but the agent process has not yet been forked.
+func TestHeartbeatRepo_TmuxAliveAgentDead_RecentDispatch_SkipsZombieHandling(t *testing.T) {
+	orig := isTmuxAliveFn
+	isTmuxAliveFn = func(_ string) bool { return true }
+	t.Cleanup(func() { isTmuxAliveFn = orig })
+
+	origAgent := isAgentAliveFn
+	isAgentAliveFn = func(_ string) bool { return false } // agent not yet forked
+	t.Cleanup(func() { isAgentAliveFn = origAgent })
+
+	client := newMockClient()
+
+	item := &cistern.Droplet{
+		ID:                "zombie-agentdead-recent",
+		CurrentCataractae: "implement",
+		Status:            "in_progress",
+		Assignee:          "alpha",
+		UpdatedAt:         time.Now(), // just dispatched — within 2× pollInterval
+	}
+	client.items[item.ID] = item
+
+	config := testConfig()
+	config.StallThresholdMinutes = 60 // high threshold — not stalled
+	workflows := map[string]*aqueduct.Workflow{"test-repo": testWorkflow()}
+	clients := map[string]CisternClient{"test-repo": client}
+	runner := newMockRunner(client)
+	sched := NewFromParts(config, workflows, clients, runner)
+
+	var killedSessions []string
+	sched.killSessionFn = func(sessionID string) error {
+		killedSessions = append(killedSessions, sessionID)
+		return nil
+	}
+
+	// Provide a recent note so stall detection does not fire.
+	client.notes[item.ID] = []cistern.CataractaeNote{
+		{CreatedAt: time.Now()},
+	}
+
+	sched.heartbeatRepo(context.Background(), config.Repos[0])
+
+	// Age guard must have suppressed zombie handling — session must not be killed.
+	if len(killedSessions) != 0 {
+		t.Errorf("expected no sessions killed for recently-dispatched session, got %v", killedSessions)
+	}
+	if len(client.attached) != 0 {
+		t.Errorf("expected no notes written for recently-dispatched session, got %d", len(client.attached))
+	}
+	if item.Status != "in_progress" {
+		t.Errorf("item status = %q, want in_progress", item.Status)
+	}
+	if item.Assignee != "alpha" {
+		t.Errorf("item assignee = %q, want alpha", item.Assignee)
+	}
+}
+
 // TestHeartbeatRepo_TmuxAliveAgentAlive_SkipsZombieHandling verifies that when
 // both tmux and the claude process are alive no zombie action is taken.
 func TestHeartbeatRepo_TmuxAliveAgentAlive_SkipsZombieHandling(t *testing.T) {

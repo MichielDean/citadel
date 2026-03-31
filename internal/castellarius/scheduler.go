@@ -1463,6 +1463,13 @@ func (s *Castellarius) heartbeatRepo(ctx context.Context, repo aqueduct.RepoConf
 			// still running inside it. If not, the agent exited without signaling an
 			// outcome (e.g. OOM kill, hard token limit) — kill the orphaned session,
 			// record a diagnostic note, and reset the droplet for re-dispatch.
+			//
+			// Minimum age guard: during the startup window tmux is alive but the
+			// agent process may not yet be forked. Skip sessions dispatched
+			// < 2× pollInterval ago to avoid false positives.
+			if time.Since(item.UpdatedAt) < 2*s.pollInterval {
+				continue
+			}
 			if !isAgentAlive(sessionID) {
 				step := currentCataracta(item, wf)
 				if step == nil {
