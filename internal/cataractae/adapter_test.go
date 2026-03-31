@@ -375,6 +375,46 @@ func TestNewAdapter_NoWorkflow(t *testing.T) {
 	}
 }
 
+// TestBranchForDroplet_WithExternalRef_UsesKeyAsSuffix verifies that
+// branchForDroplet returns "feat/<key>" when external_ref is "provider:key".
+func TestBranchForDroplet_WithExternalRef_UsesKeyAsSuffix(t *testing.T) {
+	cases := []struct {
+		externalRef string
+		wantBranch  string
+	}{
+		{"jira:DPF-456", "feat/DPF-456"},
+		{"linear:LIN-789", "feat/LIN-789"},
+		{"jira:PROJ-1", "feat/PROJ-1"},
+	}
+	for _, tc := range cases {
+		d := &cistern.Droplet{ID: "ci-xxxxx", ExternalRef: tc.externalRef}
+		got := branchForDroplet(d)
+		if got != tc.wantBranch {
+			t.Errorf("branchForDroplet(%q) = %q, want %q", tc.externalRef, got, tc.wantBranch)
+		}
+	}
+}
+
+// TestBranchForDroplet_WithoutExternalRef_UsesDropletID verifies that
+// branchForDroplet returns "feat/<id>" when no external_ref is set.
+func TestBranchForDroplet_WithoutExternalRef_UsesDropletID(t *testing.T) {
+	d := &cistern.Droplet{ID: "ci-abcde", ExternalRef: ""}
+	got := branchForDroplet(d)
+	if got != "feat/ci-abcde" {
+		t.Errorf("branchForDroplet(no external_ref) = %q, want %q", got, "feat/ci-abcde")
+	}
+}
+
+// TestBranchForDroplet_WithMalformedExternalRef_FallsBackToID verifies that
+// branchForDroplet falls back to "feat/<id>" when external_ref has no colon.
+func TestBranchForDroplet_WithMalformedExternalRef_FallsBackToID(t *testing.T) {
+	d := &cistern.Droplet{ID: "ci-abcde", ExternalRef: "nocolon"}
+	got := branchForDroplet(d)
+	if got != "feat/ci-abcde" {
+		t.Errorf("branchForDroplet('nocolon') = %q, want %q", got, "feat/ci-abcde")
+	}
+}
+
 // TestNewAdapter_NoQueueClient verifies that NewAdapter returns an error when a
 // repo has no queue client configured.
 func TestNewAdapter_NoQueueClient(t *testing.T) {

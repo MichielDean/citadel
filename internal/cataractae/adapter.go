@@ -100,7 +100,7 @@ func (a *Adapter) spawnAutomated(ctx context.Context, req castellarius.Cataracta
 		}
 		sandboxDir = filepath.Join(home, ".cistern", "sandboxes", req.RepoConfig.Name, req.AqueductName)
 	}
-	branch := "feat/" + req.Item.ID
+	branch := branchForDroplet(req.Item)
 
 	// Build metadata from prior annotations stored as step notes with "meta:" prefix.
 	metadata := make(map[string]any)
@@ -141,4 +141,17 @@ func (a *Adapter) spawnAutomated(ctx context.Context, req castellarius.Cataracta
 		return fmt.Errorf("adapter: set outcome for %s: %w", req.Item.ID, err)
 	}
 	return nil
+}
+
+// branchForDroplet derives the git branch name for a droplet.
+// When external_ref is set (e.g. "jira:DPF-456"), the key part after the colon
+// ("DPF-456") is used as the branch suffix: "feat/DPF-456".
+// Otherwise, the droplet ID is used: "feat/<id>".
+func branchForDroplet(d *cistern.Droplet) string {
+	if d.ExternalRef != "" {
+		if _, key, found := strings.Cut(d.ExternalRef, ":"); found && key != "" {
+			return "feat/" + key
+		}
+	}
+	return "feat/" + d.ID
 }

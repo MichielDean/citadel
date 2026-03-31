@@ -16,7 +16,7 @@ type fakeAdder struct {
 	err error
 }
 
-func (f *fakeAdder) Add(title, repo, description string, priority, complexity int) (string, error) {
+func (f *fakeAdder) Add(title, repo, description, externalRef string, priority, complexity int) (string, error) {
 	return f.id, f.err
 }
 
@@ -334,4 +334,34 @@ func TestHandler_ContentTypeJSON(t *testing.T) {
 	if !strings.HasPrefix(ct, "application/json") {
 		t.Errorf("Content-Type = %q, want application/json", ct)
 	}
+}
+
+// TestHandler_ExternalRefPassedToAdder verifies that when external_ref is
+// present in the request body, the handler parses and passes it to the adder.
+func TestHandler_ExternalRefPassedToAdder(t *testing.T) {
+	fa := &captureAdder{}
+	h := newTestHandler(t, fa, 100, 100)
+
+	body := `{"title":"imported issue","repo":"myrepo","external_ref":"jira:DPF-456"}`
+	req := httptest.NewRequest(http.MethodPost, "/droplets", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer tok-a")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", w.Code)
+	}
+	if fa.gotExternalRef != "jira:DPF-456" {
+		t.Errorf("externalRef passed to adder = %q, want %q", fa.gotExternalRef, "jira:DPF-456")
+	}
+}
+
+// captureAdder captures the arguments passed to Add so they can be asserted in tests.
+type captureAdder struct {
+	gotExternalRef string
+}
+
+func (a *captureAdder) Add(title, repo, description, externalRef string, priority, complexity int) (string, error) {
+	a.gotExternalRef = externalRef
+	return "ct-captured", nil
 }

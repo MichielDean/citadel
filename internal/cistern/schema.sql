@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS droplets (
     outcome TEXT DEFAULT NULL,
     assigned_aqueduct TEXT DEFAULT '',
     last_reviewed_commit TEXT DEFAULT NULL,
+    external_ref TEXT DEFAULT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
