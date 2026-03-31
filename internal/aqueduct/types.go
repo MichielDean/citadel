@@ -160,17 +160,6 @@ type LLMConfig struct {
 	APIKeyEnv string `yaml:"api_key_env,omitempty"`
 }
 
-// ArchitectiConfig configures the Architecti autonomous diagnosis agent that
-// examines pooled droplets. Architecti is always active as a
-// serial queue drainer — no enable flag or threshold required. The scheduler
-// enqueues a droplet on every pooled transition (one-to-one guarantee)
-// and drains the queue serially in the background.
-type ArchitectiConfig struct {
-	// MaxFilesPerRun caps the number of files architecti may examine per
-	// invocation. Must be > 0.
-	MaxFilesPerRun int `yaml:"max_files_per_run"`
-}
-
 // AqueductConfig is the top-level configuration for a Cistern instance.
 type AqueductConfig struct {
 	Repos                 []RepoConfig `yaml:"repos"`
@@ -212,7 +201,4 @@ type AqueductConfig struct {
 	// dashboard UI. Defaults to a monospace stack when empty.
 	DashboardFontFamily string `yaml:"dashboard_font_family,omitempty"`
 
-	// Architecti configures the autonomous diagnosis agent that examines
-	// pooled droplets. Omit to disable.
-	Architecti *ArchitectiConfig `yaml:"architecti,omitempty"`
 }

@@ -11,13 +11,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MichielDean/cistern/internal/aqueduct"
 	"github.com/MichielDean/cistern/internal/cistern"
 )
 
 const (
 	architectiSessionName               = "architecti"
-	architectiRateLimitWindow           = 24 * time.Hour
 	architectiRestartCastellariusFactor = 5 // lastTickAt must exceed this multiple of pollInterval
 	architectiSessionTimeout            = 10 * time.Minute
 	maxActionsPerRun                    = 1000 // cap total actions per invocation for defense-in-depth
@@ -27,128 +25,7 @@ const (
 	// restarts: if a note with this prefix already exists, the droplet has been pooled
 	// again after a restart and must be cancelled + filed rather than restarted again.
 	architectiRestartNotePrefix = "Architecti restart →"
-
-	// architectiQueueCap is the capacity of the serial in-memory queue.
-	// Sized generously to accommodate transient bursts of pooled transitions.
-	architectiQueueCap = 64
-
-	// architectiDefaultMaxFilesPerRun is used when no ArchitectiConfig is present.
-	architectiDefaultMaxFilesPerRun = 10
-
-	// architectiStuckRoutingThreshold is the number of consecutive Assign
-	// failures before a stuck-routing droplet is enqueued for Architecti.
-	architectiStuckRoutingThreshold = 3
-
-	// architectiInvocationNotePrefix is the content prefix written to a
-	// droplet's notes when it is enqueued for Architecti. Used as a dedup
-	// guard: if a note with this prefix already exists for the droplet,
-	// tryEnqueueArchitecti skips the droplet without re-enqueueing.
-	architectiInvocationNotePrefix = "[architecti] enqueued:"
 )
-
-// architectiConfigOrDefault returns the ArchitectiConfig from scheduler
-// configuration, falling back to built-in defaults when nil.
-func (s *Castellarius) architectiConfigOrDefault() aqueduct.ArchitectiConfig {
-	if s.config.Architecti != nil {
-		return *s.config.Architecti
-	}
-	return aqueduct.ArchitectiConfig{MaxFilesPerRun: architectiDefaultMaxFilesPerRun}
-}
-
-// tryEnqueueArchitecti attempts to enqueue droplet for Architecti processing.
-// It is a no-op when an invocation note already exists for the droplet,
-// providing the one-to-one guarantee: each bad-state transition triggers at
-// most one Architecti invocation.
-//
-// The channel send is attempted first. The invocation note is written only
-// after a successful send, so that a full queue does not permanently silence
-// a droplet by recording a dedup note that was never backed by an actual enqueue.
-func (s *Castellarius) tryEnqueueArchitecti(client CisternClient, droplet *cistern.Droplet) {
-	if s.architectiQueue == nil {
-		return
-	}
-	notes, err := client.GetNotes(droplet.ID)
-	if err != nil {
-		s.logger.Error("architecti: enqueue check: get notes failed",
-			"droplet", droplet.ID, "error", err)
-		return
-	}
-	for _, n := range notes {
-		if n.CataractaeName == "architecti" && strings.HasPrefix(n.Content, architectiInvocationNotePrefix) {
-			s.logger.Debug("architecti: already enqueued — skipping", "droplet", droplet.ID)
-			return
-		}
-	}
-	// Attempt non-blocking send first. Only write the invocation note on
-	// success so a full queue does not permanently silence the droplet.
-	select {
-	case s.architectiQueue <- droplet:
-		// Send succeeded. Write the invocation note so subsequent poll cycles
-		// and restarts see it and skip re-enqueue (crash-safe dedup guard).
-		noteContent := architectiInvocationNotePrefix + " " + droplet.Status
-		if err := client.AddNote(droplet.ID, "architecti", noteContent); err != nil {
-			s.logger.Error("architecti: write invocation note failed",
-				"droplet", droplet.ID, "error", err)
-			// Droplet is already queued and will be processed. Missing note
-			// means the next poll cycle may attempt a duplicate enqueue;
-			// the drainer's seen-map handles within-burst deduplication.
-		}
-		s.logger.Info("architecti: enqueued", "droplet", droplet.ID, "status", droplet.Status)
-	default:
-		s.logger.Warn("architecti: queue full — droplet not enqueued", "droplet", droplet.ID)
-	}
-}
-
-// startArchitectiQueue starts the single background goroutine that drains the
-// serial Architecti queue. It processes one droplet at a time: reads from the
-// buffered channel, deduplicates within the current queue contents (race
-// between channel send and note write), calls runArchitectiFn, then reads the
-// next. The goroutine exits when ctx is cancelled.
-func (s *Castellarius) startArchitectiQueue(ctx context.Context) {
-	s.architectiWg.Add(1)
-	go func() {
-		defer s.architectiWg.Done()
-		// seen deduplicates duplicate IDs within the in-flight queue.
-		// Note-based dedup in tryEnqueueArchitecti prevents most duplicates;
-		// seen handles the narrow race between channel send and note write.
-		// It is cleared when the channel drains to bound its size.
-		seen := make(map[string]struct{})
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case droplet, ok := <-s.architectiQueue:
-				if !ok {
-					return
-				}
-				if _, dup := seen[droplet.ID]; dup {
-					s.logger.Debug("architecti: drainer: duplicate — skipping", "droplet", droplet.ID)
-				} else {
-					seen[droplet.ID] = struct{}{}
-					func() {
-						defer func() {
-							if r := recover(); r != nil {
-								s.logger.Error("architecti: drainer: panic recovered",
-									"droplet", droplet.ID, "panic", r)
-							}
-						}()
-						cfg := s.architectiConfigOrDefault()
-						if err := s.runArchitectiFn(ctx, droplet, cfg); err != nil {
-							s.logger.Error("architecti: run failed",
-								"droplet", droplet.ID, "error", err)
-						}
-					}()
-				}
-				// Clear seen when the channel is drained — bounds map size to
-				// the queue capacity; safe because all in-burst duplicates have
-				// been consumed before the channel appears empty.
-				if len(s.architectiQueue) == 0 {
-					seen = make(map[string]struct{})
-				}
-			}
-		}
-	}()
-}
 
 // ArchitectiAction is a single action output by the Architecti agent.
 type ArchitectiAction struct {
@@ -165,81 +42,10 @@ type ArchitectiAction struct {
 	Body string `json:"body,omitempty"`
 }
 
-// runArchitecti is the real implementation of the Architecti autonomous recovery
-// agent. It is assigned to runArchitectiFn in New/NewFromParts at construction
-// time. It builds a system snapshot, invokes the agent, parses the JSON action
-// array, and dispatches each approved action via the Go API.
-func (s *Castellarius) runArchitecti(ctx context.Context, droplet *cistern.Droplet, config aqueduct.ArchitectiConfig) error {
-	// Global singleton guard: at most one Architecti session runs at a time
-	// across all droplets. If another goroutine already holds the slot, skip.
-	if !s.architectiRunning.CompareAndSwap(false, true) {
-		s.logger.Info("architecti: already running globally — skipping",
-			"droplet", droplet.ID)
-		return nil
-	}
-	defer s.architectiRunning.Store(false)
-
-	// Build system state snapshot for the agent.
-	snapshot, repoByDroplet := s.buildArchitectiSnapshot(ctx, droplet, config)
-
-	// Invoke the agent (real impl runs claude in a tmux session; injected in tests).
-	output, err := s.architectiExecFn(ctx, snapshot)
-	if err != nil {
-		return fmt.Errorf("architecti: exec: %w", err)
-	}
-
-	// Parse the JSON action array.
-	actions, err := parseArchitectiOutput(output, config.MaxFilesPerRun)
-	if err != nil {
-		// Truncate raw output to bounded length for security
-		rawOutput := string(output)
-		if len(rawOutput) > 500 {
-			rawOutput = rawOutput[:500] + "...(truncated)"
-		}
-		s.logger.Error("architecti: parse output failed",
-			"droplet", droplet.ID,
-			"error", err,
-			"raw_output", rawOutput)
-		return fmt.Errorf("architecti: parse: %w", err)
-	}
-
-	if len(actions) == 0 {
-		s.logger.Info("architecti: no action taken", "droplet", droplet.ID)
-		// New policy: 'do nothing' is never acceptable for a pooled droplet.
-		// If the agent returned an empty array for a pooled trigger, auto-file an
-		// ambiguity droplet so the situation is tracked and acted on by a human.
-		if droplet.Status == "pooled" {
-			s.logger.Warn("architecti: pooled trigger produced no action — auto-filing ambiguity droplet",
-				"droplet", droplet.ID)
-			fileAction := ArchitectiAction{
-				Action: "file",
-				Repo:   droplet.Repo,
-				Title:  fmt.Sprintf("Architecti: ambiguous pooled droplet %s — no action taken", droplet.ID),
-				Description: fmt.Sprintf(
-					"Architecti could not determine what action to take for pooled droplet %s. "+
-						"Manual review is required.",
-					droplet.ID),
-				Complexity: "standard",
-				Reason:     fmt.Sprintf("pooled droplet %s produced no action from Architecti", droplet.ID),
-			}
-			if err := s.architectiFile(fileAction); err != nil {
-				s.logger.Error("architecti: auto-file ambiguity droplet failed",
-					"droplet", droplet.ID, "error", err)
-			}
-		}
-		return nil
-	}
-
-	s.logger.Info("architecti: dispatching actions",
-		"droplet", droplet.ID,
-		"count", len(actions))
-	return s.dispatchArchitectiActions(ctx, actions, repoByDroplet)
-}
-
 // buildArchitectiSnapshot assembles a comprehensive system state document for
 // the Architecti agent. Returns the snapshot text and a map of dropletID→repo
 // used when looking up clients during action dispatch.
-func (s *Castellarius) buildArchitectiSnapshot(ctx context.Context, trigger *cistern.Droplet, config aqueduct.ArchitectiConfig) (string, map[string]string) {
+func (s *Castellarius) buildArchitectiSnapshot(ctx context.Context, trigger *cistern.Droplet, maxFilesPerRun int) (string, map[string]string) {
 	var sb strings.Builder
 	repoByDroplet := make(map[string]string)
 
@@ -346,7 +152,7 @@ func (s *Castellarius) buildArchitectiSnapshot(ctx context.Context, trigger *cis
 
 	// --- Configuration ---
 	sb.WriteString("## Configuration\n")
-	fmt.Fprintf(&sb, "- MaxFilesPerRun: %d\n", config.MaxFilesPerRun)
+	fmt.Fprintf(&sb, "- MaxFilesPerRun: %d\n", maxFilesPerRun)
 	fmt.Fprintf(&sb, "- Poll interval: %s\n\n", s.pollInterval)
 
 	// --- Cistern Reference ---
@@ -517,17 +323,6 @@ func (s *Castellarius) architectiRestart(action ArchitectiAction, repoByDroplet 
 		return fmt.Errorf("restart: %w", err)
 	}
 
-	// Rate limit: at most 1 restart per droplet per 24h rolling window.
-	s.architectiRestartsMu.Lock()
-	if last, ok := s.architectiRestarts[action.DropletID]; ok && time.Since(last) < architectiRateLimitWindow {
-		s.architectiRestartsMu.Unlock()
-		s.logger.Info("architecti: restart rate-limited",
-			"droplet", action.DropletID,
-			"last_restart_ago", time.Since(last).Round(time.Second))
-		return nil
-	}
-	s.architectiRestartsMu.Unlock()
-
 	s.logger.Info("architecti: restarting droplet",
 		"droplet", action.DropletID,
 		"cataractae", action.Cataractae,
@@ -536,11 +331,6 @@ func (s *Castellarius) architectiRestart(action ArchitectiAction, repoByDroplet 
 	if err := client.Assign(action.DropletID, "", action.Cataractae); err != nil {
 		return err
 	}
-
-	// Record rate limit timestamp only after a successful Assign.
-	s.architectiRestartsMu.Lock()
-	s.architectiRestarts[action.DropletID] = time.Now()
-	s.architectiRestartsMu.Unlock()
 
 	// Write the restart note after a successful Assign so it only appears in
 	// history when the restart actually happened. The escalation check in
@@ -697,7 +487,7 @@ func (s *Castellarius) architectiRestartCastellarius(action ArchitectiAction) er
 	}
 
 	s.logger.Warn("architecti: restarting castellarius", "reason", action.Reason)
-	return s.architectiRestartCastellariusFn()
+	return defaultRestartCastellarius()
 }
 
 // architectiClient returns the client for the repo that owns the given droplet.
@@ -867,10 +657,10 @@ func architectiShellQuote(s string) string {
 // raw agent output bytes, the parsed/filtered actions (nil when dryRun or no
 // actions), and any error. When dryRun is true, raw output is returned without
 // parsing or dispatching.
-func (s *Castellarius) RunArchitectiAdHoc(ctx context.Context, trigger *cistern.Droplet, config aqueduct.ArchitectiConfig, dryRun bool) (snapshot string, rawOutput []byte, actions []ArchitectiAction, err error) {
-	snapshot, repoByDroplet := s.buildArchitectiSnapshot(ctx, trigger, config)
+func (s *Castellarius) RunArchitectiAdHoc(ctx context.Context, trigger *cistern.Droplet, maxFilesPerRun int, dryRun bool) (snapshot string, rawOutput []byte, actions []ArchitectiAction, err error) {
+	snapshot, repoByDroplet := s.buildArchitectiSnapshot(ctx, trigger, maxFilesPerRun)
 
-	rawOutput, err = s.architectiExecFn(ctx, snapshot)
+	rawOutput, err = s.defaultArchitectiExec(ctx, snapshot)
 	if err != nil {
 		return snapshot, nil, nil, fmt.Errorf("architecti: exec: %w", err)
 	}
@@ -879,7 +669,7 @@ func (s *Castellarius) RunArchitectiAdHoc(ctx context.Context, trigger *cistern.
 		return snapshot, rawOutput, nil, nil
 	}
 
-	actions, err = parseArchitectiOutput(rawOutput, config.MaxFilesPerRun)
+	actions, err = parseArchitectiOutput(rawOutput, maxFilesPerRun)
 	if err != nil {
 		return snapshot, rawOutput, nil, fmt.Errorf("architecti: parse: %w", err)
 	}

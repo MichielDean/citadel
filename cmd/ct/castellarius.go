@@ -614,17 +614,8 @@ Use --droplet <id> to provide a specific droplet as trigger context.`,
 			}
 		}
 
-		// Use ArchitectiConfig from cistern.yaml if present; otherwise apply
-		// sensible defaults so the command works even without architecti configured.
-		archCfg := aqueduct.ArchitectiConfig{
-			MaxFilesPerRun: 10,
-		}
-		if cfg.Architecti != nil {
-			archCfg = *cfg.Architecti
-		}
-
 		ctx := context.Background()
-		snapshot, rawOutput, actions, err := sched.RunArchitectiAdHoc(ctx, trigger, archCfg, architectiRunDryRun)
+		snapshot, rawOutput, actions, err := sched.RunArchitectiAdHoc(ctx, trigger, 10, architectiRunDryRun)
 		if err != nil {
 			return err
 		}

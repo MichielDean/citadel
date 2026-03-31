@@ -15,7 +15,6 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -129,47 +128,6 @@ type Castellarius struct {
 	droughtRunning   atomic.Bool
 	droughtStartedAt atomic.Pointer[time.Time]
 
-	// runArchitectiFn is invoked for pooled droplets when architecti
-	// is enabled. Defaults to s.runArchitecti; injectable for testing.
-	runArchitectiFn func(context.Context, *cistern.Droplet, aqueduct.ArchitectiConfig) error
-
-	// architectiQueue is the serial in-memory queue for Architecti invocations.
-	// Pooled transitions enqueue droplets here; a single background
-	// goroutine drains it serially — one droplet at a time. Buffered to avoid
-	// blocking observeRepo. Always non-nil after construction.
-	architectiQueue chan *cistern.Droplet
-
-	// architectiWg tracks the Architecti queue drainer goroutine for graceful
-	// shutdown. drainInFlight waits on this before returning.
-	architectiWg sync.WaitGroup
-
-	// architectiRunning is a global singleton guard: at most one Architecti
-	// session runs at a time across all droplets. Set before spawning, cleared
-	// on exit. When true, new triggers skip execution.
-	architectiRunning atomic.Bool
-
-	// architectiStuckRouting tracks consecutive routing-failure counts per
-	// droplet ID. When a droplet's in_progress outcome cannot be advanced
-	// (Assign error), the counter increments. At threshold the droplet is
-	// enqueued for Architecti. Protected by architectiStuckRoutingMu.
-	architectiStuckRouting   map[string]int
-	architectiStuckRoutingMu sync.Mutex
-
-	// architectiRestarts tracks the most recent restart action per droplet ID
-	// to enforce the 24h rate limit (at most 1 restart per droplet per 24h).
-	// Protected by architectiRestartsMu.
-	architectiRestarts   map[string]time.Time
-	architectiRestartsMu sync.Mutex
-
-	// architectiExecFn runs the Architecti agent with the given context document
-	// and returns the raw output bytes. The default implementation resolves the
-	// system prompt file and runs claude in a tmux session named "architecti".
-	// Injectable for testing.
-	architectiExecFn func(ctx context.Context, contextDoc string) ([]byte, error)
-
-	// architectiRestartCastellariusFn executes the restart_castellarius action.
-	// Default: systemctl --user restart castellarius. Injectable for testing.
-	architectiRestartCastellariusFn func() error
 }
 
 // isSupervisedProcess returns true when the Castellarius is being managed by
@@ -270,13 +228,7 @@ func New(config aqueduct.AqueductConfig, dbPath string, runner CataractaeRunner,
 		ghMergeFn:              defaultGhMerge,
 		dispatchLoop:           newDispatchLoopTracker(),
 		lastStallNoted:         make(map[string]time.Time),
-		architectiQueue:        make(chan *cistern.Droplet, architectiQueueCap),
-		architectiStuckRouting: make(map[string]int),
-		architectiRestarts:     make(map[string]time.Time),
 	}
-	s.runArchitectiFn = s.runArchitecti
-	s.architectiExecFn = s.defaultArchitectiExec
-	s.architectiRestartCastellariusFn = defaultRestartCastellarius
 	for _, o := range opts {
 		o(s)
 	}
@@ -369,13 +321,7 @@ func NewFromParts(
 		ghMergeFn:              defaultGhMerge,
 		dispatchLoop:           newDispatchLoopTracker(),
 		lastStallNoted:         make(map[string]time.Time),
-		architectiQueue:        make(chan *cistern.Droplet, architectiQueueCap),
-		architectiStuckRouting: make(map[string]int),
-		architectiRestarts:     make(map[string]time.Time),
 	}
-	s.runArchitectiFn = s.runArchitecti
-	s.architectiExecFn = s.defaultArchitectiExec
-	s.architectiRestartCastellariusFn = defaultRestartCastellarius
 	for _, o := range opts {
 		o(s)
 	}
@@ -449,10 +395,6 @@ func (s *Castellarius) Run(ctx context.Context) error {
 	s.ensureCataractaeIntegrity()
 
 	s.recoverInProgress()
-
-	// Start the serial Architecti queue drainer. It runs for the lifetime of
-	// the scheduler and processes one droplet at a time.
-	s.startArchitectiQueue(ctx)
 
 	if s.cleanupInterval > 0 {
 		go func() {
@@ -554,20 +496,6 @@ func (s *Castellarius) Run(ctx context.Context) error {
 func (s *Castellarius) drainInFlight() error {
 	drainStart := time.Now()
 
-	// Wait for in-flight architecti goroutines to finish or time out.
-	architectiDone := make(chan struct{})
-	go func() {
-		s.architectiWg.Wait()
-		close(architectiDone)
-	}()
-	architectiTimer := time.NewTimer(s.drainTimeout)
-	defer architectiTimer.Stop()
-	select {
-	case <-architectiDone:
-	case <-architectiTimer.C:
-		s.logger.Warn("drain timeout: in-flight architecti goroutines still running")
-	}
-
 	ids, err := s.stuckSessionIDs()
 	if err != nil {
 		// Conservative: treat a query failure as sessions still running.
@@ -580,10 +508,8 @@ func (s *Castellarius) drainInFlight() error {
 	}
 
 	// Use the time remaining from the shared drainTimeout budget rather than
-	// starting a fresh drainTimeout for the session drain.  Without this, the
-	// total shutdown time can reach 2×drainTimeout when architecti goroutines
-	// consume a significant portion of the budget.  Clamp to a minimum of 1s
-	// so sessions always get a fair chance to signal an outcome.
+	// starting a fresh drainTimeout for the session drain.  Clamp to a minimum
+	// of 1s so sessions always get a fair chance to signal an outcome.
 	remaining := s.drainTimeout - time.Since(drainStart)
 	if remaining < time.Second {
 		remaining = time.Second
@@ -943,8 +869,6 @@ func (s *Castellarius) observeRepo(_ context.Context, repo aqueduct.RepoConfig) 
 			if err := client.Pool(item.ID, reason); err != nil {
 				s.logger.Error("observe: pool failed", "droplet", item.ID, "error", err)
 			}
-			// Pooled transition: enqueue for Architecti (note-based dedup prevents repeat).
-			s.tryEnqueueArchitecti(client, item)
 			continue
 		}
 
@@ -957,10 +881,6 @@ func (s *Castellarius) observeRepo(_ context.Context, repo aqueduct.RepoConfig) 
 			keepBranch := strings.ToLower(next) != "done"
 			cleanupBranch(keepBranch)
 			s.handleTerminal(client, item.ID, next, step.Name)
-			// Pooled/human terminals become pooled: enqueue for Architecti.
-			if keepBranch {
-				s.tryEnqueueArchitecti(client, item)
-			}
 			continue
 		}
 
@@ -968,20 +888,6 @@ func (s *Castellarius) observeRepo(_ context.Context, repo aqueduct.RepoConfig) 
 		// The feature branch is kept so the next cycle can resume incrementally.
 		if err := client.Assign(item.ID, "", next); err != nil {
 			s.logger.Error("observe: advance step failed", "droplet", item.ID, "next", next, "error", err)
-			// Track consecutive routing failures. When the threshold is reached
-			// the item is treated as stuck-routing and enqueued for Architecti.
-			s.architectiStuckRoutingMu.Lock()
-			s.architectiStuckRouting[item.ID]++
-			count := s.architectiStuckRouting[item.ID]
-			s.architectiStuckRoutingMu.Unlock()
-			if count >= architectiStuckRoutingThreshold {
-				s.tryEnqueueArchitecti(client, item)
-			}
-		} else {
-			// Successful advance: clear any stuck-routing counter for this droplet.
-			s.architectiStuckRoutingMu.Lock()
-			delete(s.architectiStuckRouting, item.ID)
-			s.architectiStuckRoutingMu.Unlock()
 		}
 	}
 
