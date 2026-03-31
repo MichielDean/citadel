@@ -82,6 +82,11 @@ Phase 1: Prior issue 2 (QA) resolved — 20+ tests covering all retained archite
 
 <available_skills>
   <skill>
+    <name>cistern-github</name>
+    <description>---</description>
+    <location>/home/lobsterdog/.cistern/skills/cistern-github/SKILL.md</location>
+  </skill>
+  <skill>
     <name>cistern-droplet-state</name>
     <description>Manage droplet state in the Cistern agentic pipeline using the `ct` CLI.</description>
     <location>/home/lobsterdog/.cistern/skills/cistern-droplet-state/SKILL.md</location>
@@ -90,11 +95,6 @@ Phase 1: Prior issue 2 (QA) resolved — 20+ tests covering all retained archite
     <name>cistern-git</name>
     <description>---</description>
     <location>/home/lobsterdog/.cistern/skills/cistern-git/SKILL.md</location>
-  </skill>
-  <skill>
-    <name>cistern-github</name>
-    <description>---</description>
-    <location>/home/lobsterdog/.cistern/skills/cistern-github/SKILL.md</location>
   </skill>
 </available_skills>
 
