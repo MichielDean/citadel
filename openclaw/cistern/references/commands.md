@@ -181,43 +181,6 @@ drought hooks: running (2m)
 
 The health file is written atomically to `~/.cistern/castellarius.health` after each poll cycle completes. It includes liveness tracking fields: `droughtRunning` (boolean) and `droughtStartedAt` (RFC3339 timestamp or null).
 
-## Architecti (Autonomous Recovery)
-
-```bash
-ct architecti run                                    # Invoke Architecti on demand
-ct architecti run --dry-run                         # Inspect snapshot and proposed actions
-ct architecti run --droplet <id>                    # Use a specific droplet as trigger context
-ct architecti run --dry-run --droplet <id>         # Combine flags
-```
-
-**Architecti** is the autonomous recovery agent that examines pooled droplets and takes corrective action. Normally it is triggered automatically by the scheduler when droplets exceed the pool threshold. This command allows operators to invoke it manually for debugging or immediate intervention.
-
-### Flags
-
-| Flag | Purpose |
-|------|---------|
-| `--dry-run` | Inspect the snapshot and proposed actions without dispatching (useful for testing) |
-| `--droplet <id>` | Use a specific droplet as the trigger context (default: synthetic droplet for ad-hoc runs) |
-
-### Output
-
-**Normal mode** — displays a summary of dispatched actions:
-```
-Architecti completed. 3 action(s) dispatched:
-  restart  droplet-abc      implement          (reason: exceeded pooling threshold)
-  file     repo-name        Urgent fix needed  (reason: critical diagnostics)
-  note     droplet-def                         (reason: recovery attempt logged)
-```
-
-**Dry-run mode** — displays the snapshot and proposed actions without dispatching:
-```
-=== Snapshot ===
-[system state snapshot...]
-
-=== Proposed Actions (dry-run — not dispatched) ===
-[JSON array of proposed actions...]
-```
-
 ## Cataractae (Pipeline Stages)
 
 ```bash

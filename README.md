@@ -428,12 +428,6 @@ dashboard_font_family: 'Liberation Mono, DejaVu Sans Mono, Menlo, Consolas, mono
 #   per_token_requests: 120
 #   window: 1m
 
-# Architecti: autonomous diagnosis for pooled droplets (always active).
-# Triggered by state-machine transitions; no polling threshold required.
-# Omit to use built-in defaults.
-architecti:
-  max_files_per_run: 100
-
 # Drought protocols run when the cistern goes idle
 drought_hooks:
   - name: sync-workflow
@@ -674,88 +668,6 @@ When a dispatch loop is detected, the Castellarius attempts ordered self-recover
 After **3 failed self-fix attempts**, the droplet is pooled with a note describing the failure. Use `ct droplet show <id>` to inspect the recovery history, then `ct droplet restart <id> --cataractae <step>` to re-enter once the underlying issue is resolved.
 
 Recovery attempts are attached as notes on the droplet and logged by the Castellarius with the prefix `dispatch-loop recovery:`. A successful agent spawn resets all counters — a droplet that recovers cleanly leaves no permanent trace.
-
----
-
-## Architecti: Autonomous Diagnosis Agent
-
-The Architecti is an autonomous recovery operator that diagnoses pooled droplets and proposes corrective actions. It is always active — no configuration required to enable it.
-
-### When it runs
-
-A droplet triggers the Architecti exactly once per bad-state transition:
-- When the Castellarius transitions a droplet to **pooled** (no-route pool, terminal pooled/human)
-- When a droplet is **stuck routing** (in_progress with outcome set but failing to advance)
-- Each bad-state transition triggers **exactly one** Architecti invocation — never more. An invocation note is written before the agent runs, so the guarantee survives restarts.
-
-### What it does
-
-The Architecti receives a comprehensive snapshot of the Castellarius state (all droplets, sessions, infrastructure health, recent logs) and outputs a JSON array of recovery actions:
-
-```json
-[
-  {"action": "restart", "droplet_id": "ci-xxxx", "cataractae": "implement", "reason": "..."},
-  {"action": "cancel", "droplet_id": "ci-xxxx", "reason": "..."},
-  {"action": "file", "repo": "cistern", "title": "...", "description": "...", "reason": "..."},
-  {"action": "note", "droplet_id": "ci-xxxx", "body": "...", "reason": "..."},
-  {"action": "restart_castellarius", "reason": "..."}
-]
-```
-
-| Action | Purpose | When to use |
-|---|---|---|
-| **restart** | Restart a droplet at a named cataractae | Transient failures: orphaned sessions, infrastructure blips, timeouts |
-| **cancel** | Mark a droplet as cancelled (irrecoverable) | Work is contradictory, target no longer exists, or redundant |
-| **file** | Create a new droplet for a structural issue | Repeatable bugs in the pipeline itself (not application bugs) |
-| **note** | Add a diagnostic note without changing state | Record observations for human review |
-| **restart_castellarius** | Restart the Castellarius process | Only when health file shows the scheduler is genuinely hung (last tick > 5× poll interval) |
-
-### Configuration
-
-The Architecti runs automatically with sensible defaults. Add an optional `architecti` section to `~/.cistern/cistern.yaml` to tune behaviour:
-
-```yaml
-architecti:
-  max_files_per_run: 100
-```
-
-**Key fields:**
-- `max_files_per_run`: Maximum number of recovery actions (including file creations) per invocation. Default: 10.
-
-Omit the section entirely to use built-in defaults.
-
-### Manual Invocation
-
-Invoke Architecti on demand for debugging or immediate intervention:
-
-```bash
-# Run Architecti immediately
-ct architecti run
-
-# Inspect snapshot and proposed actions without dispatching
-ct architecti run --dry-run
-
-# Use a specific droplet as trigger context
-ct architecti run --droplet <id>
-
-# Combine flags
-ct architecti run --dry-run --droplet <id>
-```
-
-**Use cases:**
-- **Debugging** — Use `--dry-run` to inspect the snapshot and proposed actions before dispatching
-- **Immediate intervention** — Run `ct architecti run` manually when droplets need recovery outside the automatic schedule
-- **Testing** — Verify Architecti configuration and behavior before enabling automatic triggers
-
-See `ct architecti run --help` for full details, or check the [Command Reference](openclaw/cistern/references/commands.md#architecti-autonomous-recovery) for examples.
-
-### Rate limits and safety
-
-- Max 1 `restart` per droplet per 24h rolling window (enforced by Castellarius)
-- Max `max_files_per_run` recovery actions per invocation
-- Unknown action types are safely ignored
-- Actions on delivered or cancelled droplets are rejected
-- All actions are logged and noted on the droplet for audit trail
 
 ---
 

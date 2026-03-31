@@ -1,14 +1,14 @@
 # Context
 
-## Item: ci-7x196
+## Item: ci-japrh
 
-**Title:** Detect agents that exit inside a live tmux session without signaling outcome
+**Title:** Remove Architecti system prompt, docs, and CHANGELOG references
 **Status:** in_progress
 **Priority:** 2
 
 ### Description
 
-The current `isTmuxAlive` check in `scheduler.go` calls `tmux has-session` — this returns true even when the tmux session is alive but the claude process inside it has already exited (e.g. OOM kill, hard token limit, or non-zero exit), leaving a shell prompt in the pane. These sessions are invisible to the heartbeat and stay in_progress indefinitely until the session eventually closes. Fix: extend `isTmuxAlive` (or add a companion `isAgentAlive(sessionID string) bool`) that uses `tmux list-panes -t <session> -F '#{pane_pid}'` to get the pane's root PID, then checks whether any child process matching `claude` is still alive under that PID (e.g. `kill -0` or `/proc/<pid>/cmdline`). In `heartbeatRepo`, when `isTmuxAlive` is true but `isAgentAlive` is false and there is no outcome, kill the orphaned tmux session (`tmux kill-session`), add a diagnostic note (`"Session zombie detected: tmux alive but claude process dead. Session killed. Re-dispatching. [<timestamp>]"`) via `client.AddNote`, then reset the droplet to open. Acceptance: (1) `isAgentAlive` correctly distinguishes a live claude process from a shell-only pane in unit tests with mock tmux output; (2) heartbeat integration test covers the tmux-alive-process-dead path: note is written and droplet is reset; (3) existing path (tmux fully dead) is unchanged and still covered by tests from the prior droplet.
+Companion to the scheduler code removal droplet. Clean up all non-code Architecti artifacts: (1) Delete cataractae/architecti/SYSTEM_PROMPT.md. (2) Remove Architecti section from README.md. (3) Remove Architecti entries from CHANGELOG.md (or mark as removed). (4) Remove Architecti references from CONTEXT.md. (5) Remove architecti field from cistern.yaml documentation/comments. (6) Update any skill references that mention architecti. Acceptance: grep -r architecti across the repo returns only the ct architecti CLI command code and its tests.
 
 ## Current Step: implement
 
@@ -39,16 +39,16 @@ The current `isTmuxAlive` check in `scheduler.go` calls `tmux has-session` — t
 When your work is done, signal your outcome using the `ct` CLI:
 
 **Pass (work complete, move to next step):**
-    ct droplet pass ci-7x196
+    ct droplet pass ci-japrh
 
 **Recirculate (needs rework — send back upstream):**
-    ct droplet recirculate ci-7x196
-    ct droplet recirculate ci-7x196 --to implement
+    ct droplet recirculate ci-japrh
+    ct droplet recirculate ci-japrh --to implement
 
 **Pool (cannot currently proceed):**
-    ct droplet pool ci-7x196
+    ct droplet pool ci-japrh
 
 Add notes before signaling:
-    ct droplet note ci-7x196 "What you did / found"
+    ct droplet note ci-japrh "What you did / found"
 
 The `ct` binary is on your PATH.

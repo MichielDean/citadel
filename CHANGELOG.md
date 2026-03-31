@@ -23,40 +23,6 @@ The heartbeat now detects a second class of zombie droplets: sessions where the 
 
 **Acceptance criteria met**: (1) `isAgentAlive()` correctly distinguishes live claude from shell-only panes in unit tests; (2) heartbeat integration test covers the agent-dead path with session kill, note write, and droplet reset; (3) age guard prevents false positives on startup; (4) existing tmux-dead path unchanged; (5) all tests pass.
 
-### Architecti: scan for pre-existing bad states on startup and each poll cycle (ci-4kvd7)
-
-Droplets that are already in stagnant or blocked state when the Castellarius starts are now automatically enqueued for Architecti recovery. Additionally, the scheduler scans for newly stagnant droplets on each poll cycle to catch transitions that escaped state-change detection.
-
-**Key changes:**
-- **Startup scan**: On Castellarius startup, `scanBadStates()` scans all repos for stagnant/blocked droplets and enqueues any without an existing `[architecti]` note for recovery
-- **Poll cycle scan**: On each scheduler tick (configurable interval), the same scan runs to catch droplets that transitioned to bad state outside the normal state-change trigger
-- **Note-based deduplication**: Droplets are only enqueued once — if a `[architecti]` note already exists, the droplet is skipped, preventing repeated invocations for the same stuck state
-- **No user configuration required**: Scanning is automatic and always active
-
-**Impact**: Pre-existing stagnant droplets no longer languish indefinitely after a Castellarius restart. Newly stagnant droplets that slip through transition detection are now caught and queued for recovery.
-
-**Acceptance criteria met**: Existing bad-state droplets are enqueued on startup; newly stagnant droplets are caught each poll cycle; note-based dedup prevents re-enqueueing the same state.
-
-### Architecti snapshot: include full note history for all droplets (ci-jmw48)
-
-The Architecti snapshot now includes the complete note history for every droplet, giving the recovery agent full visibility into the decision trail and prior recovery attempts.
-
-**Key changes:**
-- **Full note history**: `buildArchitectiSnapshot()` now fetches and renders all notes for stagnant, blocked, in-progress, and stuck-routing droplets
-- **Chronological ordering**: Notes are displayed oldest-first so Architecti sees the complete timeline of attempts and decisions
-- **Note metadata**: Each note includes the cataractae name and RFC3339 timestamp for full audit trail visibility
-- **Graceful error handling**: If `GetNotes()` fails for a droplet, the error is logged as a warning and the snapshot continues — a missing notes block is preferable to aborting the entire snapshot
-- **Omission of empty notes**: Droplets with no notes produce no notes subsection, keeping the snapshot concise
-
-**Format per droplet:**
-```
-#### ci-xxxx
-- [qa] 2024-01-15T10:00:00Z: criterion not met: response body must include X-Request-ID header
-- [architecti] 2024-01-15T11:00:00Z: Architecti restart → implement: QA rejected: '...'
-```
-
-**Impact**: Architecti now has complete visibility into why droplets are stuck and whether previous recovery attempts have been tried, enabling more informed decisions about restart vs. cancel+file actions and preventing repeat failures from consuming resources endlessly.
-
 ### Heartbeat: add diagnostic notes on zombie session reset (ci-p6vhy)
 
 When the heartbeat detects a dead tmux session (zombie droplet with no outcome recorded) and resets it to open for re-dispatch, a diagnostic note is now recorded in the droplet history before the reset occurs.
@@ -76,7 +42,7 @@ When the heartbeat detects a dead tmux session (zombie droplet with no outcome r
 
 This fix addresses a data-loss bug in the droplet lifecycle where commits from prior implementation cycles were silently discarded when a droplet was restarted after going stagnant.
 
-**Problem**: When a droplet was escalated to stagnant (no-route escalation or terminal statuses like blocked/human/escalate), the Castellarius unconditionally deleted the feature branch via `git branch -D`. When Architecti restarted the droplet, `prepareDropletWorktree` had no existing branch to attach to and created a fresh one from `origin/main`, silently discarding all commits from the prior cycle. Reviewers repeatedly saw "branch identical to main" after a restart.
+**Problem**: When a droplet was escalated to stagnant (no-route escalation or terminal statuses like blocked/human/escalate), the Castellarius unconditionally deleted the feature branch via `git branch -D`. When the droplet was restarted, `prepareDropletWorktree` had no existing branch to attach to and created a fresh one from `origin/main`, silently discarding all commits from the prior cycle. Reviewers repeatedly saw "branch identical to main" after a restart.
 
 **Fix**: Added `keepBranch bool` parameter to internal function `removeDropletWorktreeWithLogger()`:
 - When `keepBranch=true`: Detaches the worktree directory but **preserves** the feature branch in the primary clone
@@ -89,30 +55,9 @@ This fix addresses a data-loss bug in the droplet lifecycle where commits from p
 
 **Result**: When a droplet is restarted after stagnation, `prepareDropletWorktree` reattaches to the existing feature branch (no `-b` flag), and all prior commits are intact. No more silent data loss.
 
-**Impact**: Stagnant droplet recovery (via Architecti restart or manual restart) now preserves commits from the prior cycle. Combined with the Architecti aggressive restart policy, failed droplets can now be recovered without requiring implementers to re-do their work.
+**Impact**: Stagnant droplet recovery (via automatic or manual restart) now preserves commits from the prior cycle. Failed droplets can now be recovered without requiring implementers to re-do their work.
 
 **Testing**: Unit tests verify stagnant cleanup (branch preserved), done/cancelled cleanup (branch deleted), and worktree resume cycle (commits intact after reattachment).
-
-### Architecti: aggressive recovery posture — restart by default, file systemic issues proactively (ci-wnxtn)
-
-Architecti has been reconfigured from a conservative to aggressive recovery posture. It now defaults to restarting stagnant droplets, proactively files systemic issues affecting multiple droplets, and decisively cancels droplets that fail repeatedly rather than attempting endless restarts.
-
-**Key changes:**
-- **Restart is default**: Any identifiable, transient failure now triggers a restart (rate-limited to once per droplet per 24h). Note alone is only valid when the cause requires human decision.
-- **Proactive systemic filing**: When the snapshot reveals a pattern affecting multiple droplets (e.g., broken CI check, missing tool, systematic routing failure), Architecti files a new bug droplet to fix the root cause without waiting for human notice.
-- **Repeat failure policy**: If a droplet has been restarted by Architecti before and stagnates again with the same failure, Architecti cancels it and files a bug droplet rather than attempting another restart — preventing infinite loops.
-- **No-action policy**: "Do nothing" is never acceptable for a droplet in a bad state. Every invocation must result in at least one action: restart, cancel, file, or a note that explicitly explains why action is impossible and what human decision is needed.
-
-**Decision order** (updated):
-1. **Restart** — default for transient failures (was #4, now #1)
-2. **Cancel + File** — for repeat failures (new policy)
-3. **File** — for structural issues visible in the snapshot (new proactive requirement)
-4. **Note** — only when action is impossible, with explicit human-decision justification (was #2)
-5. **Restart castellarius** — scheduler hung detection (unchanged, last resort)
-
-**Impact**: Stagnant droplets are now recovered more aggressively rather than languishing with only notes. A systemic issue (like a broken test suite) that blocks multiple PRs will now be automatically filed as a fix droplet instead of requiring manual discovery.
-
-**Acceptance criteria met**: Decision order leads with restart; cancel+file enforces repeat-failure policy; proactive filing section added; no-action policy requires explicit justification.
 
 ### ct droplet pass/block/recirculate: correctly update status when called outside a session (ci-k6w66)
 
@@ -379,40 +324,6 @@ Five action keybindings are now available in the detail panel view without leavi
 - `s` — **Set Step** — Jump to a different pipeline step; enter step name and press Enter
 
 All actions dispatch directly to `cistern.Client` methods without spawning CLI subcommands. After any action completes, the detail view re-fetches and displays updated droplet state. Destructive actions (cancel, escalate) show an inline confirmation overlay. Text-entry actions (restart, add-note, set-step) open a single-line text input overlay.
-
-### Architecti: state-machine trigger with serial queue, one-to-one guarantee (ci-lsn6b)
-
-The Architecti trigger mechanism has been replaced: instead of a heartbeat polling `threshold_minutes`, the Castellarius now enqueues droplets at the moment of each stagnant/blocked state transition with a strict one-to-one guarantee.
-
-**Trigger mechanism:**
-- When `observeRepo` transitions a droplet to stagnant (no-route escalation, terminal blocked/human/escalate), it immediately calls `tryEnqueueArchitecti`
-- Before enqueueing, the scheduler checks for an existing `[architecti] enqueued:` note. If one exists, it skips — no re-enqueue
-- If none exists, the invocation note is written **before** the droplet is placed in the queue (crash-safe guarantee)
-- Subsequent poll cycles that see the same stagnant droplet skip it via the note check
-- Stuck-routing droplets (in_progress with outcome but Assign failing repeatedly) are enqueued after `architectiStuckRoutingThreshold` consecutive failures
-
-**Serial queue:**
-- A single buffered in-memory channel (capacity 64) holds pending droplets
-- A single background goroutine drains it serially — one invocation at a time, no concurrent Architecti runs
-- Duplicate droplet IDs in the queue (narrow race between note write and channel send) are discarded by the drainer
-
-**Restart behavior:**
-- On restart the queue starts empty; droplets with existing invocation notes are skipped at the note-check step — no re-invocation
-
-**Config removal:**
-- `threshold_minutes` and `enabled` removed from `ArchitectiConfig` and `cistern.yaml`
-- Architecti is always active; no enable flag or threshold required
-- Optional `architecti:` section remains for tuning `max_files_per_run` (default: 10)
-
-```yaml
-# Optional — omit to use defaults
-architecti:
-  max_files_per_run: 100
-```
-
-### Architecti: autonomous diagnosis trigger for stagnant droplets (ci-khkml)
-
-The Castellarius now supports automatic invocation of the Architecti autonomous diagnosis agent when droplets become stagnant or blocked.
 
 ### Adversarial reviewer: full codebase access, orphaned code check (ci-hvskp)
 
