@@ -90,7 +90,15 @@ Examples:
 				return err
 			}
 			defer c.Close()
-			return runFilterNonInteractive(c, proposals, repo, priority)
+			for _, p := range proposals {
+				cx := complexityToInt(p.Complexity)
+				item, err := c.AddDroplet(repo, p.Title, p.Description, externalRef, priority, cx)
+				if err != nil {
+					return fmt.Errorf("add droplet: %w", err)
+				}
+				fmt.Println(item.ID)
+			}
+			return nil
 		}
 
 		// Direct path: add the droplet immediately with the external reference.
