@@ -33,7 +33,7 @@ source "${SCRIPT_DIR}/test/installer/helpers.sh"
 # Usage: install_system_service <home_dir>
 install_system_service() {
     local home_dir="$1"
-    docker exec -i --env CT_NO_ASCII_LOGO=1 "${CONTAINER_NAME}" \
+    docker exec -i "${CONTAINER_NAME}" \
         bash -s -- "${home_dir}" << 'INSTALL_SCRIPT'
 #!/bin/bash
 HOME_DIR="$1"
@@ -52,7 +52,6 @@ KillMode=mixed
 KillSignal=SIGTERM
 StandardOutput=journal
 StandardError=journal
-Environment=CT_NO_ASCII_LOGO=1
 Environment=HOME=${HOME_DIR}
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
@@ -157,7 +156,7 @@ test_fresh_install() {
     exec_in_container bash -c "rm -rf '${home_dir}' && mkdir -p '${home_dir}'" || return 1
 
     # When: ct init bootstraps the installation.
-    exec_in_container env HOME="${home_dir}" CT_NO_ASCII_LOGO=1 ct init \
+    exec_in_container env HOME="${home_dir}" ct init \
         >/dev/null 2>&1 || return 1
 
     # Add a placeholder API key so ct doctor's ANTHROPIC_API_KEY check passes.
@@ -175,7 +174,7 @@ test_fresh_install() {
 
     # Use ct doctor --fix to create cistern.db before the service starts.
     exec_in_container env HOME="${home_dir}" ANTHROPIC_API_KEY=sk-ant-test-placeholder \
-        CT_NO_ASCII_LOGO=1 ct doctor --fix >/dev/null 2>&1 || true
+        ct doctor --fix >/dev/null 2>&1 || true
 
     # Install and start the system service.
     install_system_service "${home_dir}" || return 1
@@ -190,7 +189,7 @@ test_fresh_install() {
 
     # Then: ct doctor exits 0 (all checks pass with the configured environment).
     exec_in_container env HOME="${home_dir}" ANTHROPIC_API_KEY=sk-ant-test-placeholder \
-        CT_NO_ASCII_LOGO=1 ct doctor >/dev/null 2>&1
+        ct doctor >/dev/null 2>&1
 }
 
 # test_upgrade verifies that re-running ct init over a prior-version layout
@@ -224,7 +223,7 @@ test_upgrade() {
     # When: ct init runs over the existing installation.
     # writeFileIfAbsent skips cistern.yaml (already present) but creates any
     # missing files (aqueduct.yaml, start-castellarius.sh, cataractae files).
-    exec_in_container env HOME="${home_dir}" CT_NO_ASCII_LOGO=1 ct init \
+    exec_in_container env HOME="${home_dir}" ct init \
         >/dev/null 2>&1 || return 1
 
     # Then: stale_old_key must still be present — ct init must not overwrite
@@ -241,7 +240,7 @@ test_upgrade() {
 
     # Create cistern.db via ct doctor --fix so the service can open it.
     exec_in_container env HOME="${home_dir}" ANTHROPIC_API_KEY=sk-ant-old-key \
-        CT_NO_ASCII_LOGO=1 ct doctor --fix >/dev/null 2>&1 || true
+        ct doctor --fix >/dev/null 2>&1 || true
 
     # (Re-)install the service unit pointing at the upgrade home and restart it.
     # This simulates "service restarts cleanly" after the upgrade.
@@ -254,7 +253,7 @@ test_upgrade() {
 
     # Then: ct doctor still exits 0 after the upgrade.
     exec_in_container env HOME="${home_dir}" ANTHROPIC_API_KEY=sk-ant-old-key \
-        CT_NO_ASCII_LOGO=1 ct doctor >/dev/null 2>&1
+        ct doctor >/dev/null 2>&1
 }
 
 # test_missing_credentials verifies that the service starts cleanly without
@@ -269,7 +268,7 @@ test_missing_credentials() {
 
     # Given: isolated home — ct init creates the layout, then we remove env.
     exec_in_container bash -c "rm -rf '${home_dir}' && mkdir -p '${home_dir}'" || return 1
-    exec_in_container env HOME="${home_dir}" CT_NO_ASCII_LOGO=1 ct init \
+    exec_in_container env HOME="${home_dir}" ct init \
         >/dev/null 2>&1 || return 1
 
     # Remove the credential file to simulate the absent-env scenario.
@@ -284,7 +283,7 @@ test_missing_credentials() {
     " || return 1
 
     # Create cistern.db via ct doctor --fix so the service can open it.
-    exec_in_container env HOME="${home_dir}" CT_NO_ASCII_LOGO=1 \
+    exec_in_container env HOME="${home_dir}" \
         ct doctor --fix >/dev/null 2>&1 || true
 
     # Install and start the system service.
@@ -297,7 +296,7 @@ test_missing_credentials() {
 
     # Then: ct doctor exits 0 — no ANTHROPIC_API_KEY required, OAuth check skips when
     # no credentials file is present.
-    exec_in_container env HOME="${home_dir}" CT_NO_ASCII_LOGO=1 \
+    exec_in_container env HOME="${home_dir}" \
         ct doctor >/dev/null 2>&1
 }
 

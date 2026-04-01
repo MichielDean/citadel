@@ -65,7 +65,7 @@ pass "systemd_multi_user_target"
 # Given: ct binary copied into the image at /usr/local/bin/ct
 # When:  running `ct version`
 # Then:  exits 0 and produces output
-if ct_out=$(CT_NO_ASCII_LOGO=1 ct version 2>&1); then
+if ct_out=$(ct version 2>&1); then
     pass "ct_binary_version"
 else
     fail "ct_binary_version" "${ct_out}"
@@ -110,7 +110,7 @@ fi
 # When:  running `ct init`
 # Then:  exits 0 and creates ~/.cistern/cistern.yaml
 export HOME=/root
-if init_out=$(CT_NO_ASCII_LOGO=1 ct init 2>&1); then
+if init_out=$(ct init 2>&1); then
     if [ -f "${HOME}/.cistern/cistern.yaml" ]; then
         pass "ct_init_creates_config"
     else
@@ -126,7 +126,7 @@ fi
 # Then:  doctor output contains "✓ claude CLI found" (success prefix only)
 # Note:  doctor exits non-zero when other checks fail (e.g. gh not authenticated);
 #        that is expected. We only care that the claude check itself passes.
-doctor_out=$(CT_NO_ASCII_LOGO=1 ct doctor 2>&1 || true)
+doctor_out=$(ct doctor 2>&1 || true)
 if echo "${doctor_out}" | grep -q '✓.*claude CLI found'; then
     pass "ct_doctor_claude_found"
 else
@@ -195,7 +195,7 @@ _reset_scenario_state
 # Given: no ~/.cistern present (verified by _reset above).
 
 # When: run ct init to bootstrap the directory structure.
-if ! CT_NO_ASCII_LOGO=1 ct init >/dev/null; then
+if ! ct init >/dev/null; then
     fail "fresh_install_ct_init" "ct init failed"
 else
     # Install skill stubs so ct castellarius start and ct doctor pass validation.
@@ -214,7 +214,7 @@ else
 
         # Then: ct doctor exits 0 — no ANTHROPIC_API_KEY required for claude provider.
         # OAuth token check skips silently when no credentials file is present.
-        _doctor_out=$(CT_NO_ASCII_LOGO=1 ct doctor 2>&1) && _doctor_exit=0 || _doctor_exit=$?
+        _doctor_out=$(ct doctor 2>&1) && _doctor_exit=0 || _doctor_exit=$?
         if [ "${_doctor_exit}" -eq 0 ]; then
             pass "fresh_install_ct_doctor_passes"
         else
@@ -238,7 +238,7 @@ echo "=== Scenario: No credentials — service starts cleanly ==="
 
 _reset_scenario_state
 
-if ! CT_NO_ASCII_LOGO=1 ct init >/dev/null; then
+if ! ct init >/dev/null; then
     fail "no_creds_ct_init" "ct init failed"
 else
     _install_skill_stubs
@@ -259,7 +259,7 @@ else
     fi
 
     # Then: ct doctor exits 0 — OAuth check skips silently when no credentials file.
-    _doctor_out=$(CT_NO_ASCII_LOGO=1 ct doctor 2>&1) && _doctor_exit=0 || _doctor_exit=$?
+    _doctor_out=$(ct doctor 2>&1) && _doctor_exit=0 || _doctor_exit=$?
     if [ "${_doctor_exit}" -eq 0 ]; then
         pass "no_creds_ct_doctor_passes"
     else
@@ -279,7 +279,7 @@ echo "=== Scenario: Ignore stale OAuth credentials ==="
 
 _reset_scenario_state
 
-if ! CT_NO_ASCII_LOGO=1 ct init >/dev/null; then
+if ! ct init >/dev/null; then
     fail "expired_token_ct_init" "ct init failed"
 else
     _install_skill_stubs
@@ -306,7 +306,7 @@ CREDS_EOF
 
     # Then: ct doctor exits 0 — stale OAuth credentials are ignored.
     # The "claude CLI authenticated" check (using 'claude auth status') is used instead.
-    if CT_NO_ASCII_LOGO=1 ct doctor >/dev/null 2>&1; then
+    if ct doctor >/dev/null 2>&1; then
         pass "expired_token_ct_doctor_surfaces_error"
         pass "expired_token_ct_doctor_exits_nonzero"
     else
@@ -360,7 +360,7 @@ echo "ANTHROPIC_API_KEY=sk-ant-test-upgrade-preserved" > "${HOME}/.cistern/env"
 # When: run ct init again (simulates upgrading cistern).
 # Since cistern.yaml already exists, writeFileIfAbsent skips it (no overwrite).
 # The aqueduct/ directory and role files are created for the first time.
-if ! CT_NO_ASCII_LOGO=1 ct init >/dev/null; then
+if ! ct init >/dev/null; then
     fail "upgrade_ct_init" "ct init failed during upgrade"
 else
     # Then: credentials must not have been overwritten.
@@ -383,7 +383,7 @@ else
         pass "upgrade_service_active"
 
         # Then: ct doctor passes — no ANTHROPIC_API_KEY required for claude provider.
-        _doctor_out=$(CT_NO_ASCII_LOGO=1 ct doctor 2>&1) && _doctor_exit=0 || _doctor_exit=$?
+        _doctor_out=$(ct doctor 2>&1) && _doctor_exit=0 || _doctor_exit=$?
         if [ "${_doctor_exit}" -eq 0 ]; then
             pass "upgrade_ct_doctor_passes"
         else

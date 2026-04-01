@@ -138,7 +138,7 @@ install_ct() {
   fi
 
   local ct_version
-  ct_version="$(CT_NO_ASCII_LOGO=1 ${ct_bin} version 2>/dev/null | sed 's/^ct //' || echo 'dev')"
+  ct_version="$(${ct_bin} version 2>/dev/null | sed 's/^ct //' || echo 'dev')"
   info "ct ${ct_version} installed at ${ct_bin}"
 }
 

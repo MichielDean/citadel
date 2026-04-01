@@ -119,7 +119,6 @@ wait_for_systemd() {
 # environment needed for ct to function without an interactive terminal.
 exec_in_container() {
     docker exec \
-        --env CT_NO_ASCII_LOGO=1 \
         "${CONTAINER_NAME}" \
         "$@"
 }
