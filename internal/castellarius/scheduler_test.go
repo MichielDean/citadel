@@ -618,9 +618,9 @@ func TestTick_NotesForwarding(t *testing.T) {
 	}
 }
 
-func TestTick_RecirculateAutoPromotesToPass(t *testing.T) {
+func TestTick_RecirculateNoOnRecirculateRoute_RestartsAtImplement(t *testing.T) {
 	// implement has OnPass="review" but no OnRecirculate.
-	// Signaling recirculate should auto-promote to pass and route to "review".
+	// Signaling recirculate should restart at implement (the first cataractae), not auto-promote.
 	client := newMockClient()
 	client.readyItems = []*cistern.Droplet{{ID: "b1"}}
 
@@ -640,29 +640,28 @@ func TestTick_RecirculateAutoPromotesToPass(t *testing.T) {
 	client.mu.Lock()
 	defer client.mu.Unlock()
 
-	// Should route via on_pass → "review", not pool.
-	if client.steps["b1"] != "review" {
-		t.Errorf("expected auto-promote to route to review, got %q", client.steps["b1"])
+	// Should restart at implement, not advance to review or pool.
+	if client.steps["b1"] != "implement" {
+		t.Errorf("expected restart at implement, got %q", client.steps["b1"])
 	}
 	if _, ok := client.pooled["b1"]; ok {
-		t.Error("expected no pooling when recirculate auto-promotes via on_pass")
+		t.Error("expected no pooling when recirculate has no on_recirculate route")
 	}
-	// Warning note must be attached.
-	var hasNote bool
+	// Exactly one structured routing note must be attached.
+	noteCount := 0
 	for _, n := range client.attached {
-		if n.id == "b1" && strings.Contains(n.notes, "Auto-promoted") && strings.Contains(n.notes, "recirculate") {
-			hasNote = true
-			break
+		if n.id == "b1" && strings.Contains(n.notes, "[scheduler:routing]") && strings.Contains(n.notes, "restarting at implement") {
+			noteCount++
 		}
 	}
-	if !hasNote {
-		t.Error("expected auto-promote warning note attached to droplet")
+	if noteCount != 1 {
+		t.Errorf("expected exactly one structured routing note, got %d; notes: %v", noteCount, client.attached)
 	}
 }
 
-func TestTick_RecirculateNoPassRoute_StillPools(t *testing.T) {
-	// A step with neither on_recirculate nor on_pass: recirculate cannot be promoted,
-	// so the droplet must still pool.
+func TestTick_RecirculateNoOnRecirculateOrPassRoute_RestartsAtImplement(t *testing.T) {
+	// A step with neither on_recirculate nor on_pass: recirculate should still
+	// restart at implement (the first cataractae), not pool.
 	wf := &aqueduct.Workflow{
 		Name: "test",
 		Cataractae: []aqueduct.WorkflowCataractae{
@@ -690,14 +689,26 @@ func TestTick_RecirculateNoPassRoute_StillPools(t *testing.T) {
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	if _, ok := client.pooled["b2"]; !ok {
-		t.Error("expected pooling when neither on_recirculate nor on_pass exists")
+	if _, ok := client.pooled["b2"]; ok {
+		t.Error("expected no pooling when recirculate has no on_recirculate route — should restart at implement")
+	}
+	if client.steps["b2"] != "implement" {
+		t.Errorf("expected restart at implement, got %q", client.steps["b2"])
+	}
+	// Exactly one structured routing note must be attached.
+	noteCount := 0
+	for _, n := range client.attached {
+		if n.id == "b2" && strings.Contains(n.notes, "[scheduler:routing]") && strings.Contains(n.notes, "restarting at implement") {
+			noteCount++
+		}
+	}
+	if noteCount != 1 {
+		t.Errorf("expected exactly one structured routing note, got %d; notes: %v", noteCount, client.attached)
 	}
 }
 
-func TestTick_RecirculateNoRoute_BlocksWithDiagnosticNote(t *testing.T) {
-	// Given: a droplet at "implement" which has no on_recirculate route and no on_pass route
-	// (so it can't auto-promote either).
+func TestTick_RecirculateNoRoute_WritesStructuredNoteAndRestartsAtImplement(t *testing.T) {
+	// Given: a droplet at "implement" which has no on_recirculate route and no on_pass route.
 	client := newMockClient()
 	client.readyItems = []*cistern.Droplet{
 		{ID: "b1", CurrentCataractae: "implement"},
@@ -738,23 +749,88 @@ func TestTick_RecirculateNoRoute_BlocksWithDiagnosticNote(t *testing.T) {
 	sched.Tick(context.Background())
 	time.Sleep(10 * time.Millisecond)
 
-	// Then: droplet is pooled.
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	if _, ok := client.pooled["b1"]; !ok {
-		t.Fatal("expected droplet to be pooled when no on_recirculate route exists")
+
+	// Then: droplet is restarted at implement, not pooled.
+	if _, ok := client.pooled["b1"]; ok {
+		t.Fatal("expected droplet to restart at implement, not be pooled")
+	}
+	if client.steps["b1"] != "implement" {
+		t.Errorf("expected restart at implement, got %q", client.steps["b1"])
 	}
 
-	// And: a diagnostic note naming the step and missing route is attached.
-	found := false
+	// And: exactly one structured routing note is attached.
+	noteCount := 0
 	for _, n := range client.attached {
-		if n.id == "b1" && strings.Contains(n.notes, "implement") && strings.Contains(n.notes, "on_recirculate") {
-			found = true
-			break
+		if n.id == "b1" && strings.Contains(n.notes, "[scheduler:routing]") && strings.Contains(n.notes, "restarting at implement") {
+			noteCount++
 		}
 	}
-	if !found {
-		t.Errorf("expected diagnostic note about missing on_recirculate route, got notes: %v", client.attached)
+	if noteCount != 1 {
+		t.Errorf("expected exactly one structured routing note, got %d; notes: %v", noteCount, client.attached)
+	}
+}
+
+func TestTick_RecirculateNonFirstStep_RestartsAtImplementNotCurrentStep(t *testing.T) {
+	// Given: a workflow where "qa" is step 1 (not the first cataractae) and has no
+	// on_recirculate route. The first cataractae is "implement" (step 0).
+	// When "qa" signals recirculate, the restart must land at "implement" (step 0),
+	// not at "qa" (the current step). This distinguishes wf.Cataractae[0].Name from
+	// "restart at current step".
+	wf := &aqueduct.Workflow{
+		Name: "test",
+		Cataractae: []aqueduct.WorkflowCataractae{
+			{
+				Name:   "implement",
+				Type:   aqueduct.CataractaeTypeAgent,
+				OnPass: "qa",
+				OnFail: "pooled",
+				// OnRecirculate intentionally omitted.
+			},
+			{
+				Name:   "qa",
+				Type:   aqueduct.CataractaeTypeAgent,
+				OnPass: "done",
+				OnFail: "implement",
+				// OnRecirculate intentionally omitted.
+			},
+		},
+	}
+	cfg := testConfig()
+	client := newMockClient()
+	client.readyItems = []*cistern.Droplet{{ID: "b5", CurrentCataractae: "qa"}}
+	runner := newMockRunner(client)
+	runner.outcomes["qa"] = "recirculate"
+	sched := NewFromParts(cfg, map[string]*aqueduct.Workflow{"test-repo": wf}, map[string]CisternClient{"test-repo": client}, runner)
+
+	// When: the scheduler dispatches and "qa" signals recirculate.
+	sched.Tick(context.Background())
+	if !runner.waitCalls(1, time.Second) {
+		t.Fatal("timed out waiting for spawn")
+	}
+	sched.Tick(context.Background())
+	time.Sleep(10 * time.Millisecond)
+
+	client.mu.Lock()
+	defer client.mu.Unlock()
+
+	// Then: droplet restarts at implement (step 0), not qa (the recirculating step).
+	if client.steps["b5"] != "implement" {
+		t.Errorf("expected restart at implement (step 0), got %q — must not restart at current step", client.steps["b5"])
+	}
+	if _, ok := client.pooled["b5"]; ok {
+		t.Error("expected no pooling when recirculate has no on_recirculate route")
+	}
+	// And: exactly one structured routing note is attached.
+	noteCount := 0
+	for _, n := range client.attached {
+		if n.id == "b5" && strings.Contains(n.notes, "[scheduler:routing]") && strings.Contains(n.notes, "restarting at implement") {
+			noteCount++
+		}
+	}
+	if noteCount != 1 {
+		t.Errorf("expected exactly one structured routing note, got %d; notes: %v", noteCount, client.attached)
 	}
 }
 

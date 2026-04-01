@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+### Scheduler: restart at implement when cataractae recirculates with no route (ci-vhn73)
+
+The Castellarius scheduler now safely recovers from recirculate signals that have no configured route, instead of silently auto-promoting to pass.
+
+**Key changes:**
+- **Recirculate recovery**: When a cataractae signals recirculate but the workflow has no `on_recirculate` route defined, the droplet is restarted at the implement step (first cataractae) instead of being auto-promoted to pass
+- **Visible routing anomalies**: A structured note `[scheduler:routing]` records the anomaly for later analysis, preventing silent failures
+- **Dashboard visibility**: Droplets orphaned by assignment changes are now visible in the new **Unassigned** section of the flow dashboard
+- **Recovery procedures**: Orphaned droplets can be restarted, pooled, or cancelled via `ct droplet` commands
+
+**Behavior:**
+- Previously, a recirculate signal with no on_recirculate route would auto-promote to pass with a warning note
+- Now, the droplet restarts at implement, allowing the workflow to re-attempt the work
+- A single structured routing note is written: `[scheduler:routing] cataractae=<step> signaled recirculate but has no on_recirculate route — restarting at implement`
+
+**Dashboard enhancements:**
+- **Unassigned** section shows in-progress droplets with missing or invalid aqueduct assignments
+- Lists orphaned droplets with ID, elapsed time, current step, and title
+- Section is omitted when there are no unassigned droplets
+
+**Troubleshooting:**
+- Use `ct dashboard` or `ct dashboard --web` to identify unassigned droplets
+- Recover with `ct droplet restart <id>`, `ct droplet pool <id>`, or `ct droplet cancel <id>`
+- See *Troubleshooting > Orphaned In-Progress Droplets* for detailed recovery procedures
+
+**Testing:**
+- Four recirculate tests verify: with on_pass route present, without on_pass, custom workflows, and non-first-step (qa) recirculation restarting at implement
+- All tests assert the exact structured routing note is written
+- Dashboard tests verify unassigned items display and web endpoint JSON output
+
+**Impact**: Droplets that signal recirculate without a defined route now safely restart rather than silently advancing, improving visibility of routing anomalies and preventing lost work.
+
 ### Dashboard: fix arch channel overflow on narrow terminals (ci-3247n)
 
 The aqueduct arch diagram in the dashboard now renders correctly at any terminal width, including the default 80-column width. The channel column width is now computed dynamically based on the available width and the number of pipeline steps.

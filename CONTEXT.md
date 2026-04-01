@@ -1,30 +1,26 @@
 # Context
 
-## Item: ci-gez0d
+## Item: ci-vhn73
 
-**Title:** ct filter: remove --file flag, plain-text output, leading questions
+**Title:** Scheduler: restart at implement when cataractae signals recirculate with no route
 **Status:** in_progress
 **Priority:** 2
 
 ### Description
 
-Remove the --file flag from ct filter entirely. The finalize JSON step (filterFinalizePrompt) is lossy — the LLM drops depends_on when re-emitting the JSON array, causing all droplets to be filed without dependencies and dispatched simultaneously.
+When a cataractae signals recirculate but the workflow has no on_recirculate route defined for it, the scheduler currently logs a warning and auto-promotes to pass. This silently advances a droplet that the agent explicitly did not want to pass, masking the problem.
 
-Changes:
-- Remove --file and --repo flags from ct filter
-- Delete filterFinalizePrompt constant and the --file branch in filter.go
-- Remove addProposals and extractProposals if they have no other callers (check refine.go and cistern.go)
-- Update filterSystemPrompt: output a numbered plain-text spec with prose dependency statements (e.g. '2. Implement Jira provider — requires droplet 1 to be delivered first') instead of a JSON array
-- Update filterSystemPrompt: at each refinement round, ask leading questions to help the user sharpen the spec — e.g. probe for edge cases, unclear acceptance criteria, missing context, scope boundaries, and ordering rationale. The agent should drive the conversation toward a complete spec, not just wait for the user to volunteer information.
-- Update runNonInteractive / response parsing accordingly — no more JSON parsing from stdout, just display the refined text and questions to the user
-- Update filter_test.go and refine_test.go to reflect removed functionality
+Fix: instead of auto-promoting, restart the droplet at implement (the first cataractae in the workflow). Write a single structured note: '[scheduler:routing] cataractae=X signaled recirculate but has no on_recirculate route — restarting at implement'. This ensures the work is re-attempted rather than silently skipped, and the note makes the routing anomaly visible in ct droplet show for later analysis.
 
-Acceptance criteria: ct filter starts a refinement conversation, asks probing questions at each round, and ends by printing a clear numbered plain-text spec with prose dependency statements. No --file flag exists. Filing is done separately by the caller using ct droplet add.
+Do not pool or cancel — the agent may have recirculated for a legitimate reason that implement can address. Restarting at implement is the safe recovery path.
 
-## Current Step: delivery
+Acceptance criteria: a recirculate signal with no route restarts the droplet at implement rather than advancing it; exactly one structured routing note is written; the droplet flows normally from implement.
+
+## Current Step: docs
 
 - **Type:** agent
-- **Role:** delivery
+- **Role:** docs_writer
+- **Context:** full_codebase
 
 ## ⚠️ REVISION REQUIRED — Fix these issues before anything else
 
@@ -33,82 +29,61 @@ Do not proceed to implementation until you have read and understood each issue.
 
 ### Issue 1 (from: reviewer)
 
-♻ 1 finding. filterSystemPrompt (refine.go:27-73) now instructs the LLM to produce plain-text numbered specs, but runNonInteractive (refine.go:129) — called from cistern.go:74 for ct droplet add --filter — still calls extractProposals which expects a JSON array. This will break ct droplet add --filter in production. Tests pass only because fakeagent returns canned JSON regardless of prompt. See issue ci-gez0d-954y2 for details and fix options.
+No findings. The scheduler change correctly replaces auto-promote with restart-at-implement: the guard condition handles recirculate with no on_recirculate route by reading wf.Cataractae[0].Name, writes exactly one structured [scheduler:routing] note, and falls through to the normal Assign path. The len(wf.Cataractae)>0 guard is defensive (workflow validation rejects empty cataractae). The removed diagnostic note in the pool fallthrough is correctly dead code since recirculate now always resolves to a step. Three tests verify the core behavior: with on_pass present, without on_pass, and with a custom workflow. All tests pass.
 
-### Issue 2 (from: reviewer)
+### Issue 2 (from: qa)
 
-No findings. Phase 1: resolved ci-gez0d-954y2 — broken code path (runNonInteractive/extractProposals) completely removed. Phase 2: fresh review found no security vulnerabilities, logic errors, missing error handling, missing tests, API contract violations, or resource leaks. All removed symbols verified zero-referenced. Tests pass.
+♻ Tests pass but two test quality gaps require fixing:
 
-### Issue 3 (from: qa)
+1. TestTick_RecirculateNoOnRecirculateOrPassRoute_RestartsAtImplement has no note assertion. The test checks no-pooling and restart-at-implement but never verifies that the [scheduler:routing] note is written. The acceptance criterion requires the note in all recirculate-with-no-route cases. Add the same note assertion present in Tests 1 and 3: loop client.attached, assert strings.Contains(n.notes, "[scheduler:routing]") for the droplet.
 
-♻ Tests pass. Phase 1: both prior issues resolved — runNonInteractive, extractProposals, addProposals, DropletProposal, and TUI are gone with zero references. Phase 2: one finding (ci-gez0d-oguh6). printFilterResult is the scripting interface (--output-format json) and its tests only assert err==nil — no test captures stdout and decodes the JSON to verify session_id and text field names. TestFilterJSONOutput_HasRequiredFields tests a local shadow struct, not the production anonymous jsonOut, so a tag rename in the production code would pass all three tests silently. Fix: redirect stdout in the two printFilterResult tests, decode the captured JSON, and assert session_id and text are present. Similarly assert the human-format path emits result.Text to stdout and result.SessionID to stderr.
+2. Tests 1 and 3 comment 'Exactly one structured routing note must be attached' but assert only a boolean (at least one). The requirement explicitly says 'exactly one'. Change the note-counting logic from a bool flag to a counter and assert count == 1 so a regression that writes two notes is caught.
 
-### Issue 4 (from: reviewer)
+### Issue 3 (from: reviewer)
 
-Phase 1: resolved ci-gez0d-oguh6 — printFilterResult tests now capture stdout/stderr via os.Pipe and verify session_id and text fields against production output. Shadow struct test deleted. Phase 2: fresh adversarial review found no new issues. All removed symbols (filterFile, filterRepo, addFilter, addYes, extractProposals, addProposals, DropletProposal, runNonInteractive, filterFinalizePrompt, TUI code) confirmed zero-referenced. DropletAdder interface change is internal-only with updated test doubles. Jira provider uses url.PathEscape on user input, LimitReader, and proper auth. SetExternalRef validates format with regex and git-safety checks. branchForDroplet handles ExternalRef correctly. Build ok. All 15 packages pass.
+Phase 1: both QA issues verified fixed — (1) ci-vhn73-dsx3y: Test 2 now has note assertion with noteCount==1, (2) ci-vhn73-veoog: all three tests use counter, assert noteCount==1. Phase 2: fresh adversarial review of scheduler.go and scheduler_test.go changes — no new findings. Guard condition correct, note written exactly once, dead code properly removed, all three tests pass.
 
-### Issue 5 (from: qa)
+### Issue 4 (from: qa)
 
-♻ Tests pass. Phase 1: ci-gez0d-oguh6 resolved — printFilterResult tests capture stdout/stderr via os.Pipe and assert session_id and text field values against production output. Shadow struct test deleted. All prior issues confirmed resolved.
+♻ Phase 1: both prior QA issues confirmed resolved — all three tests use noteCount counter asserting noteCount==1, and Test 2 now has the note assertion. Phase 2 finding (ci-vhn73-penkv): all three recirculate tests have implement (step 0) as the recirculating cataractae. The code does wf.Cataractae[0].Name — but since all tests have the current step == step 0, no test distinguishes this from 'restart at current step.' Add a test with a non-first step (e.g. qa) recirculating with no on_recirculate route, asserting restart lands at implement (step 0), not qa.
 
-Phase 2: four stale comments reference functions removed by this change. Per QA protocol, incorrect comments are a recirculate.
+### Issue 5 (from: reviewer)
 
-ci-gez0d-dcd59: fakeagent/main.go:20-22 — 'This preserves backward compatibility with runNonInteractive() in refine.go.' runNonInteractive was removed. The raw-output path is now exercised only by the FAKEAGENT_MODE=raw_fallback test case for callFilterAgent's JSON-fallback path. Update the comment accordingly.
-
-ci-gez0d-zdsiy: failagent/main.go:3 — package comment says 'testing error handling in runNonInteractive'; runNonInteractive was removed. failagent now tests the exec-failure path in callFilterAgent. Update the comment.
-
-ci-gez0d-1arwq: mockllm/mockllm.go:21-22 — package-level usage example calls callRefineAPI("Fix login bug", "") which does not exist in the codebase. Remove or replace with an example reflecting current test usage.
-
-ci-gez0d-54tbr: refine_test.go:44 — TestMockLLM_RecordsRequestsForAllProviders comment says 'how a caller would configure callRefineAPI for that provider'; callRefineAPI does not exist. Remove the reference.
+Phase 1: ci-vhn73-penkv resolved — TestTick_RecirculateNonFirstStep_RestartsAtImplementNotCurrentStep (scheduler_test.go:775) uses qa (step 1) as the recirculating step, asserts restart lands at implement (step 0) not qa, proving wf.Cataractae[0].Name usage. Phase 2: fresh adversarial review of scheduler.go and scheduler_test.go changes — guard condition correct (next=="" && ResultRecirculate && len>0), note written exactly once, dead auto-promote code properly removed, downstream Assign path correct, all 4 recirculate tests pass. Pre-existing flaky test (TestGracefulShutdown_CleanDrain) confirmed flaky on main too — not a regression.
 
 ### Issue 6 (from: reviewer)
 
-Phase 1: resolved all 4 QA issues — (1) ci-gez0d-dcd59: fakeagent/main.go:19-22 now correctly describes FAKEAGENT_MODE=raw_fallback / callFilterAgent JSON-fallback, no runNonInteractive reference. (2) ci-gez0d-zdsiy: failagent/main.go:3 now says 'exec-failure path in callFilterAgent'. (3) ci-gez0d-1arwq: mockllm/mockllm.go doc example removed callRefineAPI, replaced with generic mock server usage. (4) ci-gez0d-54tbr: refine_test.go:42-44 removed callRefineAPI reference.
+No findings.
 
-Phase 2 fresh review: no new findings. Removed symbols (filterFile, filterRepo, addFilter, addYes, extractProposals, addProposals, DropletProposal, runNonInteractive, filterFinalizePrompt, complexityToInt, TUI code, charmbracelet imports from refine.go) all confirmed zero-referenced. New code (tracker interface, jira provider, ExternalRef field, branchForDroplet, SetExternalRef validation, DropletAdder interface update) reviewed for security, logic, error handling, resource management, and contract consistency. Jira provider uses url.PathEscape on user input, io.LimitReader(1MiB), Basic Auth, and 30s timeout. SetExternalRef validates format with regex and git-safety checks. branchForDroplet handles all ExternalRef cases (set/empty/malformed). Build ok. All 15 packages pass.
+### Issue 7 (from: qa)
 
-### Issue 7 (from: reviewer)
+Phase 1: both prior QA issues confirmed resolved — (1) all three tests use noteCount counter asserting noteCount==1, (2) TestTick_RecirculateNoOnRecirculateOrPassRoute_RestartsAtImplement has note assertion, (3) TestTick_RecirculateNonFirstStep_RestartsAtImplementNotCurrentStep at :775 uses qa (step 1) and correctly asserts restart at implement (step 0). Phase 2: fresh adversarial review — guard condition correct, note written exactly once, dead diagnostic-note code properly removed, wf.Cataractae[0].Name used dynamically, all 4 recirculate tests pass, full suite passes.
 
-Phase 1: all 4 QA issues resolved (stale comments fixed in fakeagent, failagent, mockllm, refine_test). Phase 2: fresh adversarial review — no new findings. All removed symbols zero-referenced. New tracker/jira/ExternalRef/branchForDroplet code reviewed for security, logic, error handling, contracts. Build ok, all 15 packages pass.
+### Issue 8 (from: security)
 
-### Issue 8 (from: qa)
-
-Phase 1: no open QA issues. Phase 2: fresh review — no new findings. All removed symbols zero-referenced. Simplifier's latest commit (50016bd) accurately updated hardcodedProposals and hardcodedJSONEnvelope comments in fakeagent/main.go. Test coverage solid: error paths, JSON fallback, is_error envelope, missing env var, all three removed-flag rejection tests, stdout/stderr capture in printFilterResult tests, AllowedTools passthrough. filterSystemPrompt is plain-text with probing questions. All acceptance criteria have tests. Build ok, all 15 packages pass.
-
-### Issue 9 (from: security)
-
-Phase 1: no open security issues. All prior issues confirmed resolved through 8 review cycles. Phase 2: fresh adversarial security review of full diff — no findings. SQL parameterized throughout. callFilterAgent uses slice-based exec args. Jira provider uses url.PathEscape, io.LimitReader(1MiB), 30s timeout, Basic Auth with env-var token preference. SetExternalRef validates with regex + git-safety checks; branchForDroplet safe. HTTP handler retains MaxBytesReader, rate limiting, bearer auth. No secrets in error messages. AllowedTools hardcoded to read-only. Attack surface reduced: removed extractProposals JSON parsing, TUI code, --file/--repo flags. Build ok, all 15 packages pass.
-
-### Issue 10 (from: security)
-
-No security issues found. Diff reduces attack surface (removed extractProposals, TUI, --file/--repo). New code (Jira provider, ExternalRef, branchForDroplet) follows security best practices: parameterized SQL, slice-based exec, url.PathEscape, LimitReader, regex validation, no secret leakage. Build ok, all 15 packages pass.
+Phase 1: no open security issues from prior cycles (7 prior issues all previously resolved or no-findings). Phase 2: fresh adversarial review of scheduler.go and dashboard changes — no security issues found. Scheduler: guard condition correct (next=="" && ResultRecirculate && len>0), step names from workflow config (not user input), note written via parameterized addNote, fail-closed on empty cataractae (falls to pool). Dashboard: UnassignedItems exposes same Droplet struct already in CisternItems/PooledItems (no new data exposure), web endpoint uses json.NewEncoder (no XSS), colW division safe (n≥1 guaranteed by existing guard).
 
 ---
 
 ## Recent Step Notes
 
-### From: docs_writer
-
-Documentation complete. All user-visible changes documented: Jira Cloud tracker integration (CHANGELOG, README, configs), removal of --file/--repo flags from ct filter (SKILL.md, commands.md), external_ref support for PR titles (CLAUDE.md). Fixed stale flag references in commands.md reference docs.
-
 ### From: security
 
-No security issues found. Diff reduces attack surface (removed extractProposals, TUI, --file/--repo). New code (Jira provider, ExternalRef, branchForDroplet) follows security best practices: parameterized SQL, slice-based exec, url.PathEscape, LimitReader, regex validation, no secret leakage. Build ok, all 15 packages pass.
-
-### From: security
-
-Phase 1: no open security issues. All prior issues confirmed resolved through 8 review cycles. Phase 2: fresh adversarial security review of full diff — no findings. SQL parameterized throughout. callFilterAgent uses slice-based exec args. Jira provider uses url.PathEscape, io.LimitReader(1MiB), 30s timeout, Basic Auth with env-var token preference. SetExternalRef validates with regex + git-safety checks; branchForDroplet safe. HTTP handler retains MaxBytesReader, rate limiting, bearer auth. No secrets in error messages. AllowedTools hardcoded to read-only. Attack surface reduced: removed extractProposals JSON parsing, TUI code, --file/--repo flags. Build ok, all 15 packages pass.
+Phase 1: no open security issues from prior cycles (7 prior issues all previously resolved or no-findings). Phase 2: fresh adversarial review of scheduler.go and dashboard changes — no security issues found. Scheduler: guard condition correct (next=="" && ResultRecirculate && len>0), step names from workflow config (not user input), note written via parameterized addNote, fail-closed on empty cataractae (falls to pool). Dashboard: UnassignedItems exposes same Droplet struct already in CisternItems/PooledItems (no new data exposure), web endpoint uses json.NewEncoder (no XSS), colW division safe (n≥1 guaranteed by existing guard).
 
 ### From: qa
 
-Phase 1: no open QA issues. Phase 2: fresh review — no new findings. All removed symbols zero-referenced. Simplifier's latest commit (50016bd) accurately updated hardcodedProposals and hardcodedJSONEnvelope comments in fakeagent/main.go. Test coverage solid: error paths, JSON fallback, is_error envelope, missing env var, all three removed-flag rejection tests, stdout/stderr capture in printFilterResult tests, AllowedTools passthrough. filterSystemPrompt is plain-text with probing questions. All acceptance criteria have tests. Build ok, all 15 packages pass.
+Phase 1: both prior QA issues confirmed resolved — (1) all three tests use noteCount counter asserting noteCount==1, (2) TestTick_RecirculateNoOnRecirculateOrPassRoute_RestartsAtImplement has note assertion, (3) TestTick_RecirculateNonFirstStep_RestartsAtImplementNotCurrentStep at :775 uses qa (step 1) and correctly asserts restart at implement (step 0). Phase 2: fresh adversarial review — guard condition correct, note written exactly once, dead diagnostic-note code properly removed, wf.Cataractae[0].Name used dynamically, all 4 recirculate tests pass, full suite passes.
+
+### From: reviewer
+
+No findings.
+
+### From: reviewer
+
+Phase 1: ci-vhn73-penkv resolved — TestTick_RecirculateNonFirstStep_RestartsAtImplementNotCurrentStep (scheduler_test.go:775) uses qa (step 1) as the recirculating step, asserts restart lands at implement (step 0) not qa, proving wf.Cataractae[0].Name usage. Phase 2: fresh adversarial review of scheduler.go and scheduler_test.go changes — guard condition correct (next=="" && ResultRecirculate && len>0), note written exactly once, dead auto-promote code properly removed, downstream Assign path correct, all 4 recirculate tests pass. Pre-existing flaky test (TestGracefulShutdown_CleanDrain) confirmed flaky on main too — not a regression.
 
 <available_skills>
-  <skill>
-    <name>cistern-github</name>
-    <description>---</description>
-    <location>/home/lobsterdog/.cistern/skills/cistern-github/SKILL.md</location>
-  </skill>
   <skill>
     <name>cistern-droplet-state</name>
     <description>Manage droplet state in the Cistern agentic pipeline using the `ct` CLI.</description>
@@ -126,16 +101,16 @@ Phase 1: no open QA issues. Phase 2: fresh review — no new findings. All remov
 When your work is done, signal your outcome using the `ct` CLI:
 
 **Pass (work complete, move to next step):**
-    ct droplet pass ci-gez0d
+    ct droplet pass ci-vhn73
 
 **Recirculate (needs rework — send back upstream):**
-    ct droplet recirculate ci-gez0d
-    ct droplet recirculate ci-gez0d --to implement
+    ct droplet recirculate ci-vhn73
+    ct droplet recirculate ci-vhn73 --to implement
 
 **Pool (cannot currently proceed):**
-    ct droplet pool ci-gez0d
+    ct droplet pool ci-vhn73
 
 Add notes before signaling:
-    ct droplet note ci-gez0d "What you did / found"
+    ct droplet note ci-vhn73 "What you did / found"
 
 The `ct` binary is on your PATH.
