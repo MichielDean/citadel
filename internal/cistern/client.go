@@ -446,8 +446,14 @@ func (c *Client) GetLastReviewedCommit(id string) (string, error) {
 // to clear the field (stores NULL). Format should be 'provider:key'
 // (e.g. 'jira:DPF-456', 'linear:LIN-789').
 func (c *Client) SetExternalRef(id, ref string) error {
-	if ref != "" && !externalRefRE.MatchString(ref) {
-		return fmt.Errorf("cistern: invalid external_ref %q: must match provider:key with git-safe characters", ref)
+	if ref != "" {
+		if !externalRefRE.MatchString(ref) {
+			return fmt.Errorf("cistern: invalid external_ref %q: must match provider:key with git-safe characters", ref)
+		}
+		_, key, _ := strings.Cut(ref, ":")
+		if strings.Contains(key, "..") || strings.HasSuffix(key, ".") || strings.HasSuffix(key, ".lock") {
+			return fmt.Errorf("cistern: invalid external_ref %q: key produces git-invalid branch name", ref)
+		}
 	}
 	var val any
 	if ref != "" {
