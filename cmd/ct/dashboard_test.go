@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1082,6 +1083,55 @@ func TestActiveAqueducts_ReturnsOnlyActive(t *testing.T) {
 	active := activeAqueducts(cataractae)
 	if len(active) != 2 {
 		t.Errorf("expected 2 active aqueducts, got %d", len(active))
+	}
+}
+
+// --- TestRenderAqueductRow_NoOverflow ---
+
+// TestRenderAqueductRow_NoOverflow_SevenSteps verifies that with 7 pipeline
+// steps no rendered line exceeds the given terminal width.
+//
+// Given: an idle aqueduct with 7 steps and terminal width of 80, 120, or 220
+// When:  renderAqueductRow is called with that width
+// Then:  every line's visual character count is ≤ termWidth
+func TestRenderAqueductRow_NoOverflow_SevenSteps(t *testing.T) {
+	steps := []string{
+		"implement", "adv-review", "security-review", "qa",
+		"staging", "docs", "deliver",
+	}
+	ch := CataractaeInfo{
+		Name:  "virgo",
+		Steps: steps,
+	}
+
+	for _, termWidth := range []int{80, 120, 220} {
+		t.Run(fmt.Sprintf("width=%d", termWidth), func(t *testing.T) {
+			out := renderAqueductRow(ch, termWidth)
+			for i, line := range strings.Split(out, "\n") {
+				visual := len([]rune(stripANSITest(line)))
+				if visual > termWidth {
+					t.Errorf("line %d: visual width %d > termWidth %d: %q", i, visual, termWidth, stripANSITest(line))
+				}
+			}
+		})
+	}
+}
+
+// TestRenderAqueductRow_SecurityReviewLabel_Readable verifies that
+// 'security-review' (15 chars) is not truncated when colW allows it.
+//
+// Given: an aqueduct with step 'security-review' at width=120
+// When:  renderAqueductRow is called
+// Then:  the output contains the full label 'security-review'
+func TestRenderAqueductRow_SecurityReviewLabel_Readable(t *testing.T) {
+	ch := CataractaeInfo{
+		Name:  "virgo",
+		Steps: []string{"implement", "security-review", "deliver"},
+	}
+	out := renderAqueductRow(ch, 120)
+	stripped := stripANSITest(out)
+	if !strings.Contains(stripped, "security-review") {
+		t.Errorf("label 'security-review' should be fully visible at width=120, got:\n%s", stripped)
 	}
 }
 
