@@ -106,7 +106,6 @@ func TestImportCmd_OverridesPriorityWhenFlagSet(t *testing.T) {
 	}
 	c.Close()
 
-	var id string
 	out := captureStdout(t, func() {
 		importRepo = "cistern"
 		importFilter = false
@@ -115,12 +114,11 @@ func TestImportCmd_OverridesPriorityWhenFlagSet(t *testing.T) {
 		// Mark the priority flag as changed.
 		_ = importCmd.Flags().Set("priority", "1")
 		err = importCmd.RunE(importCmd, []string{"fake-tracker", "FAKE-99"})
-		id = strings.TrimSpace(captureStdout(t, func() {}))
 	})
 	if err != nil {
 		t.Fatalf("RunE error: %v", err)
 	}
-	id = strings.TrimSpace(out)
+	id := strings.TrimSpace(out)
 
 	c2, err := cistern.New(db, "ci")
 	if err != nil {

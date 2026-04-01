@@ -75,7 +75,6 @@ Examples:
 		externalRef := providerName + ":" + issueKey
 
 		if importFilter {
-			// Run LLM filtration pass on the fetched title and description.
 			userPrompt := "Title: " + issue.Title
 			if issue.Description != "" {
 				userPrompt += "\nDescription: " + issue.Description
@@ -101,7 +100,6 @@ Examples:
 			return nil
 		}
 
-		// Direct path: add the droplet immediately with the external reference.
 		c, err := cistern.New(resolveDBPath(), inferPrefix(repo))
 		if err != nil {
 			return err
