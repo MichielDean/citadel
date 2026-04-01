@@ -981,11 +981,7 @@ func (m dashboardTUIModel) viewUnassigned() []string {
 		if titleW < 8 {
 			titleW = 8
 		}
-		title := item.Title
-		r := []rune(title)
-		if len(r) > titleW {
-			title = string(r[:titleW-1]) + "…"
-		}
+		title := truncate(item.Title, titleW)
 
 		lines = append(lines, fmt.Sprintf("  %s  %s  %-20s  %s",
 			tuiStyleYellow.Render("●  "+id),
