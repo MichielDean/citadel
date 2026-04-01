@@ -261,7 +261,7 @@ If you see a droplet note like: `"[scheduler:recovery] reset orphaned in_progres
 
 **What this means:**
 - The droplet was in `in_progress` status but had an empty `assignee` field
-- No tmux session was running for this droplet (checked by the Castellarius heartbeat)
+- The droplet had no assignee, so the Castellarius could not identify a tmux session to resume and triggered orphan recovery after the stall threshold elapsed
 - The droplet was invisible to any aqueduct and could not make progress
 - This typically occurs after Castellarius crash/restart or failed dispatch where the droplet was never assigned to a worker
 - The Castellarius heartbeat automatically recovered it (check interval: 30 seconds by default)
