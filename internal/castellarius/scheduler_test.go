@@ -2188,7 +2188,7 @@ func TestHeartbeatRepo_RateLimit_SuppressesSecondNote(t *testing.T) {
 	client := newMockClient()
 
 	item := &cistern.Droplet{
-		ID:                "stall-debounce",
+		ID:                "stall-rl",
 		CurrentCataractae: "implement",
 		Status:            "in_progress",
 		Assignee:          "",
@@ -2239,12 +2239,12 @@ func TestHeartbeatRepo_RateLimit_NoteSignalAdvances_ClearsRateLimit(t *testing.T
 	sched := NewFromParts(config, workflows, clients, runner)
 
 	// Pre-set rate-limit entry (simulates a previous stall note).
-	debounceTime := time.Now().Add(-10 * time.Minute)
-	sched.lastStallNoted[item.ID] = debounceTime
+	prevNoteTime := time.Now().Add(-10 * time.Minute)
+	sched.lastStallNoted[item.ID] = prevNoteTime
 
 	// Add a note whose timestamp is newer than the rate-limit entry but still
 	// older than the 1-minute threshold (so the droplet is still stalled).
-	advancedTime := debounceTime.Add(3 * time.Minute) // now - 7 min: stalled, but > rate-limit entry
+	advancedTime := prevNoteTime.Add(3 * time.Minute) // now - 7 min: stalled, but > rate-limit entry
 	client.notes[item.ID] = []cistern.CataractaeNote{
 		{CreatedAt: advancedTime},
 	}
@@ -2281,8 +2281,8 @@ func TestHeartbeatRepo_RateLimit_WorktreeSignalAdvances_ClearsRateLimit(t *testi
 		WithSandboxRoot(sandboxRoot))
 
 	// Pre-set rate-limit entry.
-	debounceTime := time.Now().Add(-10 * time.Minute)
-	sched.lastStallNoted[item.ID] = debounceTime
+	prevNoteTime := time.Now().Add(-10 * time.Minute)
+	sched.lastStallNoted[item.ID] = prevNoteTime
 
 	// Create worktree dir with a file whose mtime is newer than the rate-limit
 	// entry but still old enough to be stalled (3 min → 7 min ago > 1 min threshold).
@@ -2294,7 +2294,7 @@ func TestHeartbeatRepo_RateLimit_WorktreeSignalAdvances_ClearsRateLimit(t *testi
 	if err := os.WriteFile(testFile, []byte("package main"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	fileMtime := debounceTime.Add(3 * time.Minute) // still stalled, but > rate-limit entry
+	fileMtime := prevNoteTime.Add(3 * time.Minute) // still stalled, but > rate-limit entry
 	if err := os.Chtimes(testFile, fileMtime, fileMtime); err != nil {
 		t.Fatal(err)
 	}
@@ -2340,15 +2340,15 @@ func TestHeartbeatRepo_RateLimit_SessionLogSignalAdvances_ClearsRateLimit(t *tes
 		WithSessionLogRoot(logDir))
 
 	// Pre-set rate-limit entry.
-	debounceTime := time.Now().Add(-10 * time.Minute)
-	sched.lastStallNoted[item.ID] = debounceTime
+	prevNoteTime := time.Now().Add(-10 * time.Minute)
+	sched.lastStallNoted[item.ID] = prevNoteTime
 
 	// Create session log with mtime newer than rate-limit entry but still stalled.
 	logPath := filepath.Join(logDir, "test-repo-alpha.log")
 	if err := os.WriteFile(logPath, []byte("agent output"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	logMtime := debounceTime.Add(3 * time.Minute) // still stalled, but > rate-limit entry
+	logMtime := prevNoteTime.Add(3 * time.Minute) // still stalled, but > rate-limit entry
 	if err := os.Chtimes(logPath, logMtime, logMtime); err != nil {
 		t.Fatal(err)
 	}
@@ -2495,13 +2495,13 @@ func TestHeartbeatRepo_RateLimit_SchedulerNote_DoesNotResetRateLimit(t *testing.
 	sched := NewFromParts(config, workflows, clients, runner)
 
 	// Pre-set rate-limit entry 10 minutes ago.
-	debounceTime := time.Now().Add(-10 * time.Minute)
-	sched.lastStallNoted[item.ID] = debounceTime
+	prevNoteTime := time.Now().Add(-10 * time.Minute)
+	sched.lastStallNoted[item.ID] = prevNoteTime
 
 	// Inject a scheduler-generated note whose timestamp is newer than the
 	// rate-limit entry but still older than the threshold (simulates the stall
 	// note written on the previous tick being fed back through GetNotes).
-	schedulerNoteTime := debounceTime.Add(3 * time.Minute) // 7 min ago — stalled, > rate-limit entry
+	schedulerNoteTime := prevNoteTime.Add(3 * time.Minute) // 7 min ago — stalled, > rate-limit entry
 	client.notes[item.ID] = []cistern.CataractaeNote{
 		{CataractaeName: "scheduler", CreatedAt: schedulerNoteTime},
 	}
