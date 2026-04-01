@@ -319,6 +319,10 @@ func workflowWithIdentity(identity string) *Workflow {
 }
 
 func TestGenerateCataractaeFiles_WithPersonaAndInstructions(t *testing.T) {
+	orig := protocolSkillPathFn
+	protocolSkillPathFn = func() string { return "" }
+	t.Cleanup(func() { protocolSkillPathFn = orig })
+
 	tmpDir := t.TempDir()
 	identityDir := filepath.Join(tmpDir, "reviewer")
 	if err := os.MkdirAll(identityDir, 0o755); err != nil {
@@ -336,8 +340,12 @@ func TestGenerateCataractaeFiles_WithPersonaAndInstructions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(written) != 1 {
-		t.Fatalf("expected 1 file written, got %d", len(written))
+	// Expect 2 files: instructions file + PIPELINE_POSITION.md (no skill — source empty).
+	if len(written) != 2 {
+		t.Fatalf("expected 2 files written, got %d: %v", len(written), written)
+	}
+	if written[0] != filepath.Join(identityDir, "CLAUDE.md") {
+		t.Errorf("written[0] = %q, want CLAUDE.md path", written[0])
 	}
 
 	content, err := os.ReadFile(filepath.Join(identityDir, "CLAUDE.md"))
@@ -397,6 +405,10 @@ func TestGenerateCataractaeFiles_SkipsWhenInstructionsMissing(t *testing.T) {
 
 func TestGenerateCataractaeFiles_DeduplicatesIdentities(t *testing.T) {
 	// Same identity appearing in multiple steps is generated only once.
+	orig := protocolSkillPathFn
+	protocolSkillPathFn = func() string { return "" }
+	t.Cleanup(func() { protocolSkillPathFn = orig })
+
 	tmpDir := t.TempDir()
 	identityDir := filepath.Join(tmpDir, "reviewer")
 	if err := os.MkdirAll(identityDir, 0o755); err != nil {
@@ -420,8 +432,9 @@ func TestGenerateCataractaeFiles_DeduplicatesIdentities(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(written) != 1 {
-		t.Errorf("expected 1 file written (deduplication), got %d", len(written))
+	// Deduplication: 1 identity → 2 files (CLAUDE.md + PIPELINE_POSITION.md).
+	if len(written) != 2 {
+		t.Errorf("expected 2 files written (deduplication), got %d: %v", len(written), written)
 	}
 }
 
@@ -497,6 +510,10 @@ func TestGenerateCataractaeFiles_ReturnsErrorOnUnreadableInstructions(t *testing
 // TestGenerateCataractaeFiles_WritesProviderInstructionsFile verifies that a
 // non-default instructionsFile is written instead of CLAUDE.md.
 func TestGenerateCataractaeFiles_WritesProviderInstructionsFile(t *testing.T) {
+	orig := protocolSkillPathFn
+	protocolSkillPathFn = func() string { return "" }
+	t.Cleanup(func() { protocolSkillPathFn = orig })
+
 	tmpDir := t.TempDir()
 	identityDir := filepath.Join(tmpDir, "implementer")
 	if err := os.MkdirAll(identityDir, 0o755); err != nil {
@@ -514,11 +531,12 @@ func TestGenerateCataractaeFiles_WritesProviderInstructionsFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(written) != 1 {
-		t.Fatalf("expected 1 file written, got %d", len(written))
+	// Expect 2 files: AGENTS.md + PIPELINE_POSITION.md.
+	if len(written) != 2 {
+		t.Fatalf("expected 2 files written, got %d: %v", len(written), written)
 	}
 	if written[0] != filepath.Join(identityDir, "AGENTS.md") {
-		t.Errorf("written path = %q, want AGENTS.md path", written[0])
+		t.Errorf("written[0] = %q, want AGENTS.md path", written[0])
 	}
 
 	// AGENTS.md must exist with expected content.
@@ -556,13 +574,18 @@ func TestGenerateCataractaeFiles_PreservesExistingClaudeMd(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	orig := protocolSkillPathFn
+	protocolSkillPathFn = func() string { return "" }
+	t.Cleanup(func() { protocolSkillPathFn = orig })
+
 	w := workflowWithIdentity("reviewer")
 	written, err := GenerateCataractaeFiles(w, tmpDir, "GEMINI.md")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(written) != 1 {
-		t.Fatalf("expected 1 file written, got %d", len(written))
+	// Expect 2 files: GEMINI.md + PIPELINE_POSITION.md.
+	if len(written) != 2 {
+		t.Fatalf("expected 2 files written, got %d: %v", len(written), written)
 	}
 
 	// GEMINI.md is written.
@@ -595,13 +618,18 @@ func TestGenerateCataractaeFiles_EmptyInstructionsFileDefaultsToClaude(t *testin
 		t.Fatal(err)
 	}
 
+	orig := protocolSkillPathFn
+	protocolSkillPathFn = func() string { return "" }
+	t.Cleanup(func() { protocolSkillPathFn = orig })
+
 	w := workflowWithIdentity("qa")
 	written, err := GenerateCataractaeFiles(w, tmpDir, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(written) != 1 {
-		t.Fatalf("expected 1 file written, got %d", len(written))
+	// Expect 2 files: CLAUDE.md + PIPELINE_POSITION.md.
+	if len(written) != 2 {
+		t.Fatalf("expected 2 files written, got %d: %v", len(written), written)
 	}
 	if _, statErr := os.Stat(filepath.Join(identityDir, "CLAUDE.md")); statErr != nil {
 		t.Error("empty instructionsFile should default to writing CLAUDE.md")
@@ -782,5 +810,380 @@ repos:
 
 	if cfg.Trackers != nil {
 		t.Errorf("Trackers = %v, want nil when trackers: absent", cfg.Trackers)
+	}
+}
+
+// --- personaDescription tests ---
+
+func TestPersonaDescription_ExtractsFirstNonHeadingLine(t *testing.T) {
+	tests := []struct {
+		name     string
+		data     string
+		identity string
+		want     string
+	}{
+		{
+			name:     "standard persona",
+			data:     "# Role: Reviewer\n\nI review code carefully.\n",
+			identity: "reviewer",
+			want:     "I review code carefully.",
+		},
+		{
+			name:     "description after blank lines",
+			data:     "# Role: Implementer\n\n\n\nI implement features.\n",
+			identity: "implementer",
+			want:     "I implement features.",
+		},
+		{
+			name:     "heading only — falls back to TitleCaseName",
+			data:     "# Role: QA\n",
+			identity: "qa",
+			want:     "Qa",
+		},
+		{
+			name:     "empty data — falls back to TitleCaseName",
+			data:     "",
+			identity: "docs_writer",
+			want:     "Docs Writer",
+		},
+		{
+			name:     "description after secondary heading — skips headings",
+			data:     "# Role: Security\n\n## Sub\n\nFirst real line.\n",
+			identity: "security",
+			want:     "First real line.",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := personaDescription([]byte(tt.data), tt.identity)
+			if got != tt.want {
+				t.Errorf("personaDescription(%q, %q) = %q, want %q", tt.data, tt.identity, got, tt.want)
+			}
+		})
+	}
+}
+
+// --- PIPELINE_POSITION.md tests ---
+
+// workflowForPipeline creates a three-step workflow with named identities.
+func workflowForPipeline() *Workflow {
+	return &Workflow{
+		Name: "feature",
+		Cataractae: []WorkflowCataractae{
+			{Name: "implement", Type: CataractaeTypeAgent, Identity: "implementer", OnPass: "review"},
+			{Name: "review", Type: CataractaeTypeAgent, Identity: "reviewer", OnPass: "qa"},
+			{Name: "qa", Type: CataractaeTypeAgent, Identity: "qa", OnPass: "done"},
+		},
+	}
+}
+
+// setupIdentityDir creates an identity directory with PERSONA.md and INSTRUCTIONS.md.
+func setupIdentityDir(t *testing.T, cataractaeDir, identity, personaContent string) {
+	t.Helper()
+	dir := filepath.Join(cataractaeDir, identity)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "PERSONA.md"), []byte(personaContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "INSTRUCTIONS.md"), []byte("Do work."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestGenerateCataractaeFiles_WritesPipelinePosition verifies that GenerateCataractaeFiles
+// creates PIPELINE_POSITION.md in each identity directory with correct predecessor/successor.
+func TestGenerateCataractaeFiles_WritesPipelinePosition(t *testing.T) {
+	orig := protocolSkillPathFn
+	protocolSkillPathFn = func() string { return "" }
+	t.Cleanup(func() { protocolSkillPathFn = orig })
+
+	tmpDir := t.TempDir()
+	setupIdentityDir(t, tmpDir, "implementer", "# Role: Implementer\n\nWrites code.\n")
+	setupIdentityDir(t, tmpDir, "reviewer", "# Role: Reviewer\n\nReviews code.\n")
+	setupIdentityDir(t, tmpDir, "qa", "# Role: QA\n\nTests code.\n")
+
+	wf := workflowForPipeline()
+	_, err := GenerateCataractaeFiles(wf, tmpDir, "")
+	if err != nil {
+		t.Fatalf("GenerateCataractaeFiles: %v", err)
+	}
+
+	// Check implementer (first): no predecessor, successor = reviewer.
+	implPos := readFileOrFail(t, filepath.Join(tmpDir, "implementer", "PIPELINE_POSITION.md"))
+	if !strings.Contains(implPos, "Your role: implementer — Writes code.") {
+		t.Errorf("implementer PIPELINE_POSITION.md missing 'Your role: implementer — Writes code.'; got:\n%s", implPos)
+	}
+	if !strings.Contains(implPos, "Predecessor: none — you are first") {
+		t.Errorf("implementer should have no predecessor; got:\n%s", implPos)
+	}
+	if !strings.Contains(implPos, "Successor: reviewer") {
+		t.Errorf("implementer successor should be reviewer; got:\n%s", implPos)
+	}
+
+	// Check reviewer (middle): predecessor = implementer, successor = qa.
+	revPos := readFileOrFail(t, filepath.Join(tmpDir, "reviewer", "PIPELINE_POSITION.md"))
+	if !strings.Contains(revPos, "Your role: reviewer — Reviews code.") {
+		t.Errorf("reviewer PIPELINE_POSITION.md missing 'Your role: reviewer — Reviews code.'; got:\n%s", revPos)
+	}
+	if !strings.Contains(revPos, "Predecessor: implementer") {
+		t.Errorf("reviewer predecessor should be implementer; got:\n%s", revPos)
+	}
+	if !strings.Contains(revPos, "Successor: qa") {
+		t.Errorf("reviewer successor should be qa; got:\n%s", revPos)
+	}
+
+	// Check qa (last): predecessor = reviewer, no successor.
+	qaPos := readFileOrFail(t, filepath.Join(tmpDir, "qa", "PIPELINE_POSITION.md"))
+	if !strings.Contains(qaPos, "Your role: qa — Tests code.") {
+		t.Errorf("qa PIPELINE_POSITION.md missing 'Your role: qa — Tests code.'; got:\n%s", qaPos)
+	}
+	if !strings.Contains(qaPos, "Predecessor: reviewer") {
+		t.Errorf("qa predecessor should be reviewer; got:\n%s", qaPos)
+	}
+	if !strings.Contains(qaPos, "Successor: none — you are last") {
+		t.Errorf("qa should have no successor; got:\n%s", qaPos)
+	}
+}
+
+// readFileOrFail reads a file and fails the test if it cannot be read.
+func readFileOrFail(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile %s: %v", path, err)
+	}
+	return string(data)
+}
+
+// TestGenerateCataractaeFiles_PipelinePosition_SingleIdentity verifies that a
+// single-identity workflow produces "none" for both predecessor and successor.
+func TestGenerateCataractaeFiles_PipelinePosition_SingleIdentity(t *testing.T) {
+	orig := protocolSkillPathFn
+	protocolSkillPathFn = func() string { return "" }
+	t.Cleanup(func() { protocolSkillPathFn = orig })
+
+	tmpDir := t.TempDir()
+	setupIdentityDir(t, tmpDir, "implementer", "# Role: Implementer\n\nWrites code.\n")
+
+	wf := workflowWithIdentity("implementer")
+	_, err := GenerateCataractaeFiles(wf, tmpDir, "")
+	if err != nil {
+		t.Fatalf("GenerateCataractaeFiles: %v", err)
+	}
+
+	pos := readFileOrFail(t, filepath.Join(tmpDir, "implementer", "PIPELINE_POSITION.md"))
+	if !strings.Contains(pos, "Predecessor: none — you are first") {
+		t.Errorf("single-step: expected no predecessor; got:\n%s", pos)
+	}
+	if !strings.Contains(pos, "Successor: none — you are last") {
+		t.Errorf("single-step: expected no successor; got:\n%s", pos)
+	}
+}
+
+// TestGenerateCataractaeFiles_PipelinePosition_DescriptionFromPersona verifies
+// that the neighbor description in PIPELINE_POSITION.md comes from the neighbor's
+// PERSONA.md rather than falling back to TitleCaseName.
+func TestGenerateCataractaeFiles_PipelinePosition_DescriptionFromPersona(t *testing.T) {
+	orig := protocolSkillPathFn
+	protocolSkillPathFn = func() string { return "" }
+	t.Cleanup(func() { protocolSkillPathFn = orig })
+
+	tmpDir := t.TempDir()
+	setupIdentityDir(t, tmpDir, "implementer", "# Role: Implementer\n\nWrites production code.\n")
+	setupIdentityDir(t, tmpDir, "reviewer", "# Role: Reviewer\n\nFinds bugs adversarially.\n")
+
+	wf := &Workflow{
+		Name: "feature",
+		Cataractae: []WorkflowCataractae{
+			{Name: "implement", Type: CataractaeTypeAgent, Identity: "implementer", OnPass: "review"},
+			{Name: "review", Type: CataractaeTypeAgent, Identity: "reviewer", OnPass: "done"},
+		},
+	}
+	_, err := GenerateCataractaeFiles(wf, tmpDir, "")
+	if err != nil {
+		t.Fatalf("GenerateCataractaeFiles: %v", err)
+	}
+
+	revPos := readFileOrFail(t, filepath.Join(tmpDir, "reviewer", "PIPELINE_POSITION.md"))
+	// Predecessor description should come from implementer's PERSONA.md.
+	if !strings.Contains(revPos, "Writes production code.") {
+		t.Errorf("reviewer's predecessor description should include implementer's persona; got:\n%s", revPos)
+	}
+}
+
+// TestGenerateCataractaeFiles_PipelinePosition_OwnRoleIncludesDescription verifies
+// that the "Your role:" line includes the description from the identity's own PERSONA.md,
+// not just the bare identity name.
+func TestGenerateCataractaeFiles_PipelinePosition_OwnRoleIncludesDescription(t *testing.T) {
+	orig := protocolSkillPathFn
+	protocolSkillPathFn = func() string { return "" }
+	t.Cleanup(func() { protocolSkillPathFn = orig })
+
+	tmpDir := t.TempDir()
+	setupIdentityDir(t, tmpDir, "implementer", "# Role: Implementer\n\nWrites production-quality code.\n")
+
+	wf := workflowWithIdentity("implementer")
+	_, err := GenerateCataractaeFiles(wf, tmpDir, "")
+	if err != nil {
+		t.Fatalf("GenerateCataractaeFiles: %v", err)
+	}
+
+	pos := readFileOrFail(t, filepath.Join(tmpDir, "implementer", "PIPELINE_POSITION.md"))
+	if !strings.Contains(pos, "Your role: implementer — Writes production-quality code.") {
+		t.Errorf("expected 'Your role: implementer — Writes production-quality code.' in PIPELINE_POSITION.md; got:\n%s", pos)
+	}
+}
+
+// TestGenerateCataractaeFiles_PipelinePosition_StepNameWhenNoIdentity verifies
+// that steps without an identity (e.g., automated) appear by step name in neighbors'
+// PIPELINE_POSITION.md files.
+func TestGenerateCataractaeFiles_PipelinePosition_StepNameWhenNoIdentity(t *testing.T) {
+	orig := protocolSkillPathFn
+	protocolSkillPathFn = func() string { return "" }
+	t.Cleanup(func() { protocolSkillPathFn = orig })
+
+	tmpDir := t.TempDir()
+	setupIdentityDir(t, tmpDir, "implementer", "# Role: Implementer\n\nWrites code.\n")
+	setupIdentityDir(t, tmpDir, "reviewer", "# Role: Reviewer\n\nReviews code.\n")
+
+	wf := &Workflow{
+		Name: "feature",
+		Cataractae: []WorkflowCataractae{
+			{Name: "implement", Type: CataractaeTypeAgent, Identity: "implementer", OnPass: "merge"},
+			{Name: "merge", Type: CataractaeTypeAutomated, OnPass: "review"},
+			{Name: "review", Type: CataractaeTypeAgent, Identity: "reviewer", OnPass: "done"},
+		},
+	}
+	_, err := GenerateCataractaeFiles(wf, tmpDir, "")
+	if err != nil {
+		t.Fatalf("GenerateCataractaeFiles: %v", err)
+	}
+
+	// implementer's successor is the automated "merge" step (no identity).
+	implPos := readFileOrFail(t, filepath.Join(tmpDir, "implementer", "PIPELINE_POSITION.md"))
+	if !strings.Contains(implPos, "Successor: merge") {
+		t.Errorf("implementer successor should be 'merge' (step name); got:\n%s", implPos)
+	}
+
+	// reviewer's predecessor is the automated "merge" step.
+	revPos := readFileOrFail(t, filepath.Join(tmpDir, "reviewer", "PIPELINE_POSITION.md"))
+	if !strings.Contains(revPos, "Predecessor: merge") {
+		t.Errorf("reviewer predecessor should be 'merge' (step name); got:\n%s", revPos)
+	}
+}
+
+// TestGenerateCataractaeFiles_PipelinePosition_Regenerates verifies that
+// PIPELINE_POSITION.md is overwritten on subsequent calls (idempotent regeneration).
+func TestGenerateCataractaeFiles_PipelinePosition_Regenerates(t *testing.T) {
+	orig := protocolSkillPathFn
+	protocolSkillPathFn = func() string { return "" }
+	t.Cleanup(func() { protocolSkillPathFn = orig })
+
+	tmpDir := t.TempDir()
+	setupIdentityDir(t, tmpDir, "implementer", "# Role: Implementer\n\nFirst description.\n")
+	setupIdentityDir(t, tmpDir, "reviewer", "# Role: Reviewer\n\nReviews code.\n")
+
+	wf := &Workflow{
+		Name: "feature",
+		Cataractae: []WorkflowCataractae{
+			{Name: "implement", Type: CataractaeTypeAgent, Identity: "implementer", OnPass: "review"},
+			{Name: "review", Type: CataractaeTypeAgent, Identity: "reviewer", OnPass: "done"},
+		},
+	}
+	if _, err := GenerateCataractaeFiles(wf, tmpDir, ""); err != nil {
+		t.Fatalf("first generate: %v", err)
+	}
+
+	// Update implementer's persona description.
+	if err := os.WriteFile(filepath.Join(tmpDir, "implementer", "PERSONA.md"),
+		[]byte("# Role: Implementer\n\nUpdated description.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := GenerateCataractaeFiles(wf, tmpDir, ""); err != nil {
+		t.Fatalf("second generate: %v", err)
+	}
+
+	// reviewer's PIPELINE_POSITION.md should now show the updated implementer description.
+	revPos := readFileOrFail(t, filepath.Join(tmpDir, "reviewer", "PIPELINE_POSITION.md"))
+	if !strings.Contains(revPos, "Updated description.") {
+		t.Errorf("PIPELINE_POSITION.md not refreshed after regeneration; got:\n%s", revPos)
+	}
+}
+
+// --- Skill injection tests ---
+
+// TestGenerateCataractaeFiles_CopiesProtocolSkill_WhenAvailable verifies that
+// GenerateCataractaeFiles copies the cataractae-protocol SKILL.md into the
+// identity's skills/ directory when the source is available.
+func TestGenerateCataractaeFiles_CopiesProtocolSkill_WhenAvailable(t *testing.T) {
+	// Set up a fake protocol skill source in a temp dir.
+	skillSrcDir := t.TempDir()
+	skillSrcPath := filepath.Join(skillSrcDir, "SKILL.md")
+	skillContent := []byte("# Cataractae Protocol\n\nUniversal behavioral protocol.\n")
+	if err := os.WriteFile(skillSrcPath, skillContent, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	orig := protocolSkillPathFn
+	protocolSkillPathFn = func() string { return skillSrcPath }
+	t.Cleanup(func() { protocolSkillPathFn = orig })
+
+	tmpDir := t.TempDir()
+	setupIdentityDir(t, tmpDir, "implementer", "# Role: Implementer\n\nWrites code.\n")
+
+	wf := workflowWithIdentity("implementer")
+	written, err := GenerateCataractaeFiles(wf, tmpDir, "")
+	if err != nil {
+		t.Fatalf("GenerateCataractaeFiles: %v", err)
+	}
+
+	// Expect 3 files: instructions + PIPELINE_POSITION.md + skill.
+	if len(written) != 3 {
+		t.Fatalf("expected 3 files written, got %d: %v", len(written), written)
+	}
+
+	// Skill file must exist at the expected location.
+	skillDest := filepath.Join(tmpDir, "implementer", "skills", "cataractae-protocol", "SKILL.md")
+	data, err := os.ReadFile(skillDest)
+	if err != nil {
+		t.Fatalf("skill not copied: %v", err)
+	}
+	if string(data) != string(skillContent) {
+		t.Errorf("skill content mismatch: got %q, want %q", data, skillContent)
+	}
+	// written[2] should be the skill path.
+	if written[2] != skillDest {
+		t.Errorf("written[2] = %q, want %q", written[2], skillDest)
+	}
+}
+
+// TestGenerateCataractaeFiles_SkipsProtocolSkill_WhenSourceMissing verifies that
+// GenerateCataractaeFiles does not fail and skips skill injection when the source
+// is not installed (e.g. fresh environment).
+func TestGenerateCataractaeFiles_SkipsProtocolSkill_WhenSourceMissing(t *testing.T) {
+	orig := protocolSkillPathFn
+	protocolSkillPathFn = func() string { return "" }
+	t.Cleanup(func() { protocolSkillPathFn = orig })
+
+	tmpDir := t.TempDir()
+	setupIdentityDir(t, tmpDir, "implementer", "# Role: Implementer\n\nWrites code.\n")
+
+	wf := workflowWithIdentity("implementer")
+	written, err := GenerateCataractaeFiles(wf, tmpDir, "")
+	if err != nil {
+		t.Fatalf("GenerateCataractaeFiles: %v", err)
+	}
+
+	// Expect only 2 files: instructions + PIPELINE_POSITION.md — no skill file.
+	if len(written) != 2 {
+		t.Errorf("expected 2 files, got %d: %v", len(written), written)
+	}
+
+	// No skills directory should be created.
+	if _, statErr := os.Stat(filepath.Join(tmpDir, "implementer", "skills")); statErr == nil {
+		t.Error("skills directory should not be created when source skill is missing")
 	}
 }

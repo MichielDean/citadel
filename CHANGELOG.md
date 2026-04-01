@@ -6,6 +6,40 @@
 
 Cistern now detects and automatically breaks deadlock cycles where an implementer recirculates on an unresolved reviewer-opened issue. Previously, droplets could become stuck indefinitely: the reviewer cataractae never runs to verify the fix and close the issue, while the implementer cannot advance without closing it.
 
+### Cataractae Protocol: universal behavioral standard for pipeline stages (ci-dtg02)
+
+Added a shared skill file (`skills/cataractae-protocol/SKILL.md`) injected into every cataractae at generation time. This skill establishes:
+
+- **Pipeline Position**: Each cataractae understands its role, predecessors, and successors in the pipeline
+- **Pass Criteria**: Clear conditions for signaling work completion (own work done, issues resolved, counter-arguments addressed)
+- **Recirculate Protocol**: Requirements for sending work back upstream (must specify what's unresolved, next focus, and whether it's a new or existing issue)
+- **Discourse Protocol**: Standard conventions for opening issues and responding with counter-arguments, verified fixes, and rejections
+- **Cycle Cap**: Mechanism to prevent infinite cycling — after 4 consecutive unresolved cycles, droplet pools with a discourse summary
+- **Note Conventions**: Five structured tags (`[issue:<id>]`, `[counter-argument:<id>]`, `[verified-fix:<id>]`, `[rejected-argument:<id>]`, `[discourse-summary]`) for issue tracking and resolution
+
+This standardizes cross-cataractae communication, issue resolution, and ensures all agents in the pipeline follow consistent protocols for work signaling and feedback.
+
+### Cataractae Generation: inject protocol skill and pipeline position (ci-bz0t3)
+
+`ct cataractae generate` now automatically injects the cataractae-protocol skill and creates pipeline position documentation for every generated cataractae.
+
+**Key changes:**
+- **Protocol skill injection**: The `skills/cataractae-protocol/SKILL.md` skill is copied into each cataractae's `skills/` directory during generation. Every agent then has access to the discourse protocol, pass criteria, cycle cap rules, and note conventions without manual per-cataractae configuration.
+- **Pipeline position documentation**: A `PIPELINE_POSITION.md` file is created in each cataractae directory, documenting:
+  - **Your role**: The cataractae's identity and role description (from PERSONA.md)
+  - **Predecessor**: The immediately preceding step in the workflow (or "none" if first)
+  - **Successor**: The immediately following step in the workflow (or "none" if last)
+
+  This gives every agent minimal context about handoff expectations without reading the full workflow definition.
+
+**Regeneration behavior**: When `ct cataractae generate` runs on an existing aqueduct, `PIPELINE_POSITION.md` is refreshed if the workflow has changed (e.g., steps added, removed, or reordered), ensuring position context stays accurate.
+
+**Impact**: All generated cataractae now inherit a universal behavioral protocol and understand their position in the pipeline, improving consistency and reducing per-agent manual configuration. The injected skill is the canonical source of protocol documentation; CLAUDE.md may reference it if clarification is needed.
+
+### Scheduler: restart at implement when cataractae recirculates with no route (ci-vhn73)
+
+The Castellarius scheduler now safely recovers from recirculate signals that have no configured route, instead of silently auto-promoting to pass.
+
 **Key changes:**
 - **Loop detection**: When a step recirculates to itself, the scheduler checks if an open issue was filed by a different cataractae (typically reviewer)
 - **Automatic routing**: If the same reviewer issue appears in the last 2 consecutive recirculations, the droplet is automatically routed to the reviewer cataractae to verify and close the issue

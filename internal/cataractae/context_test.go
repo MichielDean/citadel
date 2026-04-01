@@ -586,3 +586,92 @@ func TestWriteContextFile_NoTwoPhaseWhenOnlyForeignIssues(t *testing.T) {
 		t.Error("qa issue must appear in read-only background section even when security has no own issues")
 	}
 }
+
+func TestReadSkillDescription_SkipsFrontmatter(t *testing.T) {
+	cases := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{
+			// After skipping frontmatter and the heading, the first body line is returned.
+			name:    "WithFrontmatter_ReturnsFirstBodyLine",
+			content: "---\nname: my-skill\ndescription: Actual description here\ntype: user\n---\n\n# My Skill\n\nSome body text.\n",
+			want:    "Some body text.",
+		},
+		{
+			// Frontmatter is skipped; heading after frontmatter is also skipped; body line returned.
+			name:    "WithFrontmatter_SkipsHeadingAfterFrontmatter",
+			content: "---\nname: cataractae-protocol\ndescription: Protocol for cataractae agents\n---\n\n# Cataractae Protocol\n\nThe real description starts here.\n",
+			want:    "The real description starts here.",
+		},
+		{
+			name:    "WithoutFrontmatter_ReturnsFirstContentLine",
+			content: "# My Skill\n\nThe description line.\n",
+			want:    "The description line.",
+		},
+		{
+			name:    "FrontmatterOnly_FallsBackToDir",
+			content: "---\nname: empty\n---\n",
+			want:    "", // signals fallback to dir name
+		},
+		{
+			// Opening --- must be the very first line to be treated as frontmatter.
+			name:    "DashesNotFirstLine_NotTreatedAsFrontmatter",
+			content: "The real first line.\n---\nsome other content\n",
+			want:    "The real first line.",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			skillDir := filepath.Join(dir, "my-skill")
+			if err := os.MkdirAll(skillDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(skillDir, "SKILL.md")
+			if err := os.WriteFile(path, []byte(tc.content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			got := readSkillDescription(path)
+
+			if tc.want == "" {
+				// FrontmatterOnly case: falls back to directory name
+				if got != "my-skill" {
+					t.Errorf("want fallback %q, got %q", "my-skill", got)
+				}
+				return
+			}
+			if got != tc.want {
+				t.Errorf("want %q, got %q", tc.want, got)
+			}
+		})
+	}
+}
+
+func TestReadSkillDescription_WithFrontmatter_DoesNotReturnDashes(t *testing.T) {
+	// Regression test for ci-bz0t3: SKILL.md files with YAML frontmatter were
+	// returning "---" as the description because the function did not skip the
+	// frontmatter block. All 5 skills in the repo have frontmatter.
+	dir := t.TempDir()
+	skillDir := filepath.Join(dir, "cataractae-protocol")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(skillDir, "SKILL.md")
+	content := "---\nname: cataractae-protocol\ndescription: Discourse protocol for cataractae agents\ntype: reference\n---\n\n# Cataractae Protocol\n\nThis skill describes the protocol.\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := readSkillDescription(path)
+
+	if got == "---" {
+		t.Error("readSkillDescription must not return '---' for SKILL.md files with YAML frontmatter")
+	}
+	if got == "" {
+		t.Error("readSkillDescription must return a non-empty description")
+	}
+}

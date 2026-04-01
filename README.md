@@ -168,15 +168,17 @@ Each cataractae is a self-contained directory under `cataractae/<identity>/` in 
 ```
 cataractae/
   implementer/
-    PERSONA.md        # Who this cataractae is — role, guardrails (hand-authored, stable)
-    INSTRUCTIONS.md   # Task protocol and steps (hand-authored)
-    CLAUDE.md         # Generated: concatenated from PERSONA.md + INSTRUCTIONS.md (filename depends on provider)
+    PERSONA.md                               # Who this cataractae is — role, guardrails (hand-authored, stable)
+    INSTRUCTIONS.md                          # Task protocol and steps (hand-authored)
+    CLAUDE.md                                # Generated: concatenated from PERSONA.md + INSTRUCTIONS.md (filename depends on provider)
+    PIPELINE_POSITION.md                     # Generated: describes role, predecessor, successor in the workflow
+    skills/cataractae-protocol/SKILL.md      # Generated: injected universal behavioral protocol
   reviewer/
   qa/
   ...
 ```
 
-The generated instructions file is a generated artifact — edit `PERSONA.md` and `INSTRUCTIONS.md` directly and regenerate. The filename matches the active provider: `CLAUDE.md` for claude, `AGENTS.md` for codex/copilot/opencode, `GEMINI.md` for gemini.
+The generated files (`CLAUDE.md`, `PIPELINE_POSITION.md`, and injected skills) are generated artifacts — edit `PERSONA.md` and `INSTRUCTIONS.md` directly and regenerate. The instructions filename matches the active provider: `CLAUDE.md` for claude, `AGENTS.md` for codex/copilot/opencode, `GEMINI.md` for gemini.
 
 ```bash
 ct cataractae add <name>            # Scaffold a new cataractae directory with template files; auto-generates the provider's instructions file

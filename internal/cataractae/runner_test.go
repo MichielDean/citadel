@@ -708,6 +708,84 @@ func TestWriteContextFile_NoSkillsBlock_WhenEmpty(t *testing.T) {
 	}
 }
 
+// TestWriteContextFile_InjectedSkillsFromCataractaeDir_AppearFirst verifies that
+// skills injected into the identity's local skills/ directory are listed first in
+// <available_skills>, before YAML-configured global skills.
+func TestWriteContextFile_InjectedSkillsFromCataractaeDir_AppearFirst(t *testing.T) {
+	dir := t.TempDir()
+
+	// Override cataractaeDirFn to return dir directly (identity dir = dir/implementer/).
+	orig := cataractaeDirFn
+	cataractaeDirFn = func(_ string) string { return dir }
+	t.Cleanup(func() { cataractaeDirFn = orig })
+
+	// Create injected cataractae-protocol skill in identity's local skills dir.
+	skillDir := filepath.Join(dir, "implementer", "skills", "cataractae-protocol")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	injectedSkillPath := filepath.Join(skillDir, "SKILL.md")
+	if err := os.WriteFile(injectedSkillPath, []byte("# Cataractae Protocol\n\nUniversal protocol.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create global my-skill under a fake HOME.
+	globalSkillDir := filepath.Join(dir, ".cistern", "skills", "my-skill")
+	if err := os.MkdirAll(globalSkillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(globalSkillDir, "SKILL.md"),
+		[]byte("# My Skill\n\nDoes things.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", dir)
+
+	path := filepath.Join(dir, "CONTEXT.md")
+	item := &cistern.Droplet{ID: "inj-1", Title: "Injection test", Status: "open", Priority: 1}
+	step := &aqueduct.WorkflowCataractae{
+		Name:     "implement",
+		Type:     aqueduct.CataractaeTypeAgent,
+		Identity: "implementer",
+		Context:  aqueduct.ContextFullCodebase,
+		Skills:   []aqueduct.SkillRef{{Name: "my-skill"}},
+	}
+
+	err := writeContextFile(path, ContextParams{
+		Level:      aqueduct.ContextFullCodebase,
+		SandboxDir: dir,
+		Item:       item,
+		Step:       step,
+	})
+	if err != nil {
+		t.Fatalf("writeContextFile: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read CONTEXT.md: %v", err)
+	}
+	content := string(data)
+
+	// Injected skill must be listed.
+	if !strings.Contains(content, "<name>cataractae-protocol</name>") {
+		t.Error("CONTEXT.md missing injected cataractae-protocol skill")
+	}
+	if !strings.Contains(content, "<location>"+injectedSkillPath+"</location>") {
+		t.Errorf("CONTEXT.md missing local skill path %q", injectedSkillPath)
+	}
+	if !strings.Contains(content, "<description>Universal protocol.</description>") {
+		t.Error("CONTEXT.md missing injected skill description")
+	}
+
+	// Injected skill must appear BEFORE the global skill.
+	protocolIdx := strings.Index(content, "cataractae-protocol")
+	mySkillIdx := strings.Index(content, "my-skill")
+	if protocolIdx == -1 || mySkillIdx == -1 || protocolIdx > mySkillIdx {
+		t.Errorf("injected cataractae-protocol should appear before global my-skill; protocol at %d, my-skill at %d",
+			protocolIdx, mySkillIdx)
+	}
+}
+
 func TestYAMLRoundTrip_SkillsField(t *testing.T) {
 	// Test that Skills field round-trips through YAML unmarshal.
 	raw := `

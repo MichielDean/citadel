@@ -241,6 +241,13 @@ ct cataractae generate           # Generate any missing stage configs
 ct cataractae render --step <name> [--droplet <id>]  # Preview rendered template for authoring
 ```
 
+**`ct cataractae generate`** generates configuration files for all cataractae defined in the workflow. For each step, it creates or updates:
+- `CLAUDE.md` (or `AGENTS.md`, `GEMINI.md` depending on the configured provider) — the rendered instructions template for the agent
+- `PIPELINE_POSITION.md` — documents the step's role, predecessor, and successor in the workflow
+- `skills/cataractae-protocol/SKILL.md` — injects the universal behavioral protocol skill (copied from the installed skill)
+
+Run this command after modifying `PERSONA.md`, `INSTRUCTIONS.md`, or the workflow configuration. Missing configurations are skipped gracefully.
+
 **`ct cataractae render`** previews the rendered CLAUDE.md template for a given step, substituting all template variables (step metadata, droplet info, etc.). Useful for authoring and debugging pipeline stage configurations.
 Without `--droplet`, uses placeholder values so you can inspect the template structure without a real droplet.
 

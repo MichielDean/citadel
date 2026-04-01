@@ -309,14 +309,23 @@ func writeContextFile(path string, p ContextParams) error {
 	writeNoteSection("## Manual Notes", manualNotes)
 	writeNoteSection("## Scheduler Notes", schedulerNotes)
 
-	if len(p.Step.Skills) > 0 {
+	injected := injectedSkillsForIdentity(cataractaeDirFn(p.SandboxDir), p.Step.Identity)
+	if len(injected) > 0 || len(p.Step.Skills) > 0 {
 		b.WriteString("<available_skills>\n")
-		for _, skill := range p.Step.Skills {
+		writeSkill := func(name, desc, loc string) {
 			b.WriteString("  <skill>\n")
-			b.WriteString(fmt.Sprintf("    <name>%s</name>\n", xmlEscape(skill.Name)))
-			b.WriteString(fmt.Sprintf("    <description>%s</description>\n", xmlEscape(skillDescription(skill.Name))))
-			b.WriteString(fmt.Sprintf("    <location>%s</location>\n", xmlEscape(skills.LocalPath(skill.Name))))
+			b.WriteString(fmt.Sprintf("    <name>%s</name>\n", xmlEscape(name)))
+			b.WriteString(fmt.Sprintf("    <description>%s</description>\n", xmlEscape(desc)))
+			b.WriteString(fmt.Sprintf("    <location>%s</location>\n", xmlEscape(loc)))
 			b.WriteString("  </skill>\n")
+		}
+		// Injected skills (from the identity's local skills/ dir) appear first.
+		for _, sk := range injected {
+			writeSkill(sk.Name, readSkillDescription(sk.Path), sk.Path)
+		}
+		// Then YAML-configured global skills.
+		for _, skill := range p.Step.Skills {
+			writeSkill(skill.Name, skillDescription(skill.Name), skills.LocalPath(skill.Name))
 		}
 		b.WriteString("</available_skills>\n\n")
 	}
@@ -337,21 +346,80 @@ func writeContextFile(path string, p ContextParams) error {
 	return os.WriteFile(path, []byte(b.String()), 0644)
 }
 
+// cataractaeDirFn returns the cataractae directory for the given sandbox dir.
+// Overridable in tests.
+var cataractaeDirFn = func(sandboxDir string) string {
+	return filepath.Join(sandboxDir, "cataractae")
+}
+
+// injectedSkillEntry holds the name and absolute path of a skill injected into a
+// cataractae identity's local skills/ directory.
+type injectedSkillEntry struct {
+	Name string
+	Path string
+}
+
+// injectedSkillsForIdentity scans <cataractaeDir>/<identity>/skills/ for skill directories
+// that contain SKILL.md. Returns nil when identity is empty or the directory does not exist.
+func injectedSkillsForIdentity(cataractaeDir, identity string) []injectedSkillEntry {
+	if identity == "" {
+		return nil
+	}
+	skillsDir := filepath.Join(cataractaeDir, identity, "skills")
+	entries, err := os.ReadDir(skillsDir)
+	if err != nil {
+		return nil
+	}
+	var result []injectedSkillEntry
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		skillPath := filepath.Join(skillsDir, e.Name(), "SKILL.md")
+		if _, statErr := os.Stat(skillPath); statErr != nil {
+			continue
+		}
+		result = append(result, injectedSkillEntry{Name: e.Name(), Path: skillPath})
+	}
+	return result
+}
+
+// readSkillDescription reads the first non-empty, non-heading line from a SKILL.md
+// at path as a brief description. YAML frontmatter (lines between the opening and
+// closing --- delimiters at the top of the file) is skipped before scanning.
+// Falls back to filepath.Base(filepath.Dir(path)) (the skill directory name) when
+// the file is absent or contains only headings/frontmatter.
+func readSkillDescription(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return filepath.Base(filepath.Dir(path))
+	}
+	lines := strings.Split(string(data), "\n")
+	inFrontmatter := false
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if i == 0 && trimmed == "---" {
+			inFrontmatter = true
+			continue
+		}
+		if inFrontmatter {
+			if trimmed == "---" {
+				inFrontmatter = false
+			}
+			continue
+		}
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		return trimmed
+	}
+	return filepath.Base(filepath.Dir(path))
+}
+
 // skillDescription reads the cached SKILL.md for name and returns the first
 // non-heading, non-empty line as a brief description. Falls back to name.
 func skillDescription(name string) string {
-	data, err := os.ReadFile(skills.LocalPath(name))
-	if err != nil {
-		return name
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		return line
-	}
-	return name
+	return readSkillDescription(skills.LocalPath(name))
 }
 
 // generateDiff captures all committed changes on the item's feature branch vs
