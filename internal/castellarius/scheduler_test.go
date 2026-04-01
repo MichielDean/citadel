@@ -763,15 +763,12 @@ func TestTick_RecirculateNoRoute_WritesStructuredNoteAndRestartsAtImplement(t *t
 	// And: exactly one structured routing note is attached.
 	noteCount := 0
 	for _, n := range client.attached {
-		if n.id == "b1" &&
-			strings.Contains(n.notes, "[scheduler:routing]") &&
-			strings.Contains(n.notes, "implement") &&
-			strings.Contains(n.notes, "on_recirculate") {
+		if n.id == "b1" && strings.Contains(n.notes, "[scheduler:routing]") && strings.Contains(n.notes, "restarting at implement") {
 			noteCount++
 		}
 	}
 	if noteCount != 1 {
-		t.Errorf("expected exactly one structured [scheduler:routing] note, got %d; notes: %v", noteCount, client.attached)
+		t.Errorf("expected exactly one structured routing note, got %d; notes: %v", noteCount, client.attached)
 	}
 }
 
