@@ -560,7 +560,7 @@ func TestPeekHTTP_LinesQueryParam(t *testing.T) {
 }
 
 // TestWsUpgrade_CrossOriginRejected verifies that wsUpgrade returns 403 Forbidden
-// for WebSocket requests with a non-localhost Origin header.
+// for WebSocket requests with a non-localhost, non-LAN Origin header.
 func TestWsUpgrade_CrossOriginRejected(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -568,7 +568,6 @@ func TestWsUpgrade_CrossOriginRejected(t *testing.T) {
 	}{
 		{"evil_http", "http://evil.com"},
 		{"evil_https", "https://evil.com"},
-		{"remote_ip", "http://192.168.1.1:8080"},
 		{"localhost_subdomain", "http://localhost.evil.com"},
 		{"127_lookalike", "http://127.0.0.1.evil.com"},
 	}
@@ -615,6 +614,34 @@ func TestWsUpgrade_LocalhostOriginAllowed(t *testing.T) {
 			mux.ServeHTTP(w, req)
 			if w.Code == http.StatusForbidden {
 				t.Errorf("Origin %q: got 403, want non-403 (localhost origin must be allowed)", tc.origin)
+			}
+		})
+	}
+}
+
+// TestWsUpgrade_LANOriginAllowed verifies that wsUpgrade permits WebSocket
+// requests from RFC 1918 LAN addresses (the dashboard is a local tool and
+// LAN access from e.g. 192.168.x.x is expected).
+func TestWsUpgrade_LANOriginAllowed(t *testing.T) {
+	cases := []struct {
+		name   string
+		origin string
+	}{
+		{"192_168", "http://192.168.0.138:5737"},
+		{"10_x", "http://10.0.0.1:5737"},
+		{"172_16", "http://172.16.0.1:5737"},
+	}
+	mux := newDashboardMux(tempCfg(t), tempDB(t))
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/ws/aqueducts/virgo/peek", nil)
+			req.Header.Set("Upgrade", "websocket")
+			req.Header.Set("Sec-Websocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+			req.Header.Set("Origin", tc.origin)
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, req)
+			if w.Code == http.StatusForbidden {
+				t.Errorf("Origin %q: got 403, want non-403 (LAN origin must be allowed)", tc.origin)
 			}
 		})
 	}

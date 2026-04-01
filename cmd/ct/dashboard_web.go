@@ -247,6 +247,25 @@ func wsReadClientFrame(br *bufio.Reader, buf []byte) (opcode byte, payload []byt
 // wsUpgrade performs the RFC 6455 handshake. On success it returns the hijacked
 // connection and its buffered read-writer. On failure it writes an HTTP error
 // and returns a non-nil error.
+// isAllowedWSOrigin returns true for localhost and private-network (RFC 1918)
+// addresses. The dashboard is a local tool — LAN access is expected.
+func isAllowedWSOrigin(host string) bool {
+	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	for _, cidr := range []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"} {
+		_, network, _ := net.ParseCIDR(cidr)
+		if network.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
 func wsUpgrade(w http.ResponseWriter, r *http.Request) (net.Conn, *bufio.ReadWriter, error) {
 	// Validate Origin header to prevent cross-origin WebSocket hijacking.
 	// Browsers allow JS on any origin to connect to localhost WS endpoints, so
@@ -258,7 +277,7 @@ func wsUpgrade(w http.ResponseWriter, r *http.Request) (net.Conn, *bufio.ReadWri
 			return nil, nil, fmt.Errorf("invalid Origin header: %w", err)
 		}
 		h := u.Hostname()
-		if h != "localhost" && h != "127.0.0.1" && h != "::1" {
+		if !isAllowedWSOrigin(h) {
 			http.Error(w, "cross-origin WebSocket request rejected", http.StatusForbidden)
 			return nil, nil, fmt.Errorf("cross-origin WebSocket rejected: %s", origin)
 		}
