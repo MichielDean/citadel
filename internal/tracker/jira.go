@@ -84,7 +84,7 @@ func (p *jiraProvider) FetchIssue(key string) (*ExternalIssue, error) {
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return nil, fmt.Errorf("tracker: read response for %s: %w", key, err)
 	}
