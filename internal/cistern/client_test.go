@@ -1453,6 +1453,238 @@ func TestGetReady_CaseInsensitiveRepo_ReturnsDropletStoredWithWrongCase(t *testi
 	}
 }
 
+// TestExternalRef_IsNullByDefault verifies that a new droplet has an empty
+// ExternalRef — the column defaults to NULL and is scanned as an empty string.
+func TestExternalRef_IsNullByDefault(t *testing.T) {
+	c := testClient(t)
+	item, err := c.Add("myrepo", "Task", "", 1, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := c.Get(item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ExternalRef != "" {
+		t.Errorf("ExternalRef = %q, want empty string", got.ExternalRef)
+	}
+}
+
+// TestSetExternalRef_And_Get_RoundTrips verifies that SetExternalRef persists
+// the external reference and Get returns it correctly.
+func TestSetExternalRef_And_Get_RoundTrips(t *testing.T) {
+	c := testClient(t)
+	item, err := c.Add("myrepo", "Imported task", "", 1, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// When: SetExternalRef is called with a valid provider:key value.
+	if err := c.SetExternalRef(item.ID, "jira:DPF-456"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Then: Get returns the stored external_ref.
+	got, err := c.Get(item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ExternalRef != "jira:DPF-456" {
+		t.Errorf("ExternalRef = %q, want %q", got.ExternalRef, "jira:DPF-456")
+	}
+}
+
+// TestSetExternalRef_ClearsField_WhenEmptyStringPassed verifies that passing an
+// empty string to SetExternalRef stores NULL (returned as empty string by Get).
+func TestSetExternalRef_ClearsField_WhenEmptyStringPassed(t *testing.T) {
+	c := testClient(t)
+	item, err := c.Add("myrepo", "Imported task", "", 1, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SetExternalRef(item.ID, "linear:LIN-789"); err != nil {
+		t.Fatal(err)
+	}
+
+	// When: SetExternalRef is called with empty string.
+	if err := c.SetExternalRef(item.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	// Then: Get returns an empty ExternalRef.
+	got, err := c.Get(item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ExternalRef != "" {
+		t.Errorf("ExternalRef after clear = %q, want empty string", got.ExternalRef)
+	}
+}
+
+// TestExternalRef_RoundTrips_ThroughGetReady verifies that GetReady returns the
+// external_ref stored on the droplet.
+func TestExternalRef_RoundTrips_ThroughGetReady(t *testing.T) {
+	c := testClient(t)
+	item, err := c.Add("myrepo", "Task", "", 1, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SetExternalRef(item.ID, "jira:PROJ-123"); err != nil {
+		t.Fatal(err)
+	}
+
+	// When: GetReady is called.
+	got, err := c.GetReady("myrepo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil {
+		t.Fatal("expected droplet, got nil")
+	}
+
+	// Then: ExternalRef is populated.
+	if got.ExternalRef != "jira:PROJ-123" {
+		t.Errorf("GetReady ExternalRef = %q, want %q", got.ExternalRef, "jira:PROJ-123")
+	}
+}
+
+// TestExternalRef_RoundTrips_ThroughList verifies that List returns the
+// external_ref stored on each droplet.
+func TestExternalRef_RoundTrips_ThroughList(t *testing.T) {
+	c := testClient(t)
+	item, err := c.Add("myrepo", "Task", "", 1, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SetExternalRef(item.ID, "linear:LIN-42"); err != nil {
+		t.Fatal(err)
+	}
+
+	// When: List is called.
+	items, err := c.List("myrepo", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("List returned %d items, want 1", len(items))
+	}
+
+	// Then: ExternalRef is populated.
+	if items[0].ExternalRef != "linear:LIN-42" {
+		t.Errorf("List ExternalRef = %q, want %q", items[0].ExternalRef, "linear:LIN-42")
+	}
+}
+
+// TestExternalRef_RoundTrips_ThroughSearch verifies that Search returns the
+// external_ref stored on each droplet.
+func TestExternalRef_RoundTrips_ThroughSearch(t *testing.T) {
+	c := testClient(t)
+	item, err := c.Add("myrepo", "Imported feature", "", 1, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SetExternalRef(item.ID, "jira:FEAT-99"); err != nil {
+		t.Fatal(err)
+	}
+
+	// When: Search is called.
+	results, err := c.Search("Imported", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("Search returned %d items, want 1", len(results))
+	}
+
+	// Then: ExternalRef is populated.
+	if results[0].ExternalRef != "jira:FEAT-99" {
+		t.Errorf("Search ExternalRef = %q, want %q", results[0].ExternalRef, "jira:FEAT-99")
+	}
+}
+
+// TestSetExternalRef_ReturnsError_WhenDropletNotFound verifies that SetExternalRef
+// returns an error when the given ID does not exist in the database.
+func TestSetExternalRef_ReturnsError_WhenDropletNotFound(t *testing.T) {
+	c := testClient(t)
+	err := c.SetExternalRef("nonexistent-id", "jira:DPF-1")
+	if err == nil {
+		t.Error("expected error for non-existent droplet, got nil")
+	}
+}
+
+// TestSetExternalRef_RejectsInvalidFormat verifies that SetExternalRef returns
+// an error when the ref contains characters that are invalid in git branch
+// names or that break the delivery shell awk extraction (spaces, ~, ^, etc.).
+func TestSetExternalRef_RejectsInvalidFormat(t *testing.T) {
+	c := testClient(t)
+	item, err := c.Add("myrepo", "Task", "", 1, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name string
+		ref  string
+	}{
+		{"space in key", "jira:DPF 456"},
+		{"tilde in key", "jira:DPF~456"},
+		{"caret in key", "jira:DPF^456"},
+		{"colon in key", "jira:DPF:456"},
+		{"question mark in key", "jira:DPF?456"},
+		{"asterisk in key", "jira:DPF*456"},
+		{"bracket in key", "jira:[DPF456"},
+		{"backslash in key", `jira:\DPF456`},
+		{"space in provider", "jir a:DPF-456"},
+		{"no colon", "DPF-456"},
+		{"empty key", "jira:"},
+		{"empty provider", ":DPF-456"},
+		{"space after colon", "jira: DPF-456"},
+		{"consecutive dots in key", "jira:DPF..456"},
+		{"trailing dot in key", "jira:DPF."},
+		{"trailing .lock in key", "jira:DPF.lock"},
+		{"leading dot in key", "jira:.DPF-456"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// When: SetExternalRef is called with an invalid format.
+			err := c.SetExternalRef(item.ID, tc.ref)
+			// Then: an error is returned and the field is not updated.
+			if err == nil {
+				t.Errorf("SetExternalRef(%q): expected error for invalid format, got nil", tc.ref)
+			}
+		})
+	}
+}
+
+// TestSetExternalRef_AcceptsValidFormats verifies that SetExternalRef accepts
+// well-formed 'provider:key' values with git-branch-safe characters.
+func TestSetExternalRef_AcceptsValidFormats(t *testing.T) {
+	c := testClient(t)
+	item, err := c.Add("myrepo", "Task", "", 1, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []string{
+		"jira:DPF-456",
+		"linear:LIN-789",
+		"jira:FEAT.99",
+		"jira:FEAT_99",
+		"my-provider:ABC-123",
+		"github:issue-42",
+	}
+
+	for _, ref := range cases {
+		t.Run(ref, func(t *testing.T) {
+			// When: SetExternalRef is called with a valid format.
+			if err := c.SetExternalRef(item.ID, ref); err != nil {
+				t.Errorf("SetExternalRef(%q): unexpected error: %v", ref, err)
+			}
+		})
+	}
+}
+
 // TestGetReadyForAqueduct_CaseInsensitiveRepo_ReturnsDroplet verifies that
 // GetReadyForAqueduct respects case-insensitive repo matching.
 func TestGetReadyForAqueduct_CaseInsensitiveRepo_ReturnsDroplet(t *testing.T) {
@@ -1744,5 +1976,39 @@ func TestSetAssignedAqueduct_WhenAlreadySet_DoesNotOverwrite(t *testing.T) {
 	}
 	if got.AssignedAqueduct != "cistern-alpha" {
 		t.Errorf("AssignedAqueduct after second SetAssignedAqueduct = %q, want %q (original must not be overwritten)", got.AssignedAqueduct, "cistern-alpha")
+	}
+}
+
+// TestExternalRef_RoundTrips_ThroughGetReadyForAqueduct verifies that
+// GetReadyForAqueduct — the primary dispatch path used by the castellarius —
+// returns the external_ref stored on the droplet.
+//
+// Given: a droplet with ExternalRef "jira:DPF-456" in the ready state
+// When:  GetReadyForAqueduct is called for the droplet's repo and aqueduct
+// Then:  the returned droplet has ExternalRef == "jira:DPF-456"
+func TestExternalRef_RoundTrips_ThroughGetReadyForAqueduct(t *testing.T) {
+	c := testClient(t)
+	// Given: a droplet with an external_ref set.
+	item, err := c.Add("myrepo", "Imported task", "", 1, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SetExternalRef(item.ID, "jira:DPF-456"); err != nil {
+		t.Fatal(err)
+	}
+
+	// When: GetReadyForAqueduct is called (droplet has no assigned aqueduct, so it
+	// is eligible for any aqueduct).
+	got, err := c.GetReadyForAqueduct("myrepo", "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil {
+		t.Fatal("GetReadyForAqueduct: expected droplet, got nil")
+	}
+
+	// Then: ExternalRef is populated.
+	if got.ExternalRef != "jira:DPF-456" {
+		t.Errorf("GetReadyForAqueduct ExternalRef = %q, want %q", got.ExternalRef, "jira:DPF-456")
 	}
 }

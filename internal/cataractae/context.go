@@ -168,6 +168,9 @@ func writeContextFile(path string, p ContextParams) error {
 	if p.Item.Assignee != "" {
 		b.WriteString(fmt.Sprintf("**Assignee:** %s\n", p.Item.Assignee))
 	}
+	if p.Item.ExternalRef != "" {
+		b.WriteString(fmt.Sprintf("**External Ref:** %s\n", p.Item.ExternalRef))
+	}
 	b.WriteString("\n")
 
 	if p.Item.Description != "" {

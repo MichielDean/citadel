@@ -486,6 +486,60 @@ func TestWriteContextFile_RecentStepNotes_MatchesByIdentity(t *testing.T) {
 	}
 }
 
+// TestWriteContextFile_ExternalRef_WrittenToContextMd verifies that when a
+// droplet has an ExternalRef set, writeContextFile emits it in the exact format
+// that the delivery cataractae shell script greps for:
+//   grep '^\*\*External Ref:\*\*' CONTEXT.md | awk '{print $3}'
+//
+// Given: a droplet with ExternalRef "jira:DPF-456"
+// When:  writeContextFile is called
+// Then:  CONTEXT.md contains the line "**External Ref:** jira:DPF-456"
+//
+// Also verifies the negative case: when ExternalRef is empty, no External Ref
+// line is written (the delivery cataractae would read an empty REF_KEY).
+func TestWriteContextFile_ExternalRef_WrittenToContextMd(t *testing.T) {
+	step := &aqueduct.WorkflowCataractae{Name: "deliver", Type: "agent"}
+
+	t.Run("ExternalRef set", func(t *testing.T) {
+		item := &cistern.Droplet{ID: "ci-ikbj2-t1", Title: "Imported task", Status: "in_progress", ExternalRef: "jira:DPF-456"}
+		p := ContextParams{Item: item, Step: step}
+		ctxPath := filepath.Join(t.TempDir(), "CONTEXT.md")
+		if err := writeContextFile(ctxPath, p); err != nil {
+			t.Fatalf("writeContextFile: %v", err)
+		}
+		content, err := os.ReadFile(ctxPath)
+		if err != nil {
+			t.Fatalf("ReadFile: %v", err)
+		}
+		got := string(content)
+		// The delivery cataractae greps for exactly this pattern:
+		//   grep '^\*\*External Ref:\*\*' CONTEXT.md | awk '{print $3}'
+		// awk '{print $3}' returns the third whitespace-separated field, which is
+		// the value. The line must be exactly "**External Ref:** jira:DPF-456".
+		want := "**External Ref:** jira:DPF-456"
+		if !strings.Contains(got, want) {
+			t.Errorf("CONTEXT.md missing %q — delivery shell would parse empty REF_KEY\ngot:\n%s", want, got)
+		}
+	})
+
+	t.Run("ExternalRef empty", func(t *testing.T) {
+		item := &cistern.Droplet{ID: "ci-ikbj2-t2", Title: "Native task", Status: "in_progress", ExternalRef: ""}
+		p := ContextParams{Item: item, Step: step}
+		ctxPath := filepath.Join(t.TempDir(), "CONTEXT.md")
+		if err := writeContextFile(ctxPath, p); err != nil {
+			t.Fatalf("writeContextFile: %v", err)
+		}
+		content, err := os.ReadFile(ctxPath)
+		if err != nil {
+			t.Fatalf("ReadFile: %v", err)
+		}
+		got := string(content)
+		if strings.Contains(got, "**External Ref:**") {
+			t.Error("CONTEXT.md must not contain '**External Ref:**' when ExternalRef is empty")
+		}
+	})
+}
+
 // TestWriteContextFile_NoTwoPhaseWhenOnlyForeignIssues verifies that the
 // two-phase review template is NOT shown when all OpenIssues belong to other
 // cataractae — the current reviewer has no own issues to verify (ci-0y5ha fix 3).

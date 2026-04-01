@@ -47,7 +47,16 @@ COMMIT_COUNT=$(git log origin/main..HEAD --oneline | wc -l)
 DROPLET_ID=$(grep '^## Item:' CONTEXT.md | awk '{print $3}')
 BRANCH=$(git branch --show-current)
 BASE=main
-echo "Delivering $DROPLET_ID from $BRANCH"
+
+# When external_ref is set (e.g. 'jira:DPF-456'), use the key part as the
+# branch suffix and prefix the PR title with the key.
+EXTERNAL_REF=$(grep '^\*\*External Ref:\*\*' CONTEXT.md | awk '{print $3}' | tr -d '[:space:]')
+REF_KEY=""
+if [ -n "$EXTERNAL_REF" ]; then
+  REF_KEY=$(echo "$EXTERNAL_REF" | cut -d: -f2-)
+fi
+
+echo "Delivering $DROPLET_ID from $BRANCH (external_ref: ${EXTERNAL_REF:-none})"
 ```
 
 Do NOT git stash. Per-droplet worktrees are clean by design. Stashing discards
@@ -104,7 +113,12 @@ git push --force-with-lease origin $BRANCH
 ## Step 3 — Open or locate the PR
 
 ```bash
-PR_TITLE=$(grep '^\*\*Title:\*\*' CONTEXT.md | sed 's/\*\*Title:\*\* //')
+BASE_TITLE=$(grep '^\*\*Title:\*\*' CONTEXT.md | sed 's/\*\*Title:\*\* //')
+if [ -n "$REF_KEY" ]; then
+  PR_TITLE="$REF_KEY: $BASE_TITLE"
+else
+  PR_TITLE="$BASE_TITLE"
+fi
 PR_URL=$(gh pr create \
   --title "$PR_TITLE" \
   --body "Closes droplet $DROPLET_ID." \
