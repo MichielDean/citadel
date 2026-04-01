@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -320,52 +321,83 @@ func TestFilterCmd_Resume_RequiresFeedback(t *testing.T) {
 // --- printFilterResult tests ---
 
 // TestPrintFilterResult_HumanFormat verifies that printFilterResult with "human"
-// format does not return an error for a valid result.
+// format writes result.Text to stdout and result.SessionID to stderr.
 func TestPrintFilterResult_HumanFormat(t *testing.T) {
 	result := filterSessionResult{
 		SessionID: "test-session",
 		Text:      "1. Fix login bug\n   Handle edge case in auth flow. No dependencies.",
 	}
+
+	rOut, wOut, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe stdout: %v", err)
+	}
+	rErr, wErr, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe stderr: %v", err)
+	}
+	oldStdout, oldStderr := os.Stdout, os.Stderr
+	os.Stdout, os.Stderr = wOut, wErr
+	t.Cleanup(func() { os.Stdout, os.Stderr = oldStdout, oldStderr })
+
 	if err := printFilterResult(result, "human"); err != nil {
 		t.Fatalf("printFilterResult human: unexpected error: %v", err)
+	}
+
+	wOut.Close()
+	wErr.Close()
+	var bufOut, bufErr strings.Builder
+	if _, err := io.Copy(&bufOut, rOut); err != nil {
+		t.Fatalf("reading stdout: %v", err)
+	}
+	if _, err := io.Copy(&bufErr, rErr); err != nil {
+		t.Fatalf("reading stderr: %v", err)
+	}
+
+	if !strings.Contains(bufOut.String(), result.Text) {
+		t.Errorf("stdout %q does not contain expected text %q", bufOut.String(), result.Text)
+	}
+	if !strings.Contains(bufErr.String(), result.SessionID) {
+		t.Errorf("stderr %q does not contain expected session_id %q", bufErr.String(), result.SessionID)
 	}
 }
 
 // TestPrintFilterResult_JSONFormat verifies that printFilterResult with "json"
-// format does not return an error for a valid result.
+// format writes valid JSON to stdout containing session_id and text fields with
+// the correct values.
 func TestPrintFilterResult_JSONFormat(t *testing.T) {
 	result := filterSessionResult{
 		SessionID: "session-xyz",
 		Text:      "1. Add caching\n   Implement Redis caching. No dependencies.",
 	}
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	oldStdout := os.Stdout
+	os.Stdout = w
+	t.Cleanup(func() { os.Stdout = oldStdout })
+
 	if err := printFilterResult(result, "json"); err != nil {
 		t.Fatalf("printFilterResult json: unexpected error: %v", err)
 	}
-}
 
-// TestFilterJSONOutput_HasRequiredFields verifies that the JSON output structure
-// contains session_id and text — the fields required for scripting.
-func TestFilterJSONOutput_HasRequiredFields(t *testing.T) {
-	type filterJSONOutput struct {
-		SessionID string `json:"session_id"`
-		Text      string `json:"text,omitempty"`
+	w.Close()
+	var buf strings.Builder
+	if _, err := io.Copy(&buf, r); err != nil {
+		t.Fatalf("reading stdout: %v", err)
 	}
-	out := filterJSONOutput{
-		SessionID: "abc123",
-		Text:      "1. Refactor auth\n   Clean up the auth module. No dependencies.",
-	}
-	data, err := json.Marshal(out)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
+
 	var got map[string]interface{}
-	if err := json.Unmarshal(data, &got); err != nil {
-		t.Fatalf("unmarshal: %v", err)
+	if err := json.Unmarshal([]byte(buf.String()), &got); err != nil {
+		t.Fatalf("decode JSON output %q: %v", buf.String(), err)
 	}
-	for _, field := range []string{"session_id", "text"} {
-		if v, ok := got[field]; !ok || v == "" {
-			t.Errorf("JSON output missing required field %q", field)
-		}
+	if got["session_id"] != result.SessionID {
+		t.Errorf("session_id: got %q, want %q", got["session_id"], result.SessionID)
+	}
+	if got["text"] != result.Text {
+		t.Errorf("text: got %q, want %q", got["text"], result.Text)
 	}
 }
 
