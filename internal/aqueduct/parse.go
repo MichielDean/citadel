@@ -140,18 +140,18 @@ func personaDescription(data []byte, identity string) string {
 	return TitleCaseName(identity)
 }
 
-// neighborDescription returns the display name + description for a neighboring step.
-// If the step has an identity, it reads the description from that identity's PERSONA.md.
-// Otherwise it falls back to TitleCaseName(step.Name).
-func neighborDescription(step WorkflowCataractae, cataractaeDir string) string {
+// neighborLine returns "<name> — <description>" for a neighboring workflow step.
+// The name is the step's identity, or step.Name when no identity is set.
+// The description is read from the identity's PERSONA.md, falling back to TitleCaseName.
+func neighborLine(step WorkflowCataractae, cataractaeDir string) string {
 	if step.Identity == "" {
-		return TitleCaseName(step.Name)
+		return step.Name + " — " + TitleCaseName(step.Name)
 	}
 	data, err := os.ReadFile(filepath.Join(cataractaeDir, step.Identity, "PERSONA.md"))
 	if err != nil {
-		return TitleCaseName(step.Identity)
+		return step.Identity + " — " + TitleCaseName(step.Identity)
 	}
-	return personaDescription(data, step.Identity)
+	return step.Identity + " — " + personaDescription(data, step.Identity)
 }
 
 // writePipelinePositionFile writes PIPELINE_POSITION.md into <cataractaeDir>/<identity>/
@@ -171,23 +171,13 @@ func writePipelinePositionFile(cataractaeDir, identity string, w *Workflow) (str
 	if idx < 0 || idx == 0 {
 		predLine = "none — you are first"
 	} else {
-		pred := w.Cataractae[idx-1]
-		predName := pred.Identity
-		if predName == "" {
-			predName = pred.Name
-		}
-		predLine = predName + " — " + neighborDescription(pred, cataractaeDir)
+		predLine = neighborLine(w.Cataractae[idx-1], cataractaeDir)
 	}
 
 	if idx < 0 || idx == len(w.Cataractae)-1 {
 		succLine = "none — you are last"
 	} else {
-		succ := w.Cataractae[idx+1]
-		succName := succ.Identity
-		if succName == "" {
-			succName = succ.Name
-		}
-		succLine = succName + " — " + neighborDescription(succ, cataractaeDir)
+		succLine = neighborLine(w.Cataractae[idx+1], cataractaeDir)
 	}
 
 	content := "# Pipeline Position\n\n" +
