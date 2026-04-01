@@ -2750,13 +2750,21 @@ func TestHeartbeatRepo_Debounce_AddNoteFailure_DoesNotArmDebounce(t *testing.T) 
 // a scheduler-generated note returned by GetNotes does not clear the debounce
 // entry, preventing the periodic re-triggering feedback loop.
 func TestHeartbeatRepo_Debounce_SchedulerNote_DoesNotResetDebounce(t *testing.T) {
+	// Mock tmux/agent as alive to avoid zombie detection path.
+	orig := isTmuxAliveFn
+	isTmuxAliveFn = func(_ string) bool { return true }
+	t.Cleanup(func() { isTmuxAliveFn = orig })
+	origAgent := isAgentAliveFn
+	isAgentAliveFn = func(_ string) bool { return true }
+	t.Cleanup(func() { isAgentAliveFn = origAgent })
+
 	client := newMockClient()
 
 	item := &cistern.Droplet{
 		ID:                "stall-scheduler-feedback",
 		CurrentCataractae: "implement",
 		Status:            "in_progress",
-		Assignee:          "",
+		Assignee:          "alpha", // Set assignee so orphan recovery doesn't fire
 	}
 	client.items[item.ID] = item
 
