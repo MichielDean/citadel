@@ -43,13 +43,11 @@ Examples:
 			return err
 		}
 
-		// Load provider config from cistern.yaml trackers section.
 		cfg, err := loadTrackerConfig(providerName)
 		if err != nil {
 			return err
 		}
 
-		// Resolve constructor from the provider registry.
 		constructor, ok := tracker.Resolve(providerName)
 		if !ok {
 			return fmt.Errorf("unknown tracker provider %q — no constructor registered", providerName)
@@ -59,25 +57,21 @@ Examples:
 			return fmt.Errorf("init tracker %s: %w", providerName, err)
 		}
 
-		// Fetch the issue from the external tracker.
 		issue, err := tp.FetchIssue(issueKey)
 		if err != nil {
 			return fmt.Errorf("fetch %s/%s: %w", providerName, issueKey, err)
 		}
 
-		// Determine priority: --priority flag overrides the mapped value.
 		priority := issue.Priority
 		if cmd.Flags().Changed("priority") {
 			priority = importPriority
 		}
 
-		// Parse complexity (default 1 = standard for imported issues).
 		cx, err := parseComplexity(importComplexity)
 		if err != nil {
 			return err
 		}
 
-		// Build the external reference tag.
 		externalRef := providerName + ":" + issueKey
 
 		if importFilter {

@@ -10,9 +10,7 @@ import (
 )
 
 func init() {
-	Register("jira", func(cfg TrackerConfig) (TrackerProvider, error) {
-		return newJiraProvider(cfg)
-	})
+	Register("jira", newJiraProvider)
 }
 
 // DefaultJiraPriorityMap maps Jira priority names to Cistern priorities.
@@ -30,7 +28,7 @@ type jiraProvider struct {
 	client *http.Client
 }
 
-func newJiraProvider(cfg TrackerConfig) (*jiraProvider, error) {
+func newJiraProvider(cfg TrackerConfig) (TrackerProvider, error) {
 	return &jiraProvider{cfg: cfg, client: &http.Client{}}, nil
 }
 
