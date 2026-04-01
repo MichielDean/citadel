@@ -528,32 +528,28 @@ func (d *DashboardTUI) frameAccumulate(chunk []byte) {
 	for len(rest) > 0 {
 		idx := bytes.Index(rest, repaintMarker)
 		if idx < 0 {
-			// No marker: append to the current pending frame if we are accumulating.
 			if d.inFrame {
 				d.pending = append(d.pending, rest...)
 				d.scheduleFlush()
 			}
 			return
 		}
-		// Repaint marker found. Everything before it belongs to the current frame.
 		if d.inFrame {
 			d.pending = append(d.pending, rest[:idx]...)
-			// Commit the just-completed frame.
 			if d.flushTimer != nil {
 				d.flushTimer.Stop()
 				d.flushTimer = nil
 			}
 			d.lastFrame = d.pending
 		}
-		// Start accumulating the next frame from the marker.
 		d.pending = bytes.Clone(rest[idx : idx+len(repaintMarker)])
 		d.inFrame = true
 		rest = rest[idx+len(repaintMarker):]
-		if len(rest) == 0 {
-			// Nothing after the marker in this chunk; arm the flush timer so an
-			// idle TUI still exposes a snapshot to new connections.
-			d.scheduleFlush()
-		}
+	}
+	// Chunk ended at a repaint marker; arm the flush timer so an idle TUI
+	// still exposes a snapshot to new connections.
+	if d.inFrame {
+		d.scheduleFlush()
 	}
 }
 
