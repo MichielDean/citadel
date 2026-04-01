@@ -30,12 +30,7 @@ type Provider struct {
 // New creates a Jira Provider from a TrackerConfig.
 // The token is resolved via ResolvedToken, supporting both literal values and env vars.
 func New(cfg aqueduct.TrackerConfig) *Provider {
-	return &Provider{
-		baseURL:    strings.TrimRight(cfg.URL, "/"),
-		email:      cfg.Email,
-		token:      cfg.ResolvedToken(),
-		httpClient: &http.Client{Timeout: 30 * time.Second},
-	}
+	return newWithClient(cfg.URL, cfg.Email, cfg.ResolvedToken(), &http.Client{Timeout: 30 * time.Second})
 }
 
 // newWithClient creates a Provider with an injected HTTP client, for use in tests.
