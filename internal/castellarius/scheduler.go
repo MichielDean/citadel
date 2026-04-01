@@ -22,6 +22,16 @@ import (
 	"github.com/MichielDean/cistern/internal/cistern"
 )
 
+const (
+	// stallNotePrefix is the structured prefix for all scheduler stall notes.
+	// It allows stall notes to be identified and filtered programmatically.
+	stallNotePrefix = "[scheduler:stall]"
+
+	// stallNoteInterval is the minimum time between consecutive stall notes
+	// for the same droplet. Prevents log spam when a droplet stays stalled.
+	stallNoteInterval = 60 * time.Minute
+)
+
 // CisternClient is the interface for interacting with the work cistern.
 // *cistern.Client satisfies this interface.
 type CisternClient interface {
@@ -112,10 +122,11 @@ type Castellarius struct {
 	// recover from tight loops where no agent session ever starts.
 	dispatchLoop *dispatchLoopTracker
 
-	// lastStallNoted tracks the most recent signal time at which a stall note
-	// was appended for each droplet (keyed by droplet ID). Used to debounce
-	// repeated stall notes: no new note is written until at least one progress
-	// signal advances past the stored time.
+	// lastStallNoted tracks the wall-clock time at which the most recent stall
+	// note was written for each droplet (keyed by droplet ID). Used to rate-limit
+	// stall notes to at most one per stallNoteInterval. Cleared when any progress
+	// signal advances past the recorded write time (agent resumed → next stall
+	// gets a fresh note immediately).
 	lastStallNoted map[string]time.Time
 
 	// sessionLogRoot is the directory containing per-session output logs.
@@ -1416,11 +1427,13 @@ func (s *Castellarius) heartbeatRepo(ctx context.Context, repo aqueduct.RepoConf
 		// Evaluate three activity signals.
 		noteSig, noteLabel := latestNoteSignal(client, item.ID)
 		worktreeSig, worktreeLabel := latestWorktreeSignal(s.sandboxRoot, repo.Name, item.ID)
-		logSig, logLabel := sessionLogSignal(logDir, repo.Name, item.Assignee)
+		logSig, _ := sessionLogSignal(logDir, repo.Name, item.Assignee)
 
 		maxSig := latestTime(noteSig, worktreeSig, logSig)
 
-		// Clear debounce if any signal has advanced past the recorded stall time.
+		// Clear rate-limit entry if any progress signal has advanced past the last
+		// stall note write time. This resets the window so a new stall immediately
+		// gets a fresh note (agent resumed → stall resolved → re-detect cleanly).
 		if prev, ok := s.lastStallNoted[item.ID]; ok && maxSig.After(prev) {
 			delete(s.lastStallNoted, item.ID)
 		}
@@ -1430,39 +1443,43 @@ func (s *Castellarius) heartbeatRepo(ctx context.Context, repo aqueduct.RepoConf
 			continue
 		}
 
-		// Stalled. Suppress if we already noted this stall and no signal has advanced.
-		if _, ok := s.lastStallNoted[item.ID]; ok {
-			continue
+		// Stalled. Write a note if the rate limit allows (at most one per stallNoteInterval).
+		if s.shouldWriteStallNote(client, item.ID) {
+			sessionSignal := "absent"
+			if !logSig.IsZero() {
+				sessionSignal = "present"
+			}
+			note := fmt.Sprintf(
+				"%s elapsed=%s note_signal=%s worktree_signal=%s session_signal=%s",
+				stallNotePrefix,
+				formatStallDuration(time.Since(maxSig)),
+				noteLabel,
+				worktreeLabel,
+				sessionSignal,
+			)
+			if err := client.AddNote(item.ID, "scheduler", note); err != nil {
+				s.logger.Warn("heartbeat: AddNote failed", "droplet", item.ID, "error", err)
+				// Do not arm rate-limit — note was never written; retry next tick.
+			} else {
+				s.logger.Warn("heartbeat: stall detected",
+					"repo", repo.Name,
+					"droplet", item.ID,
+					"cataractae", item.CurrentCataractae,
+					"stall_duration", time.Since(maxSig).Round(time.Second).String(),
+					"threshold", threshold.String(),
+				)
+				s.lastStallNoted[item.ID] = time.Now()
+			}
 		}
 
-		// First detection — append a stall note and emit a warning.
-		note := fmt.Sprintf(
-			"Droplet appears stalled (no activity for %v, threshold %v).\n  note signal:        %s\n  worktree signal:    %s\n  session log signal: %s",
-			time.Since(maxSig).Round(time.Second),
-			threshold,
-			noteLabel, worktreeLabel, logLabel,
-		)
-		if err := client.AddNote(item.ID, "scheduler", note); err != nil {
-			s.logger.Warn("heartbeat: AddNote failed", "droplet", item.ID, "error", err)
-			continue // do not arm debounce — note was never written
-		}
-		s.logger.Warn("heartbeat: stall detected",
-			"repo", repo.Name,
-			"droplet", item.ID,
-			"cataractae", item.CurrentCataractae,
-			"stall_duration", time.Since(maxSig).Round(time.Second).String(),
-			"threshold", threshold.String(),
-		)
-		s.lastStallNoted[item.ID] = maxSig
-
-		// Re-spawn the stalled session if an assignee is present.
+		// Re-spawn the stalled session if an assignee is present. Decoupled from
+		// note writing so retries occur on every tick regardless of rate-limiting.
 		// session.Spawn() detects prior Claude session files and uses --continue
 		// when they exist, or spawns fresh when priorSessionCount == 0.
-		// Status and assignee are intentionally left unchanged.
 		if item.Assignee != "" {
 			if err := s.respawnStalledDroplet(ctx, client, repo, item); err != nil {
-				// Clear the debounce so the next heartbeat re-detects the stall
-				// and retries — spawn failures are often transient.
+				// Spawn failure: clear rate-limit entry so the next tick can write
+				// a fresh note and retry — spawn failures are often transient.
 				delete(s.lastStallNoted, item.ID)
 			}
 		}
@@ -1532,6 +1549,59 @@ func stallThresholdDuration(cfg aqueduct.AqueductConfig) time.Duration {
 	return 45 * time.Minute
 }
 
+// shouldWriteStallNote returns true when the rate-limit window allows writing
+// a new stall note for dropletID. It first checks the in-memory lastStallNoted
+// cache; on a miss (first detection or process restart) it falls back to the
+// notes DB to avoid duplicate notes across restarts.
+func (s *Castellarius) shouldWriteStallNote(client CisternClient, dropletID string) bool {
+	if noted, ok := s.lastStallNoted[dropletID]; ok {
+		return time.Since(noted) >= stallNoteInterval
+	}
+	// In-memory entry absent: check DB for a recent stall note (handles restarts).
+	if last := lastSchedulerStallNoteTime(client, dropletID); !last.IsZero() && time.Since(last) < stallNoteInterval {
+		s.lastStallNoted[dropletID] = last // populate cache from DB
+		return false
+	}
+	return true
+}
+
+// lastSchedulerStallNoteTime returns the most recent time a stallNotePrefix note
+// was written for dropletID by the scheduler, or the zero time if none exist or
+// the fetch fails.
+func lastSchedulerStallNoteTime(client CisternClient, dropletID string) time.Time {
+	notes, err := client.GetNotes(dropletID)
+	if err != nil || len(notes) == 0 {
+		return time.Time{}
+	}
+	var latest time.Time
+	for _, n := range notes {
+		if n.CataractaeName == "scheduler" && strings.HasPrefix(n.Content, stallNotePrefix) {
+			if n.CreatedAt.After(latest) {
+				latest = n.CreatedAt
+			}
+		}
+	}
+	return latest
+}
+
+// formatStallDuration formats a stall duration as a compact human-readable string
+// for use in structured stall note fields (e.g. "45m", "2h", "2h30m").
+func formatStallDuration(d time.Duration) string {
+	d = d.Round(time.Minute)
+	if d < time.Minute {
+		return "0m"
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
+	hours := int(d.Hours())
+	minutes := int(d.Minutes()) % 60
+	if minutes == 0 {
+		return fmt.Sprintf("%dh", hours)
+	}
+	return fmt.Sprintf("%dh%dm", hours, minutes)
+}
+
 // latestNoteSignal returns the most recent note timestamp for a droplet, along
 // with a human-readable label. Returns a zero time if the droplet has no notes
 // or the lookup fails.
@@ -1543,7 +1613,7 @@ func latestNoteSignal(client CisternClient, dropletID string) (time.Time, string
 	var latest time.Time
 	for _, n := range notes {
 		if n.CataractaeName == "scheduler" {
-			continue // exclude scheduler-generated notes to prevent self-clearing debounce loop
+			continue // exclude scheduler-generated notes to prevent self-clearing rate-limit loop
 		}
 		if n.CreatedAt.After(latest) {
 			latest = n.CreatedAt
@@ -1560,7 +1630,7 @@ func latestNoteSignal(client CisternClient, dropletID string) (time.Time, string
 // the directory does not exist, cannot be read, or sandboxRoot is empty.
 func latestWorktreeSignal(sandboxRoot, repoName, dropletID string) (time.Time, string) {
 	if sandboxRoot == "" {
-		return time.Time{}, "none (no sandbox root)"
+		return time.Time{}, "none_no_sandbox_root"
 	}
 	dir := filepath.Join(sandboxRoot, repoName, dropletID)
 	var latest time.Time
@@ -1577,7 +1647,7 @@ func latestWorktreeSignal(sandboxRoot, repoName, dropletID string) (time.Time, s
 		return nil
 	})
 	if latest.IsZero() {
-		return time.Time{}, "none (no files)"
+		return time.Time{}, "none_no_files"
 	}
 	return latest, latest.Format(time.RFC3339)
 }

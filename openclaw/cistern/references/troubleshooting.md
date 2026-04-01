@@ -118,7 +118,7 @@ The UNASSIGNED section displays:
 
 **Recovering orphaned droplets:**
 
-Once you see an orphaned droplet, you have two options:
+Once you see an orphaned droplet, you have three options:
 
 1. **Restart the droplet** to re-enter the pipeline:
    ```bash
@@ -146,6 +146,29 @@ If repeatedly failing, check logs for the specific cataractae:
 ```bash
 journalctl --user -u cistern-castellarius --since "1 hour ago"
 ```
+
+### Understanding Scheduler Stall Notes
+
+When a droplet has been inactive for a prolonged period (default: 45 minutes), the Castellarius scheduler detects it as "stalled" and appends a structured stall note. These notes use the prefix `[scheduler:stall]` and include diagnostic signals to help identify why the droplet is not progressing.
+
+**Stall note format:**
+```
+[scheduler:stall] elapsed=2h30m note_signal=2026-01-15T10:30:45Z worktree_signal=2026-01-15T10:30:45Z session_signal=absent
+```
+
+**Fields explained:**
+- `elapsed` — How long the droplet has been inactive (rounded to nearest minute; e.g., `2h30m`, `45m`)
+- `note_signal` — Most recent timestamp when a note was written for this droplet (RFC3339 format)
+- `worktree_signal` — Most recent timestamp of activity in the droplet's worktree (files modified, etc.)
+- `session_signal` — Whether the Claude agent session is `present` (running/logs updating) or `absent` (no activity)
+
+**Rate-limiting:** To prevent log spam from long-stalled droplets, the scheduler writes at most one stall note per hour for the same droplet. If a droplet remains stalled beyond the first detection, no new note is written until 60 minutes have passed since the last note (or until the droplet shows signs of recovery).
+
+**What to do when you see stall notes:**
+1. Check if the agent session is still active: `ct droplet peek <id>` (shows live session output)
+2. Identify the root cause by checking the time differences between the signals — large gaps suggest the specific component that's stuck (no notes, no worktree changes, no session activity)
+3. If the droplet can proceed, restart it: `ct droplet restart <id>`
+4. If it's a known limitation or awaiting external resources, pool it: `ct droplet pool <id> --notes "..."`
 
 ### Droplet Repeatedly Failing with "backing off" Messages
 
