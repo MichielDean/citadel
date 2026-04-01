@@ -269,6 +269,11 @@ The flow dashboard displays a live view of the aqueduct system with sections:
   - Indicates which cataractae is currently processing the droplet
 - Idle aqueducts display as compact single-line rows
 
+**Unassigned** — In-progress droplets with no aqueduct assignment
+- Shows orphaned droplets that are stuck in the pipeline (empty assignee or assigned to a removed/renamed aqueduct)
+- Lists ID, elapsed time, current step, and title
+- When count is zero, this section is omitted from the display
+
 **Cistern** — Queued droplets waiting to enter the flow
 - Lists all open droplets not yet started
 - Sorted by priority (highest first)

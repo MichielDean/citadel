@@ -94,6 +94,47 @@ The health file is written after each poll cycle completes. If you see persisten
 journalctl --user -u cistern-castellarius -f | grep -i "health"
 ```
 
+## Orphaned In-Progress Droplets
+
+Occasionally a droplet can enter `in_progress` status without being assigned to an aqueduct. This may happen due to:
+- Manual database edits or recovery procedures
+- Droplet assignments to aqueducts that have since been removed or renamed from the config
+- System crashes or rollbacks
+
+**Identifying orphaned droplets:**
+
+View the flow dashboard:
+
+```bash
+ct dashboard              # Look for the UNASSIGNED section showing orphaned droplets
+ct dashboard --web       # Web view also shows unassigned_items in the JSON response
+```
+
+The UNASSIGNED section displays:
+- Droplet ID
+- Elapsed time since last state change
+- Current cataractae (step name, if any)
+- Title
+
+**Recovering orphaned droplets:**
+
+Once you see an orphaned droplet, you have two options:
+
+1. **Restart the droplet** to re-enter the pipeline:
+   ```bash
+   ct droplet restart <id>    # Returns to open status at the current cataractae
+   ```
+
+2. **Cancel the droplet** if it's no longer needed:
+   ```bash
+   ct droplet cancel <id> --notes "Orphaned; no longer applicable"
+   ```
+
+3. **Pool the droplet** if it requires manual intervention:
+   ```bash
+   ct droplet pool <id> --notes "Orphaned droplet; awaiting manual recovery decision"
+   ```
+
 ## Droplet Stuck in a Stage
 
 ```bash
