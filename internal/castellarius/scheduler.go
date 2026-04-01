@@ -1545,9 +1545,10 @@ func (s *Castellarius) heartbeatRepo(ctx context.Context, repo aqueduct.RepoConf
 		// when they exist, or spawns fresh when priorSessionCount == 0.
 		if item.Assignee != "" {
 			if err := s.respawnStalledDroplet(ctx, client, repo, item); err != nil {
-				// Spawn failure: clear rate-limit entry so the next tick can write
+				// Spawn failure: reset rate-limit entry so the next tick can write
 				// a fresh note and retry — spawn failures are often transient.
-				delete(s.lastStallNoted, item.ID)
+				// Set to past time so shouldWriteStallNote passes on next check.
+				s.lastStallNoted[item.ID] = time.Now().Add(-stallNoteInterval)
 			}
 		} else {
 			// Recovery for orphaned in_progress droplets: no assignee means no named
@@ -1573,8 +1574,9 @@ func (s *Castellarius) heartbeatRepo(ctx context.Context, repo aqueduct.RepoConf
 			if err := client.Assign(item.ID, "", stepName); err != nil {
 				s.logger.Error("heartbeat: orphan recovery reset failed",
 					"repo", repo.Name, "droplet", item.ID, "error", err)
-				// Clear debounce so next tick retries the recovery.
-				delete(s.lastStallNoted, item.ID)
+				// Reset debounce so next tick retries the recovery.
+				// Set to past time so shouldWriteStallNote passes on next check.
+				s.lastStallNoted[item.ID] = time.Now().Add(-stallNoteInterval)
 			}
 		}
 	}
