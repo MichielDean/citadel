@@ -61,11 +61,12 @@ type DashboardData struct {
 	QueuedCount     int                `json:"queued_count"`
 	DoneCount       int                `json:"done_count"`
 	Cataractae      []CataractaeInfo   `json:"cataractae"`
-	CisternItems    []*cistern.Droplet `json:"cistern_items"`   // flowing + queued
-	PooledItems     []*cistern.Droplet `json:"pooled_items"`    // all pooled droplets
-	RecentItems     []*cistern.Droplet `json:"recent_items"`    // recently closed/pooled
-	BlockedByMap    map[string]string  `json:"blocked_by_map"`  // droplet ID -> first blocking dep ID
-	FlowActivities  []FlowActivity     `json:"flow_activities"` // live narrative for in-progress droplets
+	UnassignedItems []*cistern.Droplet `json:"unassigned_items"` // in_progress with no aqueduct assignment
+	CisternItems    []*cistern.Droplet `json:"cistern_items"`    // flowing + queued
+	PooledItems     []*cistern.Droplet `json:"pooled_items"`     // all pooled droplets
+	RecentItems     []*cistern.Droplet `json:"recent_items"`     // recently closed/pooled
+	BlockedByMap    map[string]string  `json:"blocked_by_map"`   // droplet ID -> first blocking dep ID
+	FlowActivities  []FlowActivity     `json:"flow_activities"`  // live narrative for in-progress droplets
 	FarmRunning     bool               `json:"farm_running"`
 	FetchedAt       time.Time          `json:"fetched_at"`
 }
@@ -171,6 +172,21 @@ func fetchDashboardData(cfgPath, dbPath string) *DashboardData {
 	}
 	data.Cataractae = cataractae
 
+	// Collect orphaned in_progress droplets: in_progress but not visible in any aqueduct row.
+	// Use cataractae[].DropletID (actual visibility) rather than assigneeMap so that
+	// droplets assigned to a removed/renamed aqueduct are treated as unassigned.
+	assignedIDs := make(map[string]bool, len(cataractae))
+	for _, ci := range cataractae {
+		if ci.DropletID != "" {
+			assignedIDs[ci.DropletID] = true
+		}
+	}
+	for _, item := range allItems {
+		if item.Status == "in_progress" && !assignedIDs[item.ID] {
+			data.UnassignedItems = append(data.UnassignedItems, item)
+		}
+	}
+
 	// Cistern: in_progress and open items; build blocked-by map.
 	data.BlockedByMap = map[string]string{}
 	for _, item := range allItems {
@@ -248,6 +264,9 @@ func dashboardStateHash(d *DashboardData) string {
 	fmt.Fprintf(&b, "%d/%d/%d/%d/%v", d.FlowingCount, d.QueuedCount, d.DoneCount, len(d.PooledItems), d.FarmRunning)
 	for _, ch := range d.Cataractae {
 		fmt.Fprintf(&b, "|%s:%s:%s", ch.Name, ch.DropletID, ch.Step)
+	}
+	for _, item := range d.UnassignedItems {
+		fmt.Fprintf(&b, "|unassigned:%s:%s", item.ID, item.CurrentCataractae)
 	}
 	return b.String()
 }
@@ -555,6 +574,21 @@ func renderDashboard(data *DashboardData) string {
 	sb.WriteString(fmt.Sprintf("  ● %d flowing  ○ %d queued  ✓ %d delivered\n",
 		data.FlowingCount, data.QueuedCount, data.DoneCount))
 	sb.WriteString(sep + "\n")
+
+	// Unassigned in_progress droplets (orphaned — no aqueduct assignment).
+	if len(data.UnassignedItems) > 0 {
+		sb.WriteString("  UNASSIGNED\n")
+		for _, item := range data.UnassignedItems {
+			step := item.CurrentCataractae
+			if step == "" {
+				step = "—"
+			}
+			elapsed := formatElapsed(time.Since(item.UpdatedAt))
+			sb.WriteString(fmt.Sprintf("  ● %-10s  %s  %-20s  %s\n",
+				item.ID, elapsed, step, item.Title))
+		}
+		sb.WriteString(sep + "\n")
+	}
 
 	// Cistern — queued droplets.
 	sb.WriteString("  CISTERN\n")

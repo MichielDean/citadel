@@ -393,6 +393,13 @@ func (m dashboardTUIModel) View() string {
 	parts = append(parts, m.viewStatusBar())
 	parts = append(parts, sep)
 
+	// 3a. Unassigned — in_progress droplets with no aqueduct assignment.
+	if len(m.data.UnassignedItems) > 0 {
+		parts = append(parts, tuiStyleHeader.Render("  UNASSIGNED"))
+		parts = append(parts, m.viewUnassigned()...)
+		parts = append(parts, sep)
+	}
+
 	// 4. Cistern — queued droplets waiting.
 	parts = append(parts, tuiStyleHeader.Render("  CISTERN"))
 	parts = append(parts, m.viewCistern()...)
@@ -950,6 +957,35 @@ func (m dashboardTUIModel) viewInlineFlowNotes(ch CataractaeInfo) []string {
 				fmt.Sprintf("    › %s  %s  %s", who, text, ts),
 			)
 		}
+	}
+	return lines
+}
+
+// viewUnassigned renders the UNASSIGNED panel — in_progress droplets with no
+// aqueduct assignment. Each row shows the droplet ID, elapsed time,
+// current cataractae step, and title.
+func (m dashboardTUIModel) viewUnassigned() []string {
+	// Truncate title to fit terminal width (constant per call).
+	fixedW := 2 + 2 + 2 + 10 + 2 + 7 + 2 + 20 + 2
+	titleW := m.width - fixedW
+	if titleW < 8 {
+		titleW = 8
+	}
+
+	lines := make([]string, 0, len(m.data.UnassignedItems))
+	for _, item := range m.data.UnassignedItems {
+		step := item.CurrentCataractae
+		if step == "" {
+			step = "—"
+		}
+		elapsed := formatElapsed(time.Since(item.UpdatedAt))
+		id := padRight(item.ID, 10)
+		lines = append(lines, fmt.Sprintf("  %s  %s  %-20s  %s",
+			tuiStyleYellow.Render("●  "+id),
+			elapsed,
+			step,
+			truncate(item.Title, titleW),
+		))
 	}
 	return lines
 }

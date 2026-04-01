@@ -1095,3 +1095,279 @@ func TestActiveAqueducts_EmptyWhenAllIdle(t *testing.T) {
 		t.Errorf("expected 0 active aqueducts, got %d", len(active))
 	}
 }
+
+// --- UNASSIGNED orphan detection tests ---
+
+// TestFetchDashboardData_InProgressWithEmptyAssignee_AppearsAsUnassigned verifies
+// that an in_progress droplet with no aqueduct assignment surfaces in UnassignedItems.
+//
+// Given: a droplet marked in_progress (via GetReady) without a subsequent Assign call,
+//
+//	so its Assignee field remains empty
+//
+// When:  fetchDashboardData is called
+// Then:  UnassignedItems contains the droplet
+func TestFetchDashboardData_InProgressWithEmptyAssignee_AppearsAsUnassigned(t *testing.T) {
+	cfgPath := tempCfg(t) // two aqueducts: virgo, marcia
+	dbPath := tempDB(t)
+
+	c, err := cistern.New(dbPath, "mr")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Add and immediately mark in_progress — skip Assign so Assignee stays empty.
+	orphan, _ := c.Add("myrepo", "Orphaned Feature", "", 1, 2)
+	c.GetReady("myrepo")
+	c.Close()
+
+	data := fetchDashboardData(cfgPath, dbPath)
+
+	if len(data.UnassignedItems) != 1 {
+		t.Fatalf("UnassignedItems len = %d, want 1", len(data.UnassignedItems))
+	}
+	if data.UnassignedItems[0].ID != orphan.ID {
+		t.Errorf("UnassignedItems[0].ID = %q, want %q", data.UnassignedItems[0].ID, orphan.ID)
+	}
+}
+
+// TestFetchDashboardData_InProgressWithEmptyAssignee_FlowingCountMatchesVisible
+// verifies that FlowingCount covers both assigned and unassigned in_progress droplets
+// so the count matches the total number of visible flowing items.
+//
+// Given: one assigned in_progress droplet (visible in an aqueduct row) and one
+//
+//	unassigned in_progress droplet (visible in the UNASSIGNED section)
+//
+// When:  fetchDashboardData is called
+// Then:  FlowingCount == 2 (both items counted)
+func TestFetchDashboardData_InProgressWithEmptyAssignee_FlowingCountMatchesVisible(t *testing.T) {
+	cfgPath := tempCfg(t)
+	dbPath := tempDB(t)
+
+	c, err := cistern.New(dbPath, "mr")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Assigned item — visible in the "virgo" aqueduct row.
+	assigned, _ := c.Add("myrepo", "Assigned Feature", "", 1, 2)
+	c.GetReady("myrepo")
+	c.Assign(assigned.ID, "virgo", "implement")
+
+	// Unassigned item — in_progress but no Assign call.
+	_, _ = c.Add("myrepo", "Orphaned Feature", "", 1, 2)
+	c.GetReady("myrepo")
+
+	c.Close()
+
+	data := fetchDashboardData(cfgPath, dbPath)
+
+	// FlowingCount must equal assigned + unassigned.
+	if data.FlowingCount != 2 {
+		t.Errorf("FlowingCount = %d, want 2 (1 assigned + 1 unassigned)", data.FlowingCount)
+	}
+	if len(data.UnassignedItems) != 1 {
+		t.Errorf("UnassignedItems len = %d, want 1", len(data.UnassignedItems))
+	}
+}
+
+// TestFetchDashboardData_AssignedInProgress_NotInUnassigned verifies that a properly
+// assigned in_progress droplet does NOT appear in UnassignedItems.
+//
+// Given: a droplet assigned to the "virgo" aqueduct
+// When:  fetchDashboardData is called
+// Then:  UnassignedItems is empty
+func TestFetchDashboardData_AssignedInProgress_NotInUnassigned(t *testing.T) {
+	cfgPath := tempCfg(t)
+	dbPath := tempDB(t)
+
+	c, err := cistern.New(dbPath, "mr")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	item, _ := c.Add("myrepo", "Normal Feature", "", 1, 2)
+	c.GetReady("myrepo")
+	c.Assign(item.ID, "virgo", "implement")
+	c.Close()
+
+	data := fetchDashboardData(cfgPath, dbPath)
+
+	if len(data.UnassignedItems) != 0 {
+		t.Errorf("UnassignedItems len = %d, want 0 for a properly assigned droplet", len(data.UnassignedItems))
+	}
+}
+
+// TestRenderDashboard_ShowsUnassignedSection verifies that renderDashboard includes
+// an UNASSIGNED section when UnassignedItems is non-empty, showing droplet ID,
+// elapsed time, current_cataractae, and title.
+func TestRenderDashboard_ShowsUnassignedSection(t *testing.T) {
+	data := &DashboardData{
+		FlowingCount: 1,
+		Cataractae:   []CataractaeInfo{{Name: "virgo", Steps: []string{"implement"}}},
+		UnassignedItems: []*cistern.Droplet{
+			{
+				ID:                "ci-orph1",
+				Title:             "Orphaned work",
+				Status:            "in_progress",
+				CurrentCataractae: "implement",
+				UpdatedAt:         time.Now().Add(-5 * time.Minute),
+			},
+		},
+		FetchedAt: time.Now(),
+	}
+
+	out := renderDashboard(data)
+
+	if !strings.Contains(out, "UNASSIGNED") {
+		t.Error("output missing UNASSIGNED section header")
+	}
+	if !strings.Contains(out, "ci-orph1") {
+		t.Error("output missing orphaned droplet ID")
+	}
+	if !strings.Contains(out, "Orphaned work") {
+		t.Error("output missing orphaned droplet title")
+	}
+	if !strings.Contains(out, "implement") {
+		t.Error("output missing orphaned droplet current_cataractae")
+	}
+	// elapsed: 5 minutes → "5m 0s"
+	if !strings.Contains(out, "5m") {
+		t.Errorf("output missing elapsed time, got:\n%s", out)
+	}
+}
+
+// TestRenderDashboard_NoUnassigned_HidesSection verifies that the UNASSIGNED
+// section is absent when no orphaned droplets exist.
+func TestRenderDashboard_NoUnassigned_HidesSection(t *testing.T) {
+	data := &DashboardData{
+		FlowingCount:    0,
+		Cataractae:      []CataractaeInfo{{Name: "virgo", Steps: []string{"implement"}}},
+		UnassignedItems: nil,
+		FetchedAt:       time.Now(),
+	}
+
+	out := renderDashboard(data)
+
+	if strings.Contains(out, "UNASSIGNED") {
+		t.Error("output should not contain UNASSIGNED section when no orphaned droplets")
+	}
+}
+
+// TestTUIView_ShowsUnassignedSection verifies that the TUI View() output includes
+// the UNASSIGNED section header when UnassignedItems is non-empty.
+func TestTUIView_ShowsUnassignedSection(t *testing.T) {
+	m := newDashboardTUIModel("", "")
+	m.width = 120
+	m.height = 80
+	m.data = &DashboardData{
+		FlowingCount: 1,
+		Cataractae:   []CataractaeInfo{{Name: "virgo", Steps: []string{"implement"}}},
+		UnassignedItems: []*cistern.Droplet{
+			{
+				ID:                "ci-orph1",
+				Title:             "Orphaned work",
+				Status:            "in_progress",
+				CurrentCataractae: "implement",
+				UpdatedAt:         time.Now().Add(-2 * time.Minute),
+			},
+		},
+		FetchedAt: time.Now(),
+	}
+
+	out := stripANSITest(m.View())
+
+	if !strings.Contains(out, "UNASSIGNED") {
+		t.Errorf("TUI View should contain UNASSIGNED section, got (first 800 chars): %q", out[:min(800, len(out))])
+	}
+	if !strings.Contains(out, "ci-orph1") {
+		t.Errorf("TUI View should contain orphaned droplet ID ci-orph1, got: %q", out[:min(800, len(out))])
+	}
+}
+
+// TestViewUnassigned_ShowsDropletInfo verifies the TUI viewUnassigned helper
+// renders each orphaned item with its ID, elapsed time, step, and title.
+func TestViewUnassigned_ShowsDropletInfo(t *testing.T) {
+	m := newDashboardTUIModel("", "")
+	m.width = 120
+	m.data = &DashboardData{
+		UnassignedItems: []*cistern.Droplet{
+			{
+				ID:                "ci-orph2",
+				Title:             "Lost droplet",
+				Status:            "in_progress",
+				CurrentCataractae: "review",
+				UpdatedAt:         time.Now().Add(-10 * time.Minute),
+			},
+		},
+	}
+
+	lines := m.viewUnassigned()
+	out := stripANSITest(strings.Join(lines, "\n"))
+
+	for _, want := range []string{"ci-orph2", "Lost droplet", "review", "10m"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("viewUnassigned should contain %q, got: %q", want, out)
+		}
+	}
+}
+
+// TestFetchDashboardData_AssignedToRemovedAqueduct_AppearsAsUnassigned verifies
+// that a droplet with a non-empty Assignee that does not match any configured
+// aqueduct (e.g. the aqueduct was removed or renamed) appears in UnassignedItems
+// rather than disappearing silently.
+//
+// Given: a droplet assigned to "deleted-aqueduct", which is not in the config
+// When:  fetchDashboardData is called
+// Then:  UnassignedItems contains the droplet
+func TestFetchDashboardData_AssignedToRemovedAqueduct_AppearsAsUnassigned(t *testing.T) {
+	cfgPath := tempCfg(t) // two aqueducts: virgo, marcia
+	dbPath := tempDB(t)
+
+	c, err := cistern.New(dbPath, "mr")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	item, _ := c.Add("myrepo", "Stale Assignment", "", 1, 2)
+	c.GetReady("myrepo")
+	// Assign to an aqueduct that no longer exists in the config.
+	c.Assign(item.ID, "deleted-aqueduct", "implement")
+	c.Close()
+
+	data := fetchDashboardData(cfgPath, dbPath)
+
+	// The droplet must appear in UnassignedItems (visible in UNASSIGNED section).
+	if len(data.UnassignedItems) != 1 {
+		t.Fatalf("UnassignedItems len = %d, want 1 (droplet assigned to removed aqueduct)", len(data.UnassignedItems))
+	}
+	if data.UnassignedItems[0].ID != item.ID {
+		t.Errorf("UnassignedItems[0].ID = %q, want %q", data.UnassignedItems[0].ID, item.ID)
+	}
+	// FlowingCount should still reflect all in_progress droplets.
+	if data.FlowingCount != 1 {
+		t.Errorf("FlowingCount = %d, want 1", data.FlowingCount)
+	}
+}
+
+// TestDashboardStateHash_ChangesWhenUnassignedItemsChange verifies that the
+// state hash changes when an orphaned droplet appears, so the dashboard does
+// not enter idle mode while unassigned items exist.
+func TestDashboardStateHash_ChangesWhenUnassignedItemsChange(t *testing.T) {
+	base := &DashboardData{FlowingCount: 1, FarmRunning: true}
+	withOrphan := &DashboardData{
+		FlowingCount: 1,
+		FarmRunning:  true,
+		UnassignedItems: []*cistern.Droplet{
+			{ID: "ci-orph1", CurrentCataractae: "implement"},
+		},
+	}
+
+	h1 := dashboardStateHash(base)
+	h2 := dashboardStateHash(withOrphan)
+
+	if h1 == h2 {
+		t.Error("dashboardStateHash should differ when UnassignedItems changes")
+	}
+}
