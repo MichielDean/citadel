@@ -341,6 +341,10 @@ func padRight(s string, width int) string {
 // Each cataractae is an arch pier. The channel on top carries the flowing droplet.
 // Returns a multi-line string (7 lines) suitable for the TUI dashboard.
 //
+// termWidth is the terminal column width; colW is computed dynamically so the
+// arch fits within that width. Pass 80 as a sensible default for the plain
+// renderer.
+//
 // Example output (active in green, idle piers dim):
 //
 //	virgo  ╔════════════════════════════════════════════════════════╗
@@ -351,9 +355,8 @@ func padRight(s string, width int) string {
 //	             ║  ●  ║         ║  ○  ║         ║  ○  ║        ║  ○  ║
 //	             ╚═════╝         ╚═════╝         ╚═════╝        ╚═════╝
 //	           implement      adv-review            qa          delivery
-func renderAqueductRow(ch CataractaeInfo) string {
+func renderAqueductRow(ch CataractaeInfo, termWidth int) string {
 	const (
-		colW    = 15 // visual width per cataractae column (label + spacing)
 		pierInW = 5  // inner width of pier box: "  ●  " or " impl"
 		nameW   = 10 // left label column width
 	)
@@ -363,6 +366,16 @@ func renderAqueductRow(ch CataractaeInfo) string {
 		steps = []string{"(empty)"}
 	}
 	n := len(steps)
+
+	// Compute colW dynamically so the arch fits within termWidth.
+	// Visual total of the channel-top row:
+	//   prefix(nameW+4) + "╔"(1) + chanW(n*colW-1) + "╗"(1) = nameW+5 + n*colW
+	// The channel-bottom row is (2-n) chars wider than the top row, so for
+	// n<2 we add that overhead to keep both rows within termWidth.
+	// For total ≤ termWidth: colW ≤ (termWidth - (nameW+5+max(0,2-n))) / n.
+	const minColW = 9
+	botExtra := max(0, 2-n)
+	colW := max(minColW, (termWidth-(nameW+5+botExtra))/n)
 
 	// Channel total inner width = n columns of colW, separated by ┬ joints.
 	chanW := n*colW - 1
@@ -467,7 +480,7 @@ func renderAqueductRow(ch CataractaeInfo) string {
 	labels.WriteString(indent)
 	for _, step := range steps {
 		lbl := step
-		if len([]rune(lbl)) > colW-1 {
+		if len([]rune(lbl)) > colW-2 {
 			runes := []rune(lbl)
 			lbl = string(runes[:colW-2]) + "…"
 		}
@@ -564,7 +577,7 @@ func renderDashboard(data *DashboardData) string {
 			if i > 0 {
 				sb.WriteString("\n")
 			}
-			sb.WriteString(renderAqueductRow(ch))
+			sb.WriteString(renderAqueductRow(ch, 80))
 			sb.WriteString("\n")
 		}
 	}

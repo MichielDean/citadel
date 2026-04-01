@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Dashboard: fix arch channel overflow on narrow terminals (ci-3247n)
+
+The aqueduct arch diagram in the dashboard now renders correctly at any terminal width, including the default 80-column width. The channel column width is now computed dynamically based on the available width and the number of pipeline steps.
+
+**Key changes:**
+- **Dynamic column width**: `colW` is calculated from available terminal width rather than hardcoded to 15 characters
+- **Overflow correction**: Accounts for the channel bottom row being wider than the top row when `n ≤ 2` steps, preventing off-by-one overflow
+- **Minimum width floor**: Enforces a sensible minimum column width of 9 characters to maintain readability at very narrow widths
+- **Label improvements**: The 'security-review' (15 chars) label is now fully visible without truncation at reasonable terminal widths
+
+**Testing:**
+- Verified rendering without overflow at 80, 120, and 220 column widths with 7-step pipelines
+- Regression test for empty aqueducts (single step, edge case) at width=80
+- All aqueduct rows remain readable and properly centered within terminal bounds
+
+**Impact**: The live dashboard (`ct dashboard`) now displays correctly on 80-column terminals, including narrow terminal windows, improving usability on constrained environments.
+
 ### Tracker: implement Jira Cloud provider (ci-g6so3)
 
 Cistern now supports importing droplets from Jira Cloud. The new Jira tracker provider fetches issues via REST API v3 with Basic Auth (email + API token) and maps Jira issue fields to Cistern droplet metadata.
