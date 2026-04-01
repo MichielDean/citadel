@@ -775,6 +775,68 @@ func TestTick_RecirculateNoRoute_WritesStructuredNoteAndRestartsAtImplement(t *t
 	}
 }
 
+func TestTick_RecirculateNonFirstStep_RestartsAtImplementNotCurrentStep(t *testing.T) {
+	// Given: a workflow where "qa" is step 1 (not the first cataractae) and has no
+	// on_recirculate route. The first cataractae is "implement" (step 0).
+	// When "qa" signals recirculate, the restart must land at "implement" (step 0),
+	// not at "qa" (the current step). This distinguishes wf.Cataractae[0].Name from
+	// "restart at current step".
+	wf := &aqueduct.Workflow{
+		Name: "test",
+		Cataractae: []aqueduct.WorkflowCataractae{
+			{
+				Name:   "implement",
+				Type:   aqueduct.CataractaeTypeAgent,
+				OnPass: "qa",
+				OnFail: "pooled",
+				// OnRecirculate intentionally omitted.
+			},
+			{
+				Name:   "qa",
+				Type:   aqueduct.CataractaeTypeAgent,
+				OnPass: "done",
+				OnFail: "implement",
+				// OnRecirculate intentionally omitted.
+			},
+		},
+	}
+	cfg := testConfig()
+	client := newMockClient()
+	client.readyItems = []*cistern.Droplet{{ID: "b5", CurrentCataractae: "qa"}}
+	runner := newMockRunner(client)
+	runner.outcomes["qa"] = "recirculate"
+	sched := NewFromParts(cfg, map[string]*aqueduct.Workflow{"test-repo": wf}, map[string]CisternClient{"test-repo": client}, runner)
+
+	// When: the scheduler dispatches and "qa" signals recirculate.
+	sched.Tick(context.Background())
+	if !runner.waitCalls(1, time.Second) {
+		t.Fatal("timed out waiting for spawn")
+	}
+	sched.Tick(context.Background())
+	time.Sleep(10 * time.Millisecond)
+
+	client.mu.Lock()
+	defer client.mu.Unlock()
+
+	// Then: droplet restarts at implement (step 0), not qa (the recirculating step).
+	if client.steps["b5"] != "implement" {
+		t.Errorf("expected restart at implement (step 0), got %q — must not restart at current step", client.steps["b5"])
+	}
+	if _, ok := client.pooled["b5"]; ok {
+		t.Error("expected no pooling when recirculate has no on_recirculate route")
+	}
+	// And: exactly one structured routing note is attached.
+	noteCount := 0
+	for _, n := range client.attached {
+		if n.id == "b5" && strings.Contains(n.notes, "[scheduler:routing]") && strings.Contains(n.notes, "restarting at implement") {
+			noteCount++
+		}
+	}
+	if noteCount != 1 {
+		t.Errorf("expected exactly one structured routing note, got %d; notes: %v", noteCount, client.attached)
+	}
+}
+
 func TestTick_NoWorkAvailable(t *testing.T) {
 	client := newMockClient()
 	runner := newMockRunner(client)
