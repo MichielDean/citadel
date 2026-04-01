@@ -1473,17 +1473,16 @@ func (s *Castellarius) heartbeatRepo(ctx context.Context, repo aqueduct.RepoConf
 				// and retries — spawn failures are often transient.
 				delete(s.lastStallNoted, item.ID)
 			}
-		}
-
-		// Recovery for orphaned in_progress droplets: no assignee means no named
-		// session exists for this droplet. Force-reset to open so the next
-		// dispatch cycle reclaims it. This handles Castellarius crash/restart and
-		// failed dispatch where the droplet was never assigned a worker.
-		if item.Assignee == "" {
-			step := currentCataracta(item, wf)
+		} else {
+			// Recovery for orphaned in_progress droplets: no assignee means no named
+			// session exists for this droplet. Force-reset to open so the next
+			// dispatch cycle reclaims it. This handles Castellarius crash/restart and
+			// failed dispatch where the droplet was never assigned a worker.
 			stepName := item.CurrentCataractae
-			if step != nil {
-				stepName = step.Name
+			if stepName == "" {
+				if step := currentCataracta(item, wf); step != nil {
+					stepName = step.Name
+				}
 			}
 			if err := client.AddNote(item.ID, "scheduler",
 				"[scheduler:recovery] reset orphaned in_progress droplet to open — no assignee, no active session"); err != nil {
