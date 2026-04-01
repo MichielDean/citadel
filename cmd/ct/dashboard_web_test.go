@@ -1236,7 +1236,7 @@ func TestDashboardTUI_LastFrame_NoRepaintMarker_AttachReturnsNil(t *testing.T) {
 // And:   lastFrame contains the content from the first frame
 func TestDashboardTUI_LastFrame_RepaintBoundaryCommitsFrame(t *testing.T) {
 	tui := newDashboardTUI("", "", "")
-	marker := "\033[2J\033[H"
+	marker := string(repaintMarker)
 
 	// First repaint: opens frame 1.
 	tui.broadcast([]byte(marker + "frame-one-content"))
@@ -1274,7 +1274,7 @@ func TestDashboardTUI_LastFrame_ReconnectGetsCleanFrame(t *testing.T) {
 	}
 	tui.Start()
 
-	marker := "\033[2J\033[H"
+	marker := string(repaintMarker)
 	clientA, _ := tui.attach()
 
 	// Write frame 1 through the mock PTY. net.Pipe is synchronous: Write blocks
@@ -1325,7 +1325,7 @@ func TestDashboardTUI_LastFrame_ReconnectGetsCleanFrame(t *testing.T) {
 // Then:  attach() returns a non-nil lastFrame starting with the repaint marker
 func TestDashboardTUI_LastFrame_FlushTimer_CommitsOnIdle(t *testing.T) {
 	tui := newDashboardTUI("", "", "")
-	marker := "\033[2J\033[H"
+	marker := string(repaintMarker)
 
 	tui.broadcast([]byte(marker + "idle-frame-content"))
 
@@ -1354,7 +1354,7 @@ func TestDashboardTUI_LastFrame_FlushTimer_CommitsOnIdle(t *testing.T) {
 // Then:  lastFrame remains frame-one — the stale callback is a no-op
 func TestDashboardTUI_FlushTimer_StaleCallbackDoesNotCorruptLastFrame(t *testing.T) {
 	tui := newDashboardTUI("", "", "")
-	marker := "\033[2J\033[H"
+	marker := string(repaintMarker)
 
 	// Broadcast frame 1 — arms flush timer gen=1, pending = marker+"frame-one-content".
 	tui.broadcast([]byte(marker + "frame-one-content"))

@@ -537,13 +537,9 @@ func (d *DashboardTUI) frameAccumulate(chunk []byte) {
 		}
 		if d.inFrame {
 			d.pending = append(d.pending, rest[:idx]...)
-			if d.flushTimer != nil {
-				d.flushTimer.Stop()
-				d.flushTimer = nil
-			}
 			d.lastFrame = d.pending
 		}
-		d.pending = bytes.Clone(rest[idx : idx+len(repaintMarker)])
+		d.pending = bytes.Clone(repaintMarker)
 		d.inFrame = true
 		rest = rest[idx+len(repaintMarker):]
 	}
