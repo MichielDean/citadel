@@ -317,12 +317,18 @@ func TestLogPanel_Update_PKey_TogglesPinned(t *testing.T) {
 
 // TestLogPanel_Update_DownKey_IncrementsScrollY verifies 'j' scrolls down and pins.
 //
-// Given: a logPanel with scrollY=0 and pinned=false
+// Given: a logPanel with scrollY=0, height=10, and 10 lines of content (bottom=4)
 // When:  'j' is pressed
 // Then:  scrollY = 1 and pinned = true
 func TestLogPanel_Update_DownKey_IncrementsScrollY(t *testing.T) {
 	p := newLogPanel(mockLogReader{}, []string{"/tmp/test.log"})
 	p.scrollY = 0
+	p.height = 10
+	var lineSlice []string
+	for i := 1; i <= 10; i++ {
+		lineSlice = append(lineSlice, fmt.Sprintf("line%02d", i))
+	}
+	p.content = strings.Join(lineSlice, "\n")
 
 	updated, _ := p.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
 	up := updated.(logPanel)
@@ -419,6 +425,68 @@ func TestLogPanel_Update_EndKey_JumpsToBottom(t *testing.T) {
 	}
 	if !up.pinned {
 		t.Error("pinned should be true after 'G'")
+	}
+}
+
+// TestLogPanel_Update_DownKey_AtBottom_DoesNotOvershoot verifies 'j' does not exceed
+// the content bottom, so 'k' is immediately responsive (ci-owymw-dtgjp).
+//
+// Given: a logPanel with 10 lines of content, height=10 (visible=6, bottom=4)
+//        and scrollY already at the bottom (4)
+// When:  'j' is pressed 5 more times
+// Then:  scrollY stays at 4 (no overshoot past the bottom)
+func TestLogPanel_Update_DownKey_AtBottom_DoesNotOvershoot(t *testing.T) {
+	p := newLogPanel(mockLogReader{}, []string{"/tmp/test.log"})
+	var lineSlice []string
+	for i := 1; i <= 10; i++ {
+		lineSlice = append(lineSlice, fmt.Sprintf("line%02d", i))
+	}
+	p.content = strings.Join(lineSlice, "\n")
+	p.height = 10
+	// visible = max(10-4, 1) = 6; bottom = max(10-6, 0) = 4
+	p.scrollY = 4 // already at bottom
+
+	cur := tea.Model(p)
+	for i := 0; i < 5; i++ {
+		cur, _ = cur.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	}
+	result := cur.(logPanel)
+
+	if result.scrollY != 4 {
+		t.Errorf("scrollY = %d after 5 'j' presses at bottom, want 4 (no overshoot)", result.scrollY)
+	}
+}
+
+// TestLogPanel_Update_DownKey_ThenUpKey_ImmediatelyResponsive verifies that after
+// pressing 'j' past the bottom, 'k' is immediately responsive (ci-owymw-dtgjp).
+//
+// Given: a logPanel at the bottom after pressing 'j' many times
+// When:  'k' is pressed once
+// Then:  scrollY decreases by 1
+func TestLogPanel_Update_DownKey_ThenUpKey_ImmediatelyResponsive(t *testing.T) {
+	p := newLogPanel(mockLogReader{}, []string{"/tmp/test.log"})
+	var lineSlice []string
+	for i := 1; i <= 10; i++ {
+		lineSlice = append(lineSlice, fmt.Sprintf("line%02d", i))
+	}
+	p.content = strings.Join(lineSlice, "\n")
+	p.height = 10
+	// visible = 6; bottom = 4
+
+	cur := tea.Model(p)
+	// Press 'j' many times past the bottom
+	for i := 0; i < 20; i++ {
+		cur, _ = cur.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	}
+	atBottom := cur.(logPanel)
+	if atBottom.scrollY != 4 {
+		t.Fatalf("scrollY = %d after 20 'j' presses, want 4 (precondition)", atBottom.scrollY)
+	}
+
+	cur, _ = cur.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	afterK := cur.(logPanel)
+	if afterK.scrollY != 3 {
+		t.Errorf("scrollY = %d after 'k' from bottom, want 3 (must be immediately responsive)", afterK.scrollY)
 	}
 }
 

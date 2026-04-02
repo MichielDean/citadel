@@ -217,7 +217,9 @@ func (p logPanel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			p.pinned = true
 		case "down", "j":
-			p.scrollY++
+			visible := max(p.height-4, 1)
+			bottom := max(len(strings.Split(p.content, "\n"))-visible, 0)
+			p.scrollY = min(p.scrollY+1, bottom)
 			p.pinned = true
 		case "home", "g":
 			p.scrollY = 0
