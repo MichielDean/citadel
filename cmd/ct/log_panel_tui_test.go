@@ -2,6 +2,8 @@ package main
 
 import (
 	"errors"
+	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -391,24 +393,60 @@ func TestLogPanel_Update_HomeKey_JumpsToTop(t *testing.T) {
 	}
 }
 
-// TestLogPanel_Update_EndKey_JumpsToBottom verifies 'G' sets a large scrollY and pins.
+// TestLogPanel_Update_EndKey_JumpsToBottom verifies 'G' sets scrollY to the actual
+// computed bottom (not a large sentinel) and pins.
 //
-// Given: a logPanel with scrollY=0
+// Given: a logPanel with 10 lines of content, height=10 (visible=6)
 // When:  'G' is pressed
-// Then:  scrollY > 0 (set to large sentinel for View() clamping) and pinned = true
+// Then:  scrollY = max(10-6, 0) = 4 and pinned = true
 func TestLogPanel_Update_EndKey_JumpsToBottom(t *testing.T) {
 	p := newLogPanel(mockLogReader{}, []string{"/tmp/test.log"})
+	var lineSlice []string
+	for i := 1; i <= 10; i++ {
+		lineSlice = append(lineSlice, fmt.Sprintf("line%02d", i))
+	}
+	p.content = strings.Join(lineSlice, "\n")
+	p.height = 10 // visible = max(10-4,1) = 6; bottom = max(10-6,0) = 4
 	p.scrollY = 0
 	p.pinned = false
 
 	updated, _ := p.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'G'}})
 	up := updated.(logPanel)
 
-	if up.scrollY <= 0 {
-		t.Errorf("scrollY = %d, want large value after 'G'", up.scrollY)
+	const wantScrollY = 4
+	if up.scrollY != wantScrollY {
+		t.Errorf("scrollY = %d, want %d (actual bottom) after 'G'", up.scrollY, wantScrollY)
 	}
 	if !up.pinned {
 		t.Error("pinned should be true after 'G'")
+	}
+}
+
+// TestLogPanel_Update_EndKey_ThenUpKey_CanScrollUp verifies that k/up works after G
+// (ci-owymw-36wqa: old 999999 sentinel kept 999999-1=999998 clamped to the same bottom).
+//
+// Given: a logPanel with 10 lines of content, height=10 (visible=6, bottom=4)
+// When:  G is pressed, then k is pressed
+// Then:  scrollY decreases from 4 to 3
+func TestLogPanel_Update_EndKey_ThenUpKey_CanScrollUp(t *testing.T) {
+	p := newLogPanel(mockLogReader{}, []string{"/tmp/test.log"})
+	var lineSlice []string
+	for i := 1; i <= 10; i++ {
+		lineSlice = append(lineSlice, fmt.Sprintf("line%02d", i))
+	}
+	p.content = strings.Join(lineSlice, "\n")
+	p.height = 10
+
+	updated, _ := p.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'G'}})
+	afterG := updated.(logPanel)
+	if afterG.scrollY != 4 {
+		t.Fatalf("scrollY = %d after G, want 4 (precondition)", afterG.scrollY)
+	}
+
+	updated2, _ := afterG.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	afterK := updated2.(logPanel)
+	if afterK.scrollY != 3 {
+		t.Errorf("scrollY = %d after G then k, want 3 (must be able to scroll up after G)", afterK.scrollY)
 	}
 }
 
@@ -662,5 +700,254 @@ func TestCockpit_LogContentMsg_RoutesToLogPanel_WhenCursorNotAtFive(t *testing.T
 	}
 	if lp.content != "some log" {
 		t.Errorf("logPanel.content = %q, want %q", lp.content, "some log")
+	}
+}
+
+// ── tailLines ─────────────────────────────────────────────────────────────────
+
+// TestTailLines_TableDriven covers all key behaviours of the tailLines helper
+// (ci-owymw-la10v: previously had zero unit test coverage).
+func TestTailLines_TableDriven(t *testing.T) {
+	tests := []struct {
+		name string
+		s    string
+		n    int
+		want string
+	}{
+		{
+			name: "empty string returns empty",
+			s:    "",
+			n:    5,
+			want: "",
+		},
+		{
+			name: "n=0 returns all",
+			s:    "a\nb\nc",
+			n:    0,
+			want: "a\nb\nc",
+		},
+		{
+			name: "n negative returns all",
+			s:    "a\nb\nc",
+			n:    -1,
+			want: "a\nb\nc",
+		},
+		{
+			name: "n equals line count returns all",
+			s:    "a\nb\nc",
+			n:    3,
+			want: "a\nb\nc",
+		},
+		{
+			name: "n greater than line count returns all",
+			s:    "a\nb\nc",
+			n:    10,
+			want: "a\nb\nc",
+		},
+		{
+			name: "n less than line count returns last n",
+			s:    "a\nb\nc\nd\ne",
+			n:    3,
+			want: "c\nd\ne",
+		},
+		{
+			name: "n=1 returns last single line",
+			s:    "a\nb\nc",
+			n:    1,
+			want: "c",
+		},
+		{
+			// Split("a\nb\nc\n", "\n") = ["a","b","c",""], last 2 = ["c",""] → "c\n"
+			name: "trailing newline preserved in last n",
+			s:    "a\nb\nc\n",
+			n:    2,
+			want: "c\n",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := tailLines(tc.s, tc.n)
+			if got != tc.want {
+				t.Errorf("tailLines(%q, %d) = %q, want %q", tc.s, tc.n, got, tc.want)
+			}
+		})
+	}
+}
+
+// ── fileLogReader ─────────────────────────────────────────────────────────────
+
+// TestFileLogReader_ReadTail_FileNotFound_ReturnsError verifies that a missing file
+// returns an error (ci-owymw-la10v).
+//
+// Given: a non-existent file path
+// When:  ReadTail is called
+// Then:  a non-nil error is returned
+func TestFileLogReader_ReadTail_FileNotFound_ReturnsError(t *testing.T) {
+	reader := fileLogReader{}
+	_, err := reader.ReadTail("/nonexistent/path/missing.log", 10)
+	if err == nil {
+		t.Error("ReadTail on non-existent file: want error, got nil")
+	}
+}
+
+// TestFileLogReader_ReadTail_EmptyFile_ReturnsEmpty verifies an empty file returns
+// "" without error (ci-owymw-la10v).
+//
+// Given: a temp file with no content
+// When:  ReadTail is called
+// Then:  ("", nil) is returned
+func TestFileLogReader_ReadTail_EmptyFile_ReturnsEmpty(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "tail-*.log")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	reader := fileLogReader{}
+	got, err := reader.ReadTail(f.Name(), 10)
+	if err != nil {
+		t.Fatalf("ReadTail on empty file: unexpected error: %v", err)
+	}
+	if got != "" {
+		t.Errorf("ReadTail on empty file = %q, want empty string", got)
+	}
+}
+
+// TestFileLogReader_ReadTail_MaxLinesZero_ReturnsFullFile verifies that maxLines=0
+// bypasses line-trimming and returns the full file (ci-owymw-la10v).
+//
+// Given: a file with 3 lines, maxLines=0
+// When:  ReadTail is called
+// Then:  the full content is returned
+func TestFileLogReader_ReadTail_MaxLinesZero_ReturnsFullFile(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "tail-*.log")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	content := "line1\nline2\nline3\n"
+	if _, err := f.WriteString(content); err != nil {
+		t.Fatal(err)
+	}
+
+	reader := fileLogReader{}
+	got, err := reader.ReadTail(f.Name(), 0)
+	if err != nil {
+		t.Fatalf("ReadTail: unexpected error: %v", err)
+	}
+	if got != content {
+		t.Errorf("ReadTail(maxLines=0) = %q, want %q", got, content)
+	}
+}
+
+// TestFileLogReader_ReadTail_SmallFile_MaxLinesLargerThanContent_ReturnsAll verifies
+// the small-file path (size < readLen) when maxLines exceeds the line count
+// (ci-owymw-la10v).
+//
+// Given: a file with 3 lines, maxLines=10
+// When:  ReadTail is called
+// Then:  all 3 lines are returned unchanged
+func TestFileLogReader_ReadTail_SmallFile_MaxLinesLargerThanContent_ReturnsAll(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "tail-*.log")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	content := "lineA\nlineB\nlineC\n"
+	if _, err := f.WriteString(content); err != nil {
+		t.Fatal(err)
+	}
+
+	reader := fileLogReader{}
+	got, err := reader.ReadTail(f.Name(), 10)
+	if err != nil {
+		t.Fatalf("ReadTail: unexpected error: %v", err)
+	}
+	if got != content {
+		t.Errorf("ReadTail(maxLines=10, 3 lines) = %q, want %q", got, content)
+	}
+}
+
+// TestFileLogReader_ReadTail_SmallFile_MaxLinesLimitsToLastN verifies the small-file
+// path applies tailLines when maxLines < total line count (ci-owymw-la10v).
+//
+// Given: a file with 10 short lines (~80 bytes, well under maxLines(5)*256=1280),
+//
+//	maxLines=5
+//
+// When:  ReadTail is called
+// Then:  only lines 6-10 are returned; lines 1-5 are absent
+func TestFileLogReader_ReadTail_SmallFile_MaxLinesLimitsToLastN(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "tail-*.log")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	for i := 1; i <= 10; i++ {
+		fmt.Fprintf(f, "line%02d\n", i)
+	}
+
+	reader := fileLogReader{}
+	got, err := reader.ReadTail(f.Name(), 5)
+	if err != nil {
+		t.Fatalf("ReadTail: unexpected error: %v", err)
+	}
+	// Each line ends with '\n', so strings.Split counts a trailing empty element.
+	// tailLines(content, 5) → last 5 elements = lines 07, 08, 09, 10, "".
+	for i := 7; i <= 10; i++ {
+		want := fmt.Sprintf("line%02d", i)
+		if !strings.Contains(got, want) {
+			t.Errorf("ReadTail missing %q in last-5 result; got: %q", want, got)
+		}
+	}
+	for i := 1; i <= 5; i++ {
+		notWant := fmt.Sprintf("line%02d", i)
+		if strings.Contains(got, notWant) {
+			t.Errorf("ReadTail unexpectedly contains %q (should be trimmed); got: %q", notWant, got)
+		}
+	}
+}
+
+// TestFileLogReader_ReadTail_LargeFile_SeekPath_ReturnsLastNLines verifies the
+// seek-from-end path and drop-first-line logic (ci-owymw-la10v).
+//
+// Setup: 50 lines × 51 bytes/line = 2550 bytes; maxLines=5 → readLen=1280 < 2550.
+// The seek lands ~24 lines from start; the partial first line is dropped; the last
+// 5 complete lines of the file are returned.
+//
+// Given: a 2550-byte log file, maxLines=5
+// When:  ReadTail is called
+// Then:  lines 46-50 are present; early lines (01-03) are absent
+func TestFileLogReader_ReadTail_LargeFile_SeekPath_ReturnsLastNLines(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "tail-*.log")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	// Each line: "line%02d: " (8 chars) + 42 'x's + '\n' = 51 bytes.
+	const nLines = 50
+	for i := 1; i <= nLines; i++ {
+		fmt.Fprintf(f, "line%02d: %s\n", i, strings.Repeat("x", 42))
+	}
+
+	reader := fileLogReader{}
+	got, err := reader.ReadTail(f.Name(), 5)
+	if err != nil {
+		t.Fatalf("ReadTail: unexpected error: %v", err)
+	}
+	// Each line ends with '\n', so strings.Split counts a trailing empty element.
+	// After the seek and drop-first-line, content = lines 26-50 (25 '\n'-terminated lines).
+	// tailLines(content, 5) → last 5 elements = lines 47, 48, 49, 50, "".
+	for i := 47; i <= 50; i++ {
+		want := fmt.Sprintf("line%02d", i)
+		if !strings.Contains(got, want) {
+			t.Errorf("ReadTail missing %q; got:\n%s", want, got)
+		}
+	}
+	for _, notWant := range []string{"line01", "line02", "line03"} {
+		if strings.Contains(got, notWant) {
+			t.Errorf("ReadTail unexpectedly contains %q; got:\n%s", notWant, got)
+		}
 	}
 }
