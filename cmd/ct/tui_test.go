@@ -1307,6 +1307,24 @@ func TestTabApp_Droplets_ActionResult_StaleID_IsIgnored(t *testing.T) {
 	}
 }
 
+// TestTabApp_ActionResult_GlobalAction_EmptyDropletID_WithSelectedDroplet_TriggersRefetch
+// verifies that a global action result (dropletID="") is never discarded even
+// when the user has navigated to a different droplet while the action was in-flight.
+//
+// Given: a model with selectedID="ci-aaa"
+// When:  tuiActionResultMsg{dropletID:"", err:nil} arrives (global action, e.g. create droplet)
+// Then:  cmd is non-nil (refetch triggered — result was not discarded)
+func TestTabApp_ActionResult_GlobalAction_EmptyDropletID_WithSelectedDroplet_TriggersRefetch(t *testing.T) {
+	m := newTabAppModel("", "")
+	m.selectedID = "ci-aaa"
+
+	_, cmd := m.Update(tuiActionResultMsg{dropletID: "", err: nil})
+
+	if cmd == nil {
+		t.Error("expected non-nil cmd for global action result (empty dropletID) — result should not be discarded")
+	}
+}
+
 // TestTabApp_Detail_OverlayActive_ScrollKeyGoesToOverlay verifies that when an
 // overlay is active, scroll keys ('j') are consumed by the overlay handler rather
 // than scrolling the underlying detail content.
