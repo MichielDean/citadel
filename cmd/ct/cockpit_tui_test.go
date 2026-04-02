@@ -1379,11 +1379,8 @@ func TestCockpit_Colon_OpensPalette_WhenPanelFocused(t *testing.T) {
 // When:  ':' is pressed
 // Then:  paletteActive=true and paletteQuery contains ':'
 func TestCockpit_Colon_AppendsToFilter_WhenPaletteAlreadyOpen(t *testing.T) {
-	m := newPaletteTestCockpit([]PaletteAction{{Name: "fo:ward"}}, nil)
-	m.paletteActive = true
+	m := newPaletteTestCockpit([]PaletteAction{{Name: "fo:ward"}}, nil).openPalette()
 	m.paletteQuery = "fo"
-	m.paletteAll = []PaletteAction{{Name: "fo:ward"}}
-	m.paletteFiltered = []PaletteAction{{Name: "fo:ward"}}
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
 	um := updated.(cockpitModel)
 	if !um.paletteActive {
