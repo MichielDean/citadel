@@ -164,7 +164,14 @@ func main() {
 	time.Sleep(200 * time.Millisecond)
 
 	// Signal outcome via ct.
-	cmd := exec.Command("ct", "droplet", "pass", dropletID, "--notes", "fakeagent: ok")
+	// CT_BIN overrides the path to ct so integration tests can inject the
+	// source-built binary without relying on PATH (which tmux sessions may
+	// override via shell profile files).
+	ctBin := "ct"
+	if v := os.Getenv("CT_BIN"); v != "" {
+		ctBin = v
+	}
+	cmd := exec.Command(ctBin, "droplet", "pass", dropletID, "--notes", "fakeagent: ok")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {

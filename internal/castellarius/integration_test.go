@@ -32,9 +32,6 @@ func checkIntegrationPrereqs(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not available: skipping integration test")
 	}
-	if _, err := exec.LookPath("ct"); err != nil {
-		t.Skip("ct binary not on PATH: skipping integration test")
-	}
 }
 
 // buildFakeagent compiles the fakeagent binary into a temp dir and returns its path.
@@ -47,6 +44,20 @@ func buildFakeagent(t *testing.T) string {
 	cmd.Dir = "../.."
 	if result, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build fakeagent: %v\n%s", err, result)
+	}
+	return out
+}
+
+// buildCt compiles the ct binary into a temp dir and returns its path.
+// Go tests run with cwd = the package directory (internal/castellarius/), so the
+// module root is two levels up.
+func buildCt(t *testing.T) string {
+	t.Helper()
+	out := filepath.Join(t.TempDir(), "ct")
+	cmd := exec.Command("go", "build", "-o", out, "./cmd/ct")
+	cmd.Dir = "../.."
+	if result, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("build ct: %v\n%s", err, result)
 	}
 	return out
 }
@@ -64,6 +75,7 @@ func buildFakeagent(t *testing.T) string {
 type integrationRunner struct {
 	t        *testing.T
 	agentBin string            // absolute path to the fakeagent binary
+	ctBin    string            // absolute path to the ct binary built from source
 	dbPath   string            // SQLite database path forwarded as CT_DB
 	logDir   string            // directory for session output logs
 	extraEnv map[string]string // additional env vars injected into the session
@@ -139,7 +151,24 @@ func (r *integrationRunner) Spawn(_ context.Context, req castellarius.Cataractae
 	// Build tmux args: forward only the env vars the session needs.
 	args := []string{"new-session", "-d", "-s", sessionID, "-c", dir}
 	args = append(args, "-e", "CT_DB="+r.dbPath)
-	if path := os.Getenv("PATH"); path != "" {
+	// CT_BIN overrides the ct binary path so fakeagent invokes the source-built
+	// ct instead of whatever is on PATH.  tmux sessions source shell profile
+	// files that override PATH, so we cannot rely on PATH prepending alone; a
+	// dedicated env var (which profile files never touch) is the reliable anchor.
+	if r.ctBin != "" {
+		args = append(args, "-e", "CT_BIN="+r.ctBin)
+	}
+	// Also prepend ctBin dir to PATH for any other tools the session may need.
+	path := os.Getenv("PATH")
+	if r.ctBin != "" {
+		ctDir := filepath.Dir(r.ctBin)
+		if path != "" {
+			path = ctDir + ":" + path
+		} else {
+			path = ctDir
+		}
+	}
+	if path != "" {
 		args = append(args, "-e", "PATH="+path)
 	}
 	for k, v := range r.extraEnv {
@@ -256,6 +285,7 @@ func waitDelivered(ctx context.Context, client *cistern.Client, dropletID string
 func TestIntegration_HappyPath_FakeAgentDeliversDroplet(t *testing.T) {
 	checkIntegrationPrereqs(t)
 	fakeagentPath := buildFakeagent(t)
+	ctPath := buildCt(t)
 
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	client, err := cistern.New(dbPath, "it")
@@ -267,6 +297,7 @@ func TestIntegration_HappyPath_FakeAgentDeliversDroplet(t *testing.T) {
 	runner := &integrationRunner{
 		t:        t,
 		agentBin: fakeagentPath,
+		ctBin:    ctPath,
 		dbPath:   dbPath,
 		logDir:   t.TempDir(),
 	}
@@ -304,6 +335,7 @@ func TestIntegration_HappyPath_FakeAgentDeliversDroplet(t *testing.T) {
 func TestIntegration_StartupRecovery_OrphanedDroplet_RedeliversDroplet(t *testing.T) {
 	checkIntegrationPrereqs(t)
 	fakeagentPath := buildFakeagent(t)
+	ctPath := buildCt(t)
 
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	client, err := cistern.New(dbPath, "it")
@@ -315,6 +347,7 @@ func TestIntegration_StartupRecovery_OrphanedDroplet_RedeliversDroplet(t *testin
 	runner := &integrationRunner{
 		t:        t,
 		agentBin: fakeagentPath,
+		ctBin:    ctPath,
 		dbPath:   dbPath,
 		logDir:   t.TempDir(),
 	}
@@ -374,6 +407,7 @@ func TestIntegration_StartupRecovery_OrphanedDroplet_RedeliversDroplet(t *testin
 func TestIntegration_HeartbeatRecovery_DeadSession_RedeliversDroplet(t *testing.T) {
 	checkIntegrationPrereqs(t)
 	fakeagentPath := buildFakeagent(t)
+	ctPath := buildCt(t)
 
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	client, err := cistern.New(dbPath, "it")
@@ -389,6 +423,7 @@ func TestIntegration_HeartbeatRecovery_DeadSession_RedeliversDroplet(t *testing.
 	runner := &integrationRunner{
 		t:          t,
 		agentBin:   fakeagentPath,
+		ctBin:      ctPath,
 		dbPath:     dbPath,
 		spawnModes: []string{"no_signal", ""},
 	}
@@ -426,6 +461,7 @@ func TestIntegration_HeartbeatRecovery_DeadSession_RedeliversDroplet(t *testing.
 func TestIntegration_EnvHygiene_APIKeyNotForwardedToSession(t *testing.T) {
 	checkIntegrationPrereqs(t)
 	fakeagentPath := buildFakeagent(t)
+	ctPath := buildCt(t)
 
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	client, err := cistern.New(dbPath, "it")
@@ -441,6 +477,7 @@ func TestIntegration_EnvHygiene_APIKeyNotForwardedToSession(t *testing.T) {
 	runner := &integrationRunner{
 		t:        t,
 		agentBin: fakeagentPath,
+		ctBin:    ctPath,
 		dbPath:   dbPath,
 		logDir:   logDir,
 		extraEnv: map[string]string{
