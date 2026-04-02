@@ -29,7 +29,7 @@ cataractae:
   - name: simplify
     type: agent
     identity: simplifier
-    model: opus         # stronger model for deep refactoring
+    model: sonnet
     context: full_codebase
     skills:
       - name: cistern-droplet-state
@@ -47,7 +47,7 @@ cataractae:
   - name: review
     type: agent
     identity: reviewer
-    model: opus         # adversarial reviewer benefits from the strongest available model
+    model: sonnet
     context: full_codebase
     skills:
       - name: cistern-droplet-state

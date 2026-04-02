@@ -41,7 +41,7 @@ cataractae:
   - name: review
     type: agent
     identity: reviewer
-    model: opus         # strongest reasoning needed — must find non-obvious bugs across full codebase
+    model: sonnet
     context: full_codebase
     skills:
       - name: cistern-droplet-state
@@ -71,7 +71,7 @@ cataractae:
   - name: security-review
     type: agent
     identity: security
-    model: opus         # full codebase access — trace call chains, verify auth checks, audit cumulative exposure
+    model: sonnet
     context: full_codebase
     skills:
       - name: cistern-droplet-state
