@@ -144,12 +144,10 @@ func (r *integrationRunner) Spawn(_ context.Context, req castellarius.Cataractae
 	// ct instead of whatever is on PATH.  tmux sessions source shell profile
 	// files that override PATH, so we cannot rely on PATH prepending alone; a
 	// dedicated env var (which profile files never touch) is the reliable anchor.
-	if r.ctBin != "" {
-		args = append(args, "-e", "CT_BIN="+r.ctBin)
-	}
 	// Also prepend ctBin dir to PATH for any other tools the session may need.
 	path := os.Getenv("PATH")
 	if r.ctBin != "" {
+		args = append(args, "-e", "CT_BIN="+r.ctBin)
 		ctDir := filepath.Dir(r.ctBin)
 		if path != "" {
 			path = ctDir + ":" + path
