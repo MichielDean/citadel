@@ -3232,6 +3232,28 @@ func TestExecMultiActionCmd_CreateDroplet_EmptyRepo_ReturnsError(t *testing.T) {
 	}
 }
 
+// TestExecMultiActionCmd_CreateDroplet_EmptyTitle_ReturnsError verifies that
+// execMultiActionCmd with actionCreateDroplet and an empty title returns an error.
+//
+// Given: a real cistern DB
+// When:  execMultiActionCmd is invoked with title=""
+// Then:  tuiActionResultMsg.err is non-nil
+func TestExecMultiActionCmd_CreateDroplet_EmptyTitle_ReturnsError(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+
+	m := newTabAppModel("", dbPath)
+	cmd := m.execMultiActionCmd(actionCreateDroplet, []string{"myrepo", "", "", "1"})
+	msg := cmd()
+
+	am, ok := msg.(tuiActionResultMsg)
+	if !ok {
+		t.Fatalf("expected tuiActionResultMsg, got %T", msg)
+	}
+	if am.err == nil {
+		t.Error("err = nil, want non-nil when title is empty")
+	}
+}
+
 // TestExecMultiActionCmd_EditMeta_UpdatesTitle verifies that execMultiActionCmd
 // with actionEditMeta updates the droplet title.
 //
