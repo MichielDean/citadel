@@ -44,11 +44,11 @@ func TestCockpit_NewModel_DropletsPreSelected(t *testing.T) {
 //
 // Given: a new cockpitModel
 // When:  panels are inspected
-// Then:  five panels are registered
+// Then:  six panels are registered
 func TestCockpit_NewModel_HasFivePanels(t *testing.T) {
 	m := newCockpitModel("", "")
-	if len(m.panels) != 5 {
-		t.Errorf("len(panels) = %d, want 5", len(m.panels))
+	if len(m.panels) != 6 {
+		t.Errorf("len(panels) = %d, want 6", len(m.panels))
 	}
 }
 
@@ -1211,6 +1211,7 @@ func TestCockpit_NumberKey_NoReinit_WhenPanelAlreadyInitialized(t *testing.T) {
 // Then:  initializedPanels[1]=true and returned cmd is non-nil
 func TestCockpit_TabKey_LazyInitializesPanel_WhenCursorOnUninitializedPanel(t *testing.T) {
 	m := newCockpitModel("", "")
+	m.panelFocused = false  // Enter sidebar mode
 
 	// Move cursor to panel[1] without focusing (j key — does not trigger init).
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
@@ -1240,6 +1241,7 @@ func TestCockpit_TabKey_LazyInitializesPanel_WhenCursorOnUninitializedPanel(t *t
 // Then:  initializedPanels[1]=true and returned cmd is non-nil
 func TestCockpit_EnterKey_LazyInitializesPanel_WhenCursorOnUninitializedPanel(t *testing.T) {
 	m := newCockpitModel("", "")
+	m.panelFocused = false  // Enter sidebar mode
 
 	// Move cursor to panel[1] without focusing (j key — does not trigger init).
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
