@@ -1793,7 +1793,6 @@ func TestCockpit_View_Palette_EmptyFiltered_ShowsNoMatchMessage(t *testing.T) {
 
 // ── PaletteActions: conditional new outcome/state actions ────────────────────
 
-// paletteActionNames is a helper that extracts action Name values.
 func paletteActionNames(actions []PaletteAction) []string {
 	names := make([]string, len(actions))
 	for i, a := range actions {
@@ -1811,142 +1810,42 @@ func containsAction(actions []PaletteAction, name string) bool {
 	return false
 }
 
-// TestDropletsPanel_PaletteActions_ContainsPass_ForNonTerminalDroplet verifies
-// that the "pass" action is included for a non-terminal (open) droplet.
+// TestDropletsPanel_PaletteActions verifies that PaletteActions includes and
+// excludes the correct actions based on droplet status and current cataractae.
 //
-// Given: a dropletsPanel and an open droplet
-// When:  PaletteActions is called
-// Then:  the "pass" action is present
-func TestDropletsPanel_PaletteActions_ContainsPass_ForNonTerminalDroplet(t *testing.T) {
-	p := newDropletsPanel("", "")
-	actions := p.PaletteActions(&cistern.Droplet{ID: "ci-aaa", Status: "open"})
-	if !containsAction(actions, "pass") {
-		t.Errorf("PaletteActions for open droplet missing 'pass'; got %v", paletteActionNames(actions))
+// Non-terminal droplets get pass/recirculate/close/cancel/pool/restart/add note,
+// plus approve only when CurrentCataractae=="human". Terminal droplets get only
+// reopen. Approve must not appear for terminal droplets even when
+// CurrentCataractae=="human" (cancel does not clear current_cataractae).
+func TestDropletsPanel_PaletteActions(t *testing.T) {
+	tests := []struct {
+		name        string
+		droplet     *cistern.Droplet
+		action      string
+		wantPresent bool
+	}{
+		{"pass in open", &cistern.Droplet{ID: "ci-aaa", Status: "open"}, "pass", true},
+		{"recirculate in in_progress", &cistern.Droplet{ID: "ci-aaa", Status: "in_progress"}, "recirculate", true},
+		{"close in open", &cistern.Droplet{ID: "ci-aaa", Status: "open"}, "close", true},
+		{"reopen in delivered", &cistern.Droplet{ID: "ci-aaa", Status: "delivered"}, "reopen", true},
+		{"reopen absent in open", &cistern.Droplet{ID: "ci-aaa", Status: "open"}, "reopen", false},
+		{"approve when human-gated", &cistern.Droplet{ID: "ci-aaa", Status: "in_progress", CurrentCataractae: "human"}, "approve", true},
+		{"approve absent when not human-gated", &cistern.Droplet{ID: "ci-aaa", Status: "in_progress", CurrentCataractae: "implement"}, "approve", false},
+		{"approve absent for terminal human-gated", &cistern.Droplet{ID: "ci-aaa", Status: "cancelled", CurrentCataractae: "human"}, "approve", false},
+		{"pass absent in delivered", &cistern.Droplet{ID: "ci-aaa", Status: "delivered"}, "pass", false},
 	}
-}
-
-// TestDropletsPanel_PaletteActions_ContainsRecirculate_ForNonTerminalDroplet verifies
-// that the "recirculate" action is included for a non-terminal droplet.
-//
-// Given: a dropletsPanel and an in_progress droplet
-// When:  PaletteActions is called
-// Then:  the "recirculate" action is present
-func TestDropletsPanel_PaletteActions_ContainsRecirculate_ForNonTerminalDroplet(t *testing.T) {
 	p := newDropletsPanel("", "")
-	actions := p.PaletteActions(&cistern.Droplet{ID: "ci-aaa", Status: "in_progress"})
-	if !containsAction(actions, "recirculate") {
-		t.Errorf("PaletteActions for in_progress droplet missing 'recirculate'; got %v", paletteActionNames(actions))
-	}
-}
-
-// TestDropletsPanel_PaletteActions_ContainsClose_ForNonTerminalDroplet verifies
-// that the "close" action is included for a non-terminal droplet.
-//
-// Given: a dropletsPanel and an open droplet
-// When:  PaletteActions is called
-// Then:  the "close" action is present
-func TestDropletsPanel_PaletteActions_ContainsClose_ForNonTerminalDroplet(t *testing.T) {
-	p := newDropletsPanel("", "")
-	actions := p.PaletteActions(&cistern.Droplet{ID: "ci-aaa", Status: "open"})
-	if !containsAction(actions, "close") {
-		t.Errorf("PaletteActions for open droplet missing 'close'; got %v", paletteActionNames(actions))
-	}
-}
-
-// TestDropletsPanel_PaletteActions_ContainsReopen_ForDeliveredDroplet verifies
-// that the "reopen" action is included for a delivered (terminal) droplet.
-//
-// Given: a dropletsPanel and a delivered droplet
-// When:  PaletteActions is called
-// Then:  the "reopen" action is present
-func TestDropletsPanel_PaletteActions_ContainsReopen_ForDeliveredDroplet(t *testing.T) {
-	p := newDropletsPanel("", "")
-	actions := p.PaletteActions(&cistern.Droplet{ID: "ci-aaa", Status: "delivered"})
-	if !containsAction(actions, "reopen") {
-		t.Errorf("PaletteActions for delivered droplet missing 'reopen'; got %v", paletteActionNames(actions))
-	}
-}
-
-// TestDropletsPanel_PaletteActions_DoesNotContainReopen_ForOpenDroplet verifies
-// that the "reopen" action is absent for a non-terminal (open) droplet.
-//
-// Given: a dropletsPanel and an open droplet
-// When:  PaletteActions is called
-// Then:  the "reopen" action is absent
-func TestDropletsPanel_PaletteActions_DoesNotContainReopen_ForOpenDroplet(t *testing.T) {
-	p := newDropletsPanel("", "")
-	actions := p.PaletteActions(&cistern.Droplet{ID: "ci-aaa", Status: "open"})
-	if containsAction(actions, "reopen") {
-		t.Errorf("PaletteActions for open droplet should not contain 'reopen'; got %v", paletteActionNames(actions))
-	}
-}
-
-// TestDropletsPanel_PaletteActions_ContainsApprove_WhenHumanGated verifies that
-// the "approve" action is included when CurrentCataractae is "human".
-//
-// Given: a dropletsPanel and a droplet with CurrentCataractae="human"
-// When:  PaletteActions is called
-// Then:  the "approve" action is present
-func TestDropletsPanel_PaletteActions_ContainsApprove_WhenHumanGated(t *testing.T) {
-	p := newDropletsPanel("", "")
-	actions := p.PaletteActions(&cistern.Droplet{
-		ID:                "ci-aaa",
-		Status:            "in_progress",
-		CurrentCataractae: "human",
-	})
-	if !containsAction(actions, "approve") {
-		t.Errorf("PaletteActions for human-gated droplet missing 'approve'; got %v", paletteActionNames(actions))
-	}
-}
-
-// TestDropletsPanel_PaletteActions_DoesNotContainApprove_WhenNotHumanGated verifies
-// that the "approve" action is absent when CurrentCataractae is not "human".
-//
-// Given: a dropletsPanel and a droplet with CurrentCataractae="implement"
-// When:  PaletteActions is called
-// Then:  the "approve" action is absent
-func TestDropletsPanel_PaletteActions_DoesNotContainApprove_WhenNotHumanGated(t *testing.T) {
-	p := newDropletsPanel("", "")
-	actions := p.PaletteActions(&cistern.Droplet{
-		ID:                "ci-aaa",
-		Status:            "in_progress",
-		CurrentCataractae: "implement",
-	})
-	if containsAction(actions, "approve") {
-		t.Errorf("PaletteActions for non-human cataractae should not contain 'approve'; got %v", paletteActionNames(actions))
-	}
-}
-
-// TestDropletsPanel_PaletteActions_DoesNotContainApprove_ForTerminalHumanGated verifies
-// that the "approve" action is absent for a terminal droplet even when
-// CurrentCataractae is "human". Cancel does not clear current_cataractae, so
-// without this guard a cancelled human-gated droplet would expose approve.
-//
-// Given: a dropletsPanel and a cancelled droplet with CurrentCataractae="human"
-// When:  PaletteActions is called
-// Then:  the "approve" action is absent
-func TestDropletsPanel_PaletteActions_DoesNotContainApprove_ForTerminalHumanGated(t *testing.T) {
-	p := newDropletsPanel("", "")
-	actions := p.PaletteActions(&cistern.Droplet{
-		ID:                "ci-aaa",
-		Status:            "cancelled",
-		CurrentCataractae: "human",
-	})
-	if containsAction(actions, "approve") {
-		t.Errorf("PaletteActions for terminal droplet should not contain 'approve' even with CurrentCataractae=human; got %v", paletteActionNames(actions))
-	}
-}
-
-// TestDropletsPanel_PaletteActions_DoesNotContainPass_ForDeliveredDroplet verifies
-// that "pass" is absent for a terminal (delivered) droplet.
-//
-// Given: a dropletsPanel and a delivered droplet
-// When:  PaletteActions is called
-// Then:  the "pass" action is absent
-func TestDropletsPanel_PaletteActions_DoesNotContainPass_ForDeliveredDroplet(t *testing.T) {
-	p := newDropletsPanel("", "")
-	actions := p.PaletteActions(&cistern.Droplet{ID: "ci-aaa", Status: "delivered"})
-	if containsAction(actions, "pass") {
-		t.Errorf("PaletteActions for delivered droplet should not contain 'pass'; got %v", paletteActionNames(actions))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			actions := p.PaletteActions(tt.droplet)
+			got := containsAction(actions, tt.action)
+			if got != tt.wantPresent {
+				if tt.wantPresent {
+					t.Errorf("PaletteActions missing %q; got %v", tt.action, paletteActionNames(actions))
+				} else {
+					t.Errorf("PaletteActions should not contain %q; got %v", tt.action, paletteActionNames(actions))
+				}
+			}
+		})
 	}
 }

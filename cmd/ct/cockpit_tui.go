@@ -111,26 +111,22 @@ func (p dropletsPanel) PaletteActions(droplet *cistern.Droplet) []PaletteAction 
 	id := droplet.ID
 	isTerminal := droplet.Status == "delivered" || droplet.Status == "cancelled"
 
-	var actions []PaletteAction
-	if !isTerminal {
-		actions = append(actions,
-			dropletPaletteAction("pass", "signal pass — advance to next step", id, actionPass),
-			dropletPaletteAction("recirculate", "send back upstream for rework", id, actionRecirculate),
-			dropletPaletteAction("close", "mark as delivered", id, actionClose),
-			dropletPaletteAction("cancel", "cancel this droplet", id, actionCancel),
-			dropletPaletteAction("pool", "move droplet to pool", id, actionPool),
-			dropletPaletteAction("restart", "restart this droplet", id, actionRestart),
-			dropletPaletteAction("add note", "add a note to this droplet", id, actionAddNote),
-		)
-		if droplet.CurrentCataractae == "human" {
-			actions = append(actions,
-				dropletPaletteAction("approve", "approve for delivery", id, actionApprove),
-			)
-		}
-	} else {
-		actions = append(actions,
+	if isTerminal {
+		return []PaletteAction{
 			dropletPaletteAction("reopen", "return to cistern", id, actionReopen),
-		)
+		}
+	}
+	actions := []PaletteAction{
+		dropletPaletteAction("pass", "signal pass — advance to next step", id, actionPass),
+		dropletPaletteAction("recirculate", "send back upstream for rework", id, actionRecirculate),
+		dropletPaletteAction("close", "mark as delivered", id, actionClose),
+		dropletPaletteAction("cancel", "cancel this droplet", id, actionCancel),
+		dropletPaletteAction("pool", "move droplet to pool", id, actionPool),
+		dropletPaletteAction("restart", "restart this droplet", id, actionRestart),
+		dropletPaletteAction("add note", "add a note to this droplet", id, actionAddNote),
+	}
+	if droplet.CurrentCataractae == "human" {
+		actions = append(actions, dropletPaletteAction("approve", "approve for delivery", id, actionApprove))
 	}
 	return actions
 }

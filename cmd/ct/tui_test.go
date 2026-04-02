@@ -2033,84 +2033,29 @@ func TestTabApp_Detail_TextOverlay_Recirculate_EmptyInput_ExecutesCmd(t *testing
 
 // ── viewDetail footer prompts for new actions ─────────────────────────────────
 
-// TestTabApp_ViewDetail_Footer_Pass_ShowsPassPrompt verifies that when the
-// pass confirm overlay is active, the detail footer shows "pass this droplet?".
-//
-// Given: a model in Detail tab with overlayConfirm and actionPass
-// When:  View() is called
-// Then:  view contains "pass this droplet?"
-func TestTabApp_ViewDetail_Footer_Pass_ShowsPassPrompt(t *testing.T) {
-	m := detailModelWithDroplet()
-	m.overlayMode = overlayConfirm
-	m.overlayAction = actionPass
-
-	if !strings.Contains(m.View(), "pass this droplet?") {
-		t.Error("viewDetail footer missing 'pass this droplet?' for actionPass confirm overlay")
+// TestTabApp_ViewDetail_Footer_NewActions verifies that the detail footer shows
+// the correct prompt string for each of the five new outcome/state actions.
+func TestTabApp_ViewDetail_Footer_NewActions(t *testing.T) {
+	tests := []struct {
+		action      string
+		overlayMode int
+		wantPrompt  string
+	}{
+		{actionPass,        overlayConfirm, "pass this droplet?"},
+		{actionClose,       overlayConfirm, "close this droplet?"},
+		{actionReopen,      overlayConfirm, "reopen this droplet?"},
+		{actionApprove,     overlayConfirm, "approve this droplet?"},
+		{actionRecirculate, overlayText,    "recirculate to step"},
 	}
-}
-
-// TestTabApp_ViewDetail_Footer_Close_ShowsClosePrompt verifies that when the
-// close confirm overlay is active, the detail footer shows "close this droplet?".
-//
-// Given: a model in Detail tab with overlayConfirm and actionClose
-// When:  View() is called
-// Then:  view contains "close this droplet?"
-func TestTabApp_ViewDetail_Footer_Close_ShowsClosePrompt(t *testing.T) {
-	m := detailModelWithDroplet()
-	m.overlayMode = overlayConfirm
-	m.overlayAction = actionClose
-
-	if !strings.Contains(m.View(), "close this droplet?") {
-		t.Error("viewDetail footer missing 'close this droplet?' for actionClose confirm overlay")
-	}
-}
-
-// TestTabApp_ViewDetail_Footer_Reopen_ShowsReopenPrompt verifies that when the
-// reopen confirm overlay is active, the detail footer shows "reopen this droplet?".
-//
-// Given: a model in Detail tab with overlayConfirm and actionReopen
-// When:  View() is called
-// Then:  view contains "reopen this droplet?"
-func TestTabApp_ViewDetail_Footer_Reopen_ShowsReopenPrompt(t *testing.T) {
-	m := detailModelWithDroplet()
-	m.overlayMode = overlayConfirm
-	m.overlayAction = actionReopen
-
-	if !strings.Contains(m.View(), "reopen this droplet?") {
-		t.Error("viewDetail footer missing 'reopen this droplet?' for actionReopen confirm overlay")
-	}
-}
-
-// TestTabApp_ViewDetail_Footer_Approve_ShowsApprovePrompt verifies that when the
-// approve confirm overlay is active, the detail footer shows "approve this droplet?".
-//
-// Given: a model in Detail tab with overlayConfirm and actionApprove
-// When:  View() is called
-// Then:  view contains "approve this droplet?"
-func TestTabApp_ViewDetail_Footer_Approve_ShowsApprovePrompt(t *testing.T) {
-	m := detailModelWithDroplet()
-	m.overlayMode = overlayConfirm
-	m.overlayAction = actionApprove
-
-	if !strings.Contains(m.View(), "approve this droplet?") {
-		t.Error("viewDetail footer missing 'approve this droplet?' for actionApprove confirm overlay")
-	}
-}
-
-// TestTabApp_ViewDetail_Footer_Recirculate_ShowsRecirculatePrompt verifies that
-// when the recirculate text overlay is active, the detail footer shows
-// "recirculate to step".
-//
-// Given: a model in Detail tab with overlayText and actionRecirculate
-// When:  View() is called
-// Then:  view contains "recirculate to step"
-func TestTabApp_ViewDetail_Footer_Recirculate_ShowsRecirculatePrompt(t *testing.T) {
-	m := detailModelWithDroplet()
-	m.overlayMode = overlayText
-	m.overlayAction = actionRecirculate
-
-	if !strings.Contains(m.View(), "recirculate to step") {
-		t.Error("viewDetail footer missing 'recirculate to step' for actionRecirculate text overlay")
+	for _, tt := range tests {
+		t.Run(tt.action, func(t *testing.T) {
+			m := detailModelWithDroplet()
+			m.overlayMode = tt.overlayMode
+			m.overlayAction = tt.action
+			if !strings.Contains(m.View(), tt.wantPrompt) {
+				t.Errorf("viewDetail footer missing %q for action %q", tt.wantPrompt, tt.action)
+			}
+		})
 	}
 }
 
