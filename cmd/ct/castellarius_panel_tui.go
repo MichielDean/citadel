@@ -240,6 +240,9 @@ func (p castellariusPanel) viewConfirm() string {
 	sb.WriteString("\n")
 	sb.WriteString(tuiStyleHeader.Render("  Confirm action") + "\n\n")
 	a := p.confirmAction
+	if len(a) == 0 {
+		return sb.String()
+	}
 	sb.WriteString(fmt.Sprintf("  %s the Castellarius?\n\n", strings.ToUpper(a[:1])+a[1:]))
 	sb.WriteString(tuiStyleGreen.Render("  y") + " yes    " + tuiStyleDim.Render("n / esc") + " cancel\n")
 	return sb.String()

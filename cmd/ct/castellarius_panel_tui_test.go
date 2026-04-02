@@ -209,6 +209,21 @@ func TestCastellariusPanel_View_ConfirmOverlay_ShowsRestartAction(t *testing.T) 
 	}
 }
 
+// TestCastellariusPanel_View_ConfirmOverlay_EmptyAction_DoesNotPanic verifies that
+// viewConfirm() does not panic when confirmAction is empty (e.g. a zero-value
+// castellariusCmdMsg{action:""} triggers an overlay render before an action is set).
+//
+// Given: a castellariusPanel with confirmActive=true, confirmAction=""
+// When:  View() is called
+// Then:  no panic; output is returned
+func TestCastellariusPanel_View_ConfirmOverlay_EmptyAction_DoesNotPanic(t *testing.T) {
+	p := newCastellariusPanel()
+	p.confirmActive = true
+	p.confirmAction = ""
+	// Must not panic.
+	_ = p.View()
+}
+
 // ── View: action output ───────────────────────────────────────────────────────
 
 // TestCastellariusPanel_View_ActionSuccess_ShowsSuccessOutput verifies that a
