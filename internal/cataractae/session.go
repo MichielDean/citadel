@@ -60,9 +60,9 @@ func (s *Session) Spawn() error {
 }
 
 // spawn creates a new tmux session running the agent.
-// If the preset defines a ContinueFlag and a prior session exists in WorkDir,
-// the agent is resumed rather than started fresh — preserving conversation
-// context accumulated across prior cataractae cycles.
+// If the preset defines a ContinueFlag and the .current-stage marker in WorkDir
+// matches the current identity, the agent is resumed (same-stage respawn) rather
+// than started fresh. A stage change clears context so each stage begins fresh.
 func (s *Session) spawn() error {
 	// Guard: if a session with this ID already exists, inspect it before acting.
 	//
