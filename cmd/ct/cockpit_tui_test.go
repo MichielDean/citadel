@@ -661,6 +661,20 @@ func TestJoinSideBySide_JoinsWithSeparator(t *testing.T) {
 	}
 }
 
+// TestJoinSideBySide_NoSpuriousTrailingLine verifies that joinSideBySide does not
+// emit a spurious extra separator line when both inputs are newline-terminated.
+//
+// Given: sidebar = "A\n", panel = "1\n", sidebarW = 3
+// When:  joinSideBySide is called
+// Then:  the output contains exactly 1 line (no spurious trailing "   │" row)
+func TestJoinSideBySide_NoSpuriousTrailingLine(t *testing.T) {
+	result := joinSideBySide("A\n", "1\n", 3)
+	lines := strings.Split(result, "\n")
+	if len(lines) != 1 {
+		t.Errorf("got %d lines, want 1: %q", len(lines), lines)
+	}
+}
+
 // ── OverlayActive ─────────────────────────────────────────────────────────────
 
 // overlayActivePanel is a test-only TUIPanel stub that always reports an overlay
@@ -934,6 +948,7 @@ func TestJoinSideBySide_UnequalHeights_PadsLongerSidebar(t *testing.T) {
 // Then:  returned command is tea.Quit
 func TestCockpit_UppercaseQ_Quits(t *testing.T) {
 	m := newCockpitModel("", "")
+	m.panelFocused = false
 
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'Q'}})
 

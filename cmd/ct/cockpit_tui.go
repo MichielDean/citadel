@@ -310,9 +310,18 @@ func (m cockpitModel) viewActivePanel() string {
 // joinSideBySide combines sidebar and panel content side by side, padding each
 // sidebar line to sidebarW visual columns (using lipgloss.Width for ANSI-aware
 // measurement) and inserting a │ separator between the two panes.
+// trimTrailingEmpty removes trailing empty strings from a slice produced by
+// strings.Split on a newline-terminated string.
+func trimTrailingEmpty(lines []string) []string {
+	for len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	return lines
+}
+
 func joinSideBySide(sidebar, panel string, sidebarW int) string {
-	sideLines := strings.Split(sidebar, "\n")
-	panelLines := strings.Split(panel, "\n")
+	sideLines := trimTrailingEmpty(strings.Split(sidebar, "\n"))
+	panelLines := trimTrailingEmpty(strings.Split(panel, "\n"))
 
 	n := max(len(sideLines), len(panelLines))
 
