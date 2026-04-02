@@ -1272,8 +1272,12 @@ func TestSpawn_TmuxServerDead_RecoverySucceeds(t *testing.T) {
 	}
 	execTmuxKillServer = func() { killCalled = true }
 
+	var capturedSessionID, capturedLogPath string
 	origPipePane := execTmuxPipePaneCmd
-	execTmuxPipePaneCmd = func(_, _ string) {}
+	execTmuxPipePaneCmd = func(sessionID, logPath string) {
+		capturedSessionID = sessionID
+		capturedLogPath = logPath
+	}
 	t.Cleanup(func() { execTmuxPipePaneCmd = origPipePane })
 
 	workDir := t.TempDir()
@@ -1296,6 +1300,13 @@ func TestSpawn_TmuxServerDead_RecoverySucceeds(t *testing.T) {
 	}
 	if !strings.Contains(out, "recovered from dead tmux server") {
 		t.Errorf("expected recovery success log; got: %s", out)
+	}
+	if capturedSessionID != s.ID {
+		t.Errorf("execTmuxPipePaneCmd called with sessionID = %q, want %q", capturedSessionID, s.ID)
+	}
+	expectedLogPath := filepath.Join(home, ".cistern", "session-logs", s.ID+".log")
+	if capturedLogPath != expectedLogPath {
+		t.Errorf("execTmuxPipePaneCmd called with logPath = %q, want %q", capturedLogPath, expectedLogPath)
 	}
 }
 
@@ -1574,8 +1585,9 @@ func TestSpawn_TmuxServerDead_DoubleCheckPreventsKillingRecoveredServer(t *testi
 		execTmuxKillServer = origKill
 	})
 
+	var pipePaneCallCount int64
 	origPipePane := execTmuxPipePaneCmd
-	execTmuxPipePaneCmd = func(_, _ string) {}
+	execTmuxPipePaneCmd = func(_, _ string) { atomic.AddInt64(&pipePaneCallCount, 1) }
 	t.Cleanup(func() { execTmuxPipePaneCmd = origPipePane })
 
 	// The server is "dead" until execTmuxKillServer is called; after that it is
@@ -1620,6 +1632,10 @@ func TestSpawn_TmuxServerDead_DoubleCheckPreventsKillingRecoveredServer(t *testi
 	// server and skips the kill.
 	if got := atomic.LoadInt64(&killCount); got != 1 {
 		t.Errorf("execTmuxKillServer called %d times, want 1 (double-check must prevent second kill)", got)
+	}
+	// execTmuxPipePaneCmd must be called once per successful spawn.
+	if got := atomic.LoadInt64(&pipePaneCallCount); got != 2 {
+		t.Errorf("execTmuxPipePaneCmd called %d times, want 2 (once per successful spawn)", got)
 	}
 }
 
