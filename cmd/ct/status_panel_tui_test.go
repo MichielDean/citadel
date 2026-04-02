@@ -473,6 +473,48 @@ func TestCockpit_Panel3_IsStatusPanel(t *testing.T) {
 	}
 }
 
+// TestCockpit_StatusDataMsg_RoutesToStatusPanel_WhenCursorNotAtTwo verifies that
+// statusDataMsg is always delivered to panels[2] regardless of which panel is active.
+//
+// Given: a cockpitModel with cursor=0 (Droplets panel active)
+// When:  a statusDataMsg with FlowingCount=7 is processed
+// Then:  panels[2] (statusPanel) has data.FlowingCount=7
+func TestCockpit_StatusDataMsg_RoutesToStatusPanel_WhenCursorNotAtTwo(t *testing.T) {
+	m := newCockpitModel("", "")
+	m.cursor = 0
+	data := &DashboardData{FlowingCount: 7, FetchedAt: time.Now()}
+
+	updated, _ := m.Update(statusDataMsg(data))
+	um := updated.(cockpitModel)
+
+	sp, ok := um.panels[2].(statusPanel)
+	if !ok {
+		t.Fatalf("panels[2] is not a statusPanel")
+	}
+	if sp.data == nil {
+		t.Fatal("statusPanel.data = nil, want data delivered to panels[2]")
+	}
+	if sp.data.FlowingCount != 7 {
+		t.Errorf("statusPanel.data.FlowingCount = %d, want 7", sp.data.FlowingCount)
+	}
+}
+
+// TestCockpit_StatusTickMsg_RoutesToStatusPanel_WhenCursorNotAtTwo verifies that
+// statusTickMsg is always delivered to panels[2] regardless of which panel is active.
+//
+// Given: a cockpitModel with cursor=0 (Droplets panel active)
+// When:  a statusTickMsg is processed
+// Then:  a non-nil command is returned (the fetch triggered by the status panel)
+func TestCockpit_StatusTickMsg_RoutesToStatusPanel_WhenCursorNotAtTwo(t *testing.T) {
+	m := newCockpitModel("", "")
+	m.cursor = 0
+
+	_, cmd := m.Update(statusTickMsg(time.Now()))
+	if cmd == nil {
+		t.Error("cmd = nil after statusTickMsg delivered to cockpit with cursor=0, want fetch command from statusPanel")
+	}
+}
+
 // TestCockpit_Key3_ActivatesStatusPanel verifies that pressing '3' in sidebar mode
 // jumps to the status panel (index 2) and activates panel focus.
 //

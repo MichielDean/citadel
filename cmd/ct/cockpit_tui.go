@@ -231,7 +231,20 @@ func (m cockpitModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// All other panel-focused keys fall through to forwarding below.
 	}
 
-	// Forward all non-key messages and panel-focused key messages to the active panel.
+	// statusDataMsg and statusTickMsg always route to panels[2] (statusPanel)
+	// regardless of which panel is currently focused, so the background refresh
+	// loop continues running when the user is on a different panel.
+	switch msg.(type) {
+	case statusDataMsg, statusTickMsg:
+		if len(m.panels) > 2 {
+			updated, cmd := m.panels[2].Update(msg)
+			m.panels[2] = updated.(TUIPanel)
+			return m, cmd
+		}
+		return m, nil
+	}
+
+	// Forward all other non-key messages and panel-focused key messages to the active panel.
 	if m.cursor < len(m.panels) {
 		updated, cmd := m.panels[m.cursor].Update(msg)
 		m.panels[m.cursor] = updated.(TUIPanel)
