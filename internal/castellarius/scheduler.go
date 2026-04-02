@@ -1417,12 +1417,16 @@ func (s *Castellarius) heartbeatRepo(ctx context.Context, repo aqueduct.RepoConf
 		// the droplet to open for re-dispatch. This runs on every heartbeat
 		// tick (~30s) — no threshold, no waiting.
 		//
-		// Minimum age guard: skip sessions dispatched < 2× pollInterval ago.
-		// During the startup window tmux may not yet be visible and the agent
-		// process may not yet be forked — both checks would be false positives.
+		// Minimum age guard: skip sessions dispatched recently.
+		// At stage transitions the previous claude exits naturally and the pane
+		// briefly shows "bash" before the next spawn starts claude. A short guard
+		// causes false-positive zombie detection during this window.
+		// Use 4× heartbeatInterval so the guard scales with the heartbeat rate:
+		// production (30s heartbeat) → 2min guard; tests (1s heartbeat) → 4s guard.
+		zombieGuard := 4 * s.heartbeatInterval
 		if item.Assignee != "" {
 			sessionID := repo.Name + "-" + item.Assignee
-			if time.Since(item.UpdatedAt) < 2*s.pollInterval {
+			if time.Since(item.UpdatedAt) < zombieGuard {
 				continue
 			}
 			if !isTmuxAlive(sessionID) {
