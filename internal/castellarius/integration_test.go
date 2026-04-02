@@ -3,7 +3,7 @@
 // that unit tests with mocks cannot — specifically session lifecycle, environment
 // propagation, and liveness recovery.
 //
-// Tests are skipped gracefully when tmux or ct are unavailable.
+// Tests are skipped gracefully when tmux is unavailable.
 package castellarius_test
 
 import (
@@ -461,7 +461,7 @@ func TestIntegration_EnvHygiene_APIKeyNotForwardedToSession(t *testing.T) {
 
 	logDir := t.TempDir()
 
-	// The runner explicitly only forwards CT_DB, PATH, and FAKEAGENT_MODE —
+	// The runner explicitly only forwards CT_DB, CT_BIN, PATH, and FAKEAGENT_MODE —
 	// ANTHROPIC_API_KEY is intentionally excluded even if the caller sets it.
 	runner := &integrationRunner{
 		t:        t,
