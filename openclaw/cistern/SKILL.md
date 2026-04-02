@@ -44,12 +44,14 @@ Never say "drop/item/task/ticket/issue" for work units — always **droplet**.
 
 **Never edit `~/cistern` directly.** That's the primary clone — touching it corrupts all agent worktrees.
 
-All manual Cistern work goes in the dedicated lobsterdog worktree:
+All manual Cistern work goes in the primary clone at `~/cistern`:
 ```bash
-cd ~/.cistern/sandboxes/cistern/lobsterdog
+cd ~/cistern
 git checkout -B lobsterdog-work origin/main   # Always sync before starting
 ```
 ScaledTest worktree: `~/.cistern/sandboxes/ScaledTest/lobsterdog`
+
+⚠️ Do NOT use `~/.cistern/sandboxes/cistern/` for manual work — that entire directory is owned by the Castellarius pipeline. A `lobsterdog` worktree there was removed 2026-04-02; placing anything inside the sandbox root risks collision with the pipeline.
 
 ## Pipeline
 
