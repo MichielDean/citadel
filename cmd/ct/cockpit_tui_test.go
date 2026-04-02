@@ -742,3 +742,46 @@ func TestCockpit_View_Hint_ContainsEscToSidebar_WhenPanelFocused(t *testing.T) {
 		t.Error("View() does not contain 'esc→sidebar' hint when panel is focused")
 	}
 }
+
+// ── sidebar up-arrow navigation ───────────────────────────────────────────────
+
+// TestCockpit_Sidebar_UpArrow_MovesToPreviousPanel verifies that the up arrow key
+// moves the cursor to the previous panel, matching the behaviour of 'k'.
+//
+// Given: cursor=1, panelFocused=false
+// When:  up arrow is pressed
+// Then:  cursor = 0
+func TestCockpit_Sidebar_UpArrow_MovesToPreviousPanel(t *testing.T) {
+	m := newCockpitModel("", "")
+	m.cursor = 1
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	um := updated.(cockpitModel)
+
+	if um.cursor != 0 {
+		t.Errorf("cursor = %d, want 0", um.cursor)
+	}
+}
+
+// ── joinSideBySide unequal heights ───────────────────────────────────────────
+
+// TestJoinSideBySide_UnequalHeights_PadsShorterSide verifies that when the
+// sidebar has fewer lines than the panel, the extra panel lines are still
+// rendered with the sidebar column padded to sidebarW spaces.
+//
+// Given: sidebar = "X" (1 line), panel = "1\n2\n3" (3 lines), sidebarW = 3
+// When:  joinSideBySide is called
+// Then:  line[0] = "X  │1", line[1] = "   │2", line[2] = "   │3"
+func TestJoinSideBySide_UnequalHeights_PadsShorterSide(t *testing.T) {
+	result := joinSideBySide("X", "1\n2\n3", 3)
+	lines := strings.Split(result, "\n")
+	if len(lines) != 3 {
+		t.Fatalf("got %d lines, want 3; result=%q", len(lines), result)
+	}
+	want := []string{"X  │1", "   │2", "   │3"}
+	for i, w := range want {
+		if lines[i] != w {
+			t.Errorf("line[%d] = %q, want %q", i, lines[i], w)
+		}
+	}
+}
