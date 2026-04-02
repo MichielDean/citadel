@@ -161,11 +161,12 @@ const cockpitSidebarWidth = 20
 // It renders a persistent left-column nav sidebar (lazygit-style) and
 // delegates content rendering and event handling to the active TUIPanel.
 type cockpitModel struct {
-	panels       []TUIPanel
-	cursor       int  // sidebar highlight position (0-based)
-	panelFocused bool // true = active panel receives key events; false = sidebar mode
-	width        int
-	height       int
+	panels            []TUIPanel
+	cursor            int    // sidebar highlight position (0-based)
+	panelFocused      bool   // true = active panel receives key events; false = sidebar mode
+	width             int
+	height            int
+	initializedPanels []bool // tracks which panels have had Init() called
 }
 
 // newCockpitModel builds the root cockpit model with all registered panels.
@@ -189,6 +190,11 @@ func newCockpitModel(cfgPath, dbPath string) cockpitModel {
 		placeholderPanel{title: "Inspect"},
 		placeholderPanel{title: "Audit"},
 	}
+	// Only panel[0] is initialized in Init(). All others are lazily initialized
+	// on first activation to prevent their tick chains from firing into the wrong
+	// panel while the cockpit is showing a different module.
+	m.initializedPanels = make([]bool, len(m.panels))
+	m.initializedPanels[0] = true
 	return m
 }
 
@@ -198,11 +204,10 @@ func (m cockpitModel) panelWidth() int {
 }
 
 func (m cockpitModel) Init() tea.Cmd {
-	var cmds []tea.Cmd
-	for _, p := range m.panels {
-		cmds = append(cmds, p.Init())
-	}
-	return tea.Batch(cmds...)
+	// Only initialize the active panel. Inactive panels are initialized lazily
+	// on first activation (number key or tab/enter) so that their tick and
+	// animation chains do not fire into the wrong panel model.
+	return m.panels[0].Init()
 }
 
 // Update routes events to the cockpit or the active panel depending on focus mode.
@@ -248,6 +253,11 @@ func (m cockpitModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if idx < len(m.panels) {
 					m.cursor = idx
 					m.panelFocused = true
+					// Lazily initialize the panel on first activation.
+					if !m.initializedPanels[idx] {
+						m.initializedPanels[idx] = true
+						return m, m.panels[idx].Init()
+					}
 				}
 				return m, nil
 			}
@@ -259,6 +269,11 @@ func (m cockpitModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch s {
 			case "tab", "enter":
 				m.panelFocused = true
+				// Lazily initialize the panel on first activation.
+				if m.cursor < len(m.panels) && !m.initializedPanels[m.cursor] {
+					m.initializedPanels[m.cursor] = true
+					return m, m.panels[m.cursor].Init()
+				}
 			case "q", "Q":
 				return m, tea.Quit
 			case "up", "k":

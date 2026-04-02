@@ -1133,6 +1133,98 @@ func TestCockpit_Panel2_IsFlowPanel(t *testing.T) {
 	}
 }
 
+// ── lazy panel initialization ────────────────────────────────────────────────
+
+// TestCockpit_Init_OnlyPanel0_IsPreInitialized verifies that newCockpitModel
+// marks only the active (first) panel as initialized. Inactive panels must
+// remain uninitialized to prevent their tick chains from firing into the wrong
+// model while the cockpit is showing a different panel.
+//
+// Given: a new cockpitModel
+// When:  initializedPanels is inspected
+// Then:  initializedPanels[0]=true, all others false
+func TestCockpit_Init_OnlyPanel0_IsPreInitialized(t *testing.T) {
+	m := newCockpitModel("", "")
+	if !m.initializedPanels[0] {
+		t.Error("initializedPanels[0] = false, want true (active panel must be pre-initialized)")
+	}
+	for i := 1; i < len(m.initializedPanels); i++ {
+		if m.initializedPanels[i] {
+			t.Errorf("initializedPanels[%d] = true, want false (inactive panel must not be pre-initialized)", i)
+		}
+	}
+}
+
+// TestCockpit_NumberKey_LazyInitializesPanel_OnFirstActivation verifies that
+// pressing a number key to navigate to an uninitialized panel marks it
+// initialized and returns its Init cmd so the tick/animation chains start.
+//
+// Given: cursor=0, panels[1] not yet initialized
+// When:  '2' is pressed
+// Then:  initializedPanels[1]=true and returned cmd is non-nil
+func TestCockpit_NumberKey_LazyInitializesPanel_OnFirstActivation(t *testing.T) {
+	m := newCockpitModel("", "")
+	if m.initializedPanels[1] {
+		t.Fatal("precondition: panels[1] must not be initialized before test")
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	um := updated.(cockpitModel)
+
+	if !um.initializedPanels[1] {
+		t.Error("initializedPanels[1] = false after navigating to panel 2, want true")
+	}
+	if cmd == nil {
+		t.Error("cmd = nil, want non-nil (panel Init must be called on first activation)")
+	}
+}
+
+// TestCockpit_NumberKey_NoReinit_WhenPanelAlreadyInitialized verifies that
+// navigating to an already-initialized panel does not call Init again.
+//
+// Given: cursor=3, panels[0] pre-initialized
+// When:  '1' is pressed
+// Then:  returned cmd is nil (no re-init)
+func TestCockpit_NumberKey_NoReinit_WhenPanelAlreadyInitialized(t *testing.T) {
+	m := newCockpitModel("", "")
+	m.cursor = 3
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+
+	if cmd != nil {
+		t.Error("cmd != nil, want nil (already-initialized panel must not be re-initialized)")
+	}
+}
+
+// TestCockpit_TabKey_LazyInitializesPanel_WhenCursorOnUninitializedPanel
+// verifies that pressing tab/enter to focus a panel that was reached via cursor
+// navigation (j/k) but never yet initialized triggers its Init.
+//
+// Given: cursor moved to panel 1 via 'j' (not yet initialized), panelFocused=false
+// When:  Tab is pressed
+// Then:  initializedPanels[1]=true and returned cmd is non-nil
+func TestCockpit_TabKey_LazyInitializesPanel_WhenCursorOnUninitializedPanel(t *testing.T) {
+	m := newCockpitModel("", "")
+
+	// Move cursor to panel[1] without focusing (j key — does not trigger init).
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	m = updated.(cockpitModel)
+	if m.initializedPanels[1] {
+		t.Fatal("precondition: panels[1] must not be initialized after cursor-only move")
+	}
+
+	// Now press tab to focus the panel.
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	um := updated.(cockpitModel)
+
+	if !um.initializedPanels[1] {
+		t.Error("initializedPanels[1] = false after tab-focusing panel 2, want true")
+	}
+	if cmd == nil {
+		t.Error("cmd = nil, want non-nil (panel Init must be called on first activation via tab)")
+	}
+}
+
 // ── panelWidth floor ──────────────────────────────────────────────────────────
 
 // TestCockpit_PanelWidth_Floor_ClampedToMinimum verifies that panelWidth() never
