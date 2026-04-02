@@ -1,53 +1,22 @@
 # Context
 
-## Item: ci-cv5jf
+## Item: ci-wng6e
 
-**Title:** Remove ct audit command
+**Title:** TUI cockpit: define TUIPanel interface and cockpit root model with persistent nav sidebar
 **Status:** in_progress
 **Priority:** 2
 
 ### Description
 
-Delete the ct audit subcommand entirely. It provides little value: the audit agent hallucinates findings for wrong codebases, files them under incorrect prefixes, and the results require manual triage that defeats the purpose.
+Introduce the TUIPanel interface: Init() tea.Cmd, Update(tea.Msg) (tea.Model, tea.Cmd), View() string, Title() string, KeyHelp() string, PaletteActions(droplet *cistern.Droplet) []PaletteAction. Implement cockpitModel as the new root Bubble Tea model launched by ct tui. Renders a persistent left-column nav sidebar listing all modules (lazygit-style). Number keys 1-9 jump directly to modules. Arrow keys navigate the sidebar when no module is active. Enter activates the focused module; the active panel occupies the right pane. Ships with placeholder not-yet-implemented views for all panels except the first. ct tui now launches cockpitModel. No breaking change to existing behavior. Acceptance: ct tui opens a two-pane layout with a persistent sidebar and placeholder panels for all planned modules.
 
-Files to delete:
-- cmd/ct/audit.go — command implementation
-- cmd/ct/audit_test.go — all tests
-- internal/testutil/fakeauditagent/main.go and its directory (only used by audit_test.go; failagent stays, it is also used by filter_test.go)
-
-Documentation to update:
-- openclaw/cistern/references/commands.md — remove the ct audit section (lines ~341-382)
-
-No other Go source files reference auditCmd or AuditFinding outside audit.go and audit_test.go. The --cancelled flag comment in cistern.go and the skills.go example string are unrelated and must not be touched.
-
-Acceptance criteria:
-- ct audit run returns 'unknown command' or is entirely absent from ct help
-- All tests pass (go test ./...)
-- No dangling references to AuditFinding, auditCmd, auditRunCmd, auditSystemPrompt, or fakeauditagent remain in non-deleted files
-- commands.md no longer documents ct audit
-
-## Current Step: delivery
+## Current Step: implement
 
 - **Type:** agent
-- **Role:** delivery
-
-## ⚠️ REVISION REQUIRED — Fix these issues before anything else
-
-This droplet was recirculated. The following issues were found and **must** be fixed.
-Do not proceed to implementation until you have read and understood each issue.
-
-### Issue 1 (from: security)
-
-No security issues found. Diff is entirely deletions (audit.go, audit_test.go, fakeauditagent) plus documentation and config updates. No new code paths, input surfaces, auth checks, or injection vectors introduced. No dangling references to deleted symbols. SKILL.md update improves security posture by warning against ANTHROPIC_API_KEY misuse.
-
----
+- **Role:** implementer
+- **Context:** full_codebase
 
 <available_skills>
-  <skill>
-    <name>cistern-github</name>
-    <description>Use `gh` CLI for all GitHub operations. Prefer CLI over GitHub MCP servers for lower context usage.</description>
-    <location>/home/lobsterdog/.cistern/skills/cistern-github/SKILL.md</location>
-  </skill>
   <skill>
     <name>cistern-droplet-state</name>
     <description>Manage droplet state in the Cistern agentic pipeline using the `ct` CLI.</description>
@@ -58,6 +27,11 @@ No security issues found. Diff is entirely deletions (audit.go, audit_test.go, f
     <description>Each droplet has an isolated worktree at `~/.cistern/sandboxes/&lt;repo&gt;/&lt;droplet-id&gt;/`.</description>
     <location>/home/lobsterdog/.cistern/skills/cistern-git/SKILL.md</location>
   </skill>
+  <skill>
+    <name>cistern-github</name>
+    <description>Use `gh` CLI for all GitHub operations. Prefer CLI over GitHub MCP servers for lower context usage.</description>
+    <location>/home/lobsterdog/.cistern/skills/cistern-github/SKILL.md</location>
+  </skill>
 </available_skills>
 
 ## Signaling Completion
@@ -65,16 +39,16 @@ No security issues found. Diff is entirely deletions (audit.go, audit_test.go, f
 When your work is done, signal your outcome using the `ct` CLI:
 
 **Pass (work complete, move to next step):**
-    ct droplet pass ci-cv5jf
+    ct droplet pass ci-wng6e
 
 **Recirculate (needs rework — send back upstream):**
-    ct droplet recirculate ci-cv5jf
-    ct droplet recirculate ci-cv5jf --to implement
+    ct droplet recirculate ci-wng6e
+    ct droplet recirculate ci-wng6e --to implement
 
 **Pool (cannot currently proceed):**
-    ct droplet pool ci-cv5jf
+    ct droplet pool ci-wng6e
 
 Add notes before signaling:
-    ct droplet note ci-cv5jf "What you did / found"
+    ct droplet note ci-wng6e "What you did / found"
 
 The `ct` binary is on your PATH.

@@ -299,14 +299,29 @@ The flow dashboard displays a live view of the aqueduct system with sections:
 ### Droplet Browser (`ct tui`)
 
 ```bash
-ct tui                           # Launch interactive droplet browser (requires active tmux session)
+ct tui                           # Launch interactive cockpit (requires active tmux session)
 ```
 
-The droplet browser provides three views:
+The cockpit provides a two-pane interface: persistent left sidebar for module navigation, and a right pane showing the active module's content.
+
+**Cockpit Layout**
+- **Left sidebar**: Lists all available modules (Droplets, Dashboard, Aqueducts, Inspect, Audit) with keyboard shortcuts (1–9)
+  - Cursor highlight indicates focus: `▶` = panel focused (green), `▷` = sidebar focused (yellow)
+  - Currently, only the Droplets module is fully implemented; others ship as placeholders
+- **Right pane**: Displays the active module's content
+
+**Navigation**
+- **Sidebar mode**: `↑↓` or `k/j` to navigate, `1–9` to jump to a specific module, `enter`/`tab` to open the module
+- **Panel mode**: Module content receives all keyboard input; `esc` returns to sidebar (unless the module has an active overlay)
+- **Global**: `q`/`Q` quit (sidebar mode only), `ctrl+c` always quits
+
+**Droplets Module** (the primary implemented panel)
+
+The Droplets module provides three views within the active pane:
 
 **Droplets List (default)**
 - Shows all active droplets with ID, status, current step, and title
-- Navigate: `↑↓` or `jk` to move cursor, `q` to quit
+- Navigate: `↑↓` or `jk` to move cursor
 - Open detail: Press `enter` or `d` to view full droplet details
 
 **Detail View**
