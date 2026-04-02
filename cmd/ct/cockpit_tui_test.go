@@ -1913,3 +1913,127 @@ func TestCockpit_Palette_Enter_NilRun_DoesNotPanic(t *testing.T) {
 		t.Error("cmd is non-nil, want nil for nil-Run action")
 	}
 }
+
+// ── filterPaletteActions case-insensitivity (ci-gg7gp-lg2pu) ─────────────────
+
+// TestFilterPaletteActions_CaseInsensitive_UppercaseQueryMatchesLowercaseName
+// verifies that an uppercase query matches a lowercase action name.
+//
+// Given: actions with lowercase names ["cancel", "pool"]
+// When:  filterPaletteActions is called with query "CAN"
+// Then:  only "cancel" is returned
+func TestFilterPaletteActions_CaseInsensitive_UppercaseQueryMatchesLowercaseName(t *testing.T) {
+	actions := []PaletteAction{
+		{Name: "cancel"},
+		{Name: "pool"},
+	}
+	got := filterPaletteActions(actions, "CAN")
+	if len(got) != 1 {
+		t.Fatalf("len(got) = %d, want 1", len(got))
+	}
+	if got[0].Name != "cancel" {
+		t.Errorf("got[0].Name = %q, want %q", got[0].Name, "cancel")
+	}
+}
+
+// TestFilterPaletteActions_CaseInsensitive_LowercaseQueryMatchesUppercaseName
+// verifies that a lowercase query matches an uppercase action name.
+//
+// Given: actions with uppercase names ["CANCEL", "POOL"]
+// When:  filterPaletteActions is called with query "can"
+// Then:  only "CANCEL" is returned
+func TestFilterPaletteActions_CaseInsensitive_LowercaseQueryMatchesUppercaseName(t *testing.T) {
+	actions := []PaletteAction{
+		{Name: "CANCEL"},
+		{Name: "POOL"},
+	}
+	got := filterPaletteActions(actions, "can")
+	if len(got) != 1 {
+		t.Fatalf("len(got) = %d, want 1", len(got))
+	}
+	if got[0].Name != "CANCEL" {
+		t.Errorf("got[0].Name = %q, want %q", got[0].Name, "CANCEL")
+	}
+}
+
+// ── dropletPaletteAction Run() message content (ci-gg7gp-166ya) ──────────────
+
+// TestDropletsPanel_PaletteActions_Run_EmitsCorrectMsg verifies that calling
+// action.Run()() on each action returned by dropletsPanel.PaletteActions emits
+// a tuiPaletteActionMsg with the correct dropletID and action fields.
+//
+// Given: a dropletsPanel with droplet "ci-xyz"
+// When:  action.Run()() is called on each PaletteAction
+// Then:  each msg carries dropletID="ci-xyz" and the expected action constant
+func TestDropletsPanel_PaletteActions_Run_EmitsCorrectMsg(t *testing.T) {
+	p := newDropletsPanel("", "")
+	dropletID := "ci-xyz"
+	d := &cistern.Droplet{ID: dropletID}
+	actions := p.PaletteActions(d)
+
+	tests := []struct {
+		name   string
+		action string
+	}{
+		{"cancel", actionCancel},
+		{"pool", actionPool},
+		{"restart", actionRestart},
+		{"add note", actionAddNote},
+	}
+
+	if len(actions) != len(tests) {
+		t.Fatalf("len(actions) = %d, want %d", len(actions), len(tests))
+	}
+
+	for i, tt := range tests {
+		a := actions[i]
+		if a.Name != tt.name {
+			t.Errorf("actions[%d].Name = %q, want %q", i, a.Name, tt.name)
+		}
+		if a.Run == nil {
+			t.Fatalf("actions[%d].Run = nil", i)
+		}
+		cmd := a.Run()
+		if cmd == nil {
+			t.Fatalf("actions[%d].Run() returned nil cmd", i)
+		}
+		msg := cmd()
+		pm, ok := msg.(tuiPaletteActionMsg)
+		if !ok {
+			t.Fatalf("actions[%d].Run()() type = %T, want tuiPaletteActionMsg", i, msg)
+		}
+		if pm.dropletID != dropletID {
+			t.Errorf("actions[%d] msg.dropletID = %q, want %q", i, pm.dropletID, dropletID)
+		}
+		if pm.action != tt.action {
+			t.Errorf("actions[%d] msg.action = %q, want %q", i, pm.action, tt.action)
+		}
+	}
+}
+
+// ── Backspace on empty palette query (ci-gg7gp-d6ki7) ────────────────────────
+
+// TestCockpit_Palette_Backspace_EmptyQuery_IsNoOp verifies that pressing
+// Backspace when paletteQuery is already empty leaves the query unchanged and
+// does not corrupt paletteFiltered.
+//
+// Given: palette open with paletteQuery="" and paletteFiltered=["cancel"]
+// When:  Backspace is pressed
+// Then:  paletteQuery="" and len(paletteFiltered)=1
+func TestCockpit_Palette_Backspace_EmptyQuery_IsNoOp(t *testing.T) {
+	actions := []PaletteAction{{Name: "cancel"}}
+	m := newPaletteTestCockpit(actions, &cistern.Droplet{ID: "ci-aaa"})
+	m.paletteActive = true
+	m.paletteAll = actions
+	m.paletteQuery = ""
+	m.paletteFiltered = actions
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	um := updated.(cockpitModel)
+	if um.paletteQuery != "" {
+		t.Errorf("paletteQuery = %q, want %q (backspace on empty query must be no-op)", um.paletteQuery, "")
+	}
+	if len(um.paletteFiltered) != 1 {
+		t.Errorf("len(paletteFiltered) = %d, want 1 (must be unchanged)", len(um.paletteFiltered))
+	}
+}
