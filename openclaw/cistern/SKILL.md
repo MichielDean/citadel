@@ -30,7 +30,7 @@ Never say "drop/item/task/ticket/issue" for work units — always **droplet**.
 - **DB:** `~/.cistern/cistern.db`
 - **Log:** `~/.cistern/castellarius.log`
 - **Dashboard:** `http://192.168.0.138:5737` (ttyd)
-- **Build:** `cd ~/cistern && PATH="/usr/local/go/bin:$PATH" go build -o ~/go/bin/ct ./cmd/ct/`
+- **Build:** `cd ~/cistern && COMMIT=$(git rev-parse --short HEAD) && PATH="/usr/local/go/bin:$PATH" go build -ldflags "-X main.version=${COMMIT} -X main.commit=${COMMIT}" -o ~/go/bin/ct ./cmd/ct/`
 
 ## Repos configured
 
@@ -189,4 +189,4 @@ Run `ct doctor` first — it checks daemon status, claude CLI auth, and common c
 | Droplet stuck | `ct droplet show <id>` — check notes; `ct droplet restart <id>` |
 | Logs | `journalctl --user -u cistern-castellarius -f` or `cat ~/.cistern/castellarius.log` |
 | Dashboard stale after rebuild | Kill old process on port 5737, restart cistern-ttyd.service |
-| Binary out of date | Rebuild: `cd ~/cistern && PATH="/usr/local/go/bin:$PATH" go build -o ~/go/bin/ct ./cmd/ct/` |
+| Binary out of date | Rebuild: `cd ~/cistern && COMMIT=$(git rev-parse --short HEAD) && PATH="/usr/local/go/bin:$PATH" go build -ldflags "-X main.version=${COMMIT} -X main.commit=${COMMIT}" -o ~/go/bin/ct ./cmd/ct/` |
