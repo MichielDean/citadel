@@ -98,8 +98,9 @@ jobs:
       - name: Compute version info
         id: version
         run: |
-          echo "tag=$(git describe --tags --abbrev=0 2>/dev/null || git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
-          echo "commit=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          COMMIT=$(git rev-parse --short HEAD)
+          echo "tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "$COMMIT")" >> "$GITHUB_OUTPUT"
+          echo "commit=${COMMIT}" >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
