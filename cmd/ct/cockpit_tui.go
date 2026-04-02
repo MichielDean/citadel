@@ -161,6 +161,8 @@ func (p dashboardPanel) OverlayActive() bool {
 	return p.inner.peekActive || p.inner.peekSelectMode
 }
 
+func (p dashboardPanel) SelectedDroplet() *cistern.Droplet { return nil }
+
 func (p dashboardPanel) PaletteActions(_ *cistern.Droplet) []PaletteAction { return nil }
 
 // ── placeholderPanel ─────────────────────────────────────────────────────────

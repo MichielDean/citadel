@@ -208,4 +208,6 @@ func (p statusPanel) KeyHelp() string { return "r refresh  ↑↓/jk scroll  g/G
 
 func (p statusPanel) OverlayActive() bool { return false }
 
+func (p statusPanel) SelectedDroplet() *cistern.Droplet { return nil }
+
 func (p statusPanel) PaletteActions(_ *cistern.Droplet) []PaletteAction { return nil }

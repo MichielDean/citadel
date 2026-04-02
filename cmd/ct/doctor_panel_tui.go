@@ -137,4 +137,6 @@ func (p doctorPanel) KeyHelp() string { return "r re-run  ↑↓/jk scroll  g/G 
 
 func (p doctorPanel) OverlayActive() bool { return false }
 
+func (p doctorPanel) SelectedDroplet() *cistern.Droplet { return nil }
+
 func (p doctorPanel) PaletteActions(_ *cistern.Droplet) []PaletteAction { return nil }
