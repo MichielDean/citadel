@@ -988,6 +988,119 @@ func TestCockpit_UppercaseQ_Quits(t *testing.T) {
 	}
 }
 
+// ── dashboardPanel (Flow) ────────────────────────────────────────────────────
+
+// TestFlowPanel_Title_ReturnsFlow verifies that the dashboard/flow panel
+// identifies itself as "Flow" in the cockpit sidebar.
+//
+// Given: a dashboardPanel
+// When:  Title() is called
+// Then:  "Flow" is returned
+func TestFlowPanel_Title_ReturnsFlow(t *testing.T) {
+	p := newDashboardPanel("", "")
+	if got := p.Title(); got != "Flow" {
+		t.Errorf("Title() = %q, want %q", got, "Flow")
+	}
+}
+
+// TestFlowPanel_KeyHelp_ReturnsNavigationHint verifies that the dashboard/flow
+// panel returns a non-empty key-help string describing its key bindings.
+//
+// Given: a dashboardPanel
+// When:  KeyHelp() is called
+// Then:  a non-empty hint string is returned
+func TestFlowPanel_KeyHelp_ReturnsNavigationHint(t *testing.T) {
+	p := newDashboardPanel("", "")
+	if got := p.KeyHelp(); got == "" {
+		t.Error("KeyHelp() returned empty string, want navigation hint")
+	}
+}
+
+// TestFlowPanel_PaletteActions_WithNilDroplet_ReturnsNil verifies that the flow
+// panel has no palette actions when no droplet is in context.
+//
+// Given: a dashboardPanel, droplet = nil
+// When:  PaletteActions(nil) is called
+// Then:  nil is returned
+func TestFlowPanel_PaletteActions_WithNilDroplet_ReturnsNil(t *testing.T) {
+	p := newDashboardPanel("", "")
+	if got := p.PaletteActions(nil); got != nil {
+		t.Errorf("PaletteActions(nil) = %v, want nil", got)
+	}
+}
+
+// TestFlowPanel_PaletteActions_WithDroplet_ReturnsNil verifies that the flow
+// panel has no palette actions even when a droplet is provided, because the flow
+// view is a read-only dashboard that does not offer per-droplet operations.
+//
+// Given: a dashboardPanel with a non-nil droplet
+// When:  PaletteActions(droplet) is called
+// Then:  nil is returned
+func TestFlowPanel_PaletteActions_WithDroplet_ReturnsNil(t *testing.T) {
+	p := newDashboardPanel("", "")
+	if got := p.PaletteActions(&cistern.Droplet{ID: "ci-aaa"}); got != nil {
+		t.Errorf("PaletteActions(droplet) = %v, want nil", got)
+	}
+}
+
+// TestFlowPanel_OverlayActive_ReturnsFalse_WhenNoOverlay verifies that a freshly
+// constructed dashboardPanel reports no active overlay.
+//
+// Given: a dashboardPanel with no peek or picker active
+// When:  OverlayActive() is called
+// Then:  false is returned
+func TestFlowPanel_OverlayActive_ReturnsFalse_WhenNoOverlay(t *testing.T) {
+	p := newDashboardPanel("", "")
+	if p.OverlayActive() {
+		t.Error("OverlayActive() = true, want false when no overlay is active")
+	}
+}
+
+// TestFlowPanel_OverlayActive_ReturnsTrue_WhenPeekActive verifies that the panel
+// reports an active overlay when the inline peek pane is open.
+//
+// Given: a dashboardPanel with inner.peekActive = true
+// When:  OverlayActive() is called
+// Then:  true is returned
+func TestFlowPanel_OverlayActive_ReturnsTrue_WhenPeekActive(t *testing.T) {
+	p := newDashboardPanel("", "")
+	p.inner.peekActive = true
+	if !p.OverlayActive() {
+		t.Error("OverlayActive() = false, want true when peekActive is set")
+	}
+}
+
+// TestFlowPanel_OverlayActive_ReturnsTrue_WhenPeekSelectMode verifies that the
+// panel reports an active overlay when the aqueduct picker is open.
+//
+// Given: a dashboardPanel with inner.peekSelectMode = true
+// When:  OverlayActive() is called
+// Then:  true is returned
+func TestFlowPanel_OverlayActive_ReturnsTrue_WhenPeekSelectMode(t *testing.T) {
+	p := newDashboardPanel("", "")
+	p.inner.peekSelectMode = true
+	if !p.OverlayActive() {
+		t.Error("OverlayActive() = false, want true when peekSelectMode is set")
+	}
+}
+
+// TestCockpit_Panel2_IsFlowPanel verifies that cockpit panel index 1 (key: 2) is
+// the live-flow dashboard, satisfying the acceptance criterion that pressing 2
+// from the cockpit navigates to the Flow panel.
+//
+// Given: a new cockpitModel
+// When:  panels[1] is inspected
+// Then:  its Title() is "Flow"
+func TestCockpit_Panel2_IsFlowPanel(t *testing.T) {
+	m := newCockpitModel("", "")
+	if len(m.panels) < 2 {
+		t.Fatalf("expected at least 2 panels, got %d", len(m.panels))
+	}
+	if got := m.panels[1].Title(); got != "Flow" {
+		t.Errorf("panels[1].Title() = %q, want %q", got, "Flow")
+	}
+}
+
 // ── panelWidth floor ──────────────────────────────────────────────────────────
 
 // TestCockpit_PanelWidth_Floor_ClampedToMinimum verifies that panelWidth() never

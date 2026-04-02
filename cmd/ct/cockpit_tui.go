@@ -40,6 +40,7 @@ type TUIPanel interface {
 var (
 	_ TUIPanel = dropletsPanel{}
 	_ TUIPanel = placeholderPanel{}
+	_ TUIPanel = dashboardPanel{}
 )
 
 // ── dropletsPanel ────────────────────────────────────────────────────────────
@@ -89,6 +90,44 @@ func (p dropletsPanel) PaletteActions(droplet *cistern.Droplet) []PaletteAction 
 		{Key: "n", Label: "add note"},
 	}
 }
+
+// ── dashboardPanel ───────────────────────────────────────────────────────────
+
+// dashboardPanel adapts dashboardTUIModel to the TUIPanel interface.
+// It is the Flow module — showing live aqueduct and flow state in the cockpit.
+type dashboardPanel struct {
+	inner dashboardTUIModel
+}
+
+func newDashboardPanel(cfgPath, dbPath string) dashboardPanel {
+	return dashboardPanel{inner: newDashboardTUIModel(cfgPath, dbPath)}
+}
+
+func (p dashboardPanel) Init() tea.Cmd {
+	return p.inner.Init()
+}
+
+func (p dashboardPanel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	updated, cmd := p.inner.Update(msg)
+	p.inner = updated.(dashboardTUIModel)
+	return p, cmd
+}
+
+func (p dashboardPanel) View() string {
+	return p.inner.View()
+}
+
+func (p dashboardPanel) Title() string { return "Flow" }
+
+func (p dashboardPanel) KeyHelp() string {
+	return "↑↓/jk scroll  p peek  r refresh"
+}
+
+func (p dashboardPanel) OverlayActive() bool {
+	return p.inner.peekActive || p.inner.peekSelectMode
+}
+
+func (p dashboardPanel) PaletteActions(_ *cistern.Droplet) []PaletteAction { return nil }
 
 // ── placeholderPanel ─────────────────────────────────────────────────────────
 
@@ -144,8 +183,9 @@ func newCockpitModel(cfgPath, dbPath string) cockpitModel {
 	inner.width = m.panelWidth()
 	m.panels = []TUIPanel{
 		dropletsPanel{inner: inner},
-		placeholderPanel{title: "Dashboard"},
+		newDashboardPanel(cfgPath, dbPath),
 		newStatusPanel(cfgPath, dbPath),
+		placeholderPanel{title: "Aqueducts"},
 		placeholderPanel{title: "Inspect"},
 		placeholderPanel{title: "Audit"},
 	}
