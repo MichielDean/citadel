@@ -2010,3 +2010,65 @@ func TestCockpit_Palette_Backspace_EmptyQuery_IsNoOp(t *testing.T) {
 		t.Errorf("len(paletteFiltered) = %d, want 1 (must be unchanged)", len(um.paletteFiltered))
 	}
 }
+
+// ── Palette arrow-key navigation (ci-gg7gp-q3k6g) ────────────────────────────
+
+// TestCockpit_Palette_DownArrow_MovesSelectionDown verifies that pressing the
+// down arrow key in the palette advances the paletteCursor.
+//
+// Given: palette open with 2 actions, paletteCursor=0
+// When:  down arrow is pressed
+// Then:  paletteCursor=1
+func TestCockpit_Palette_DownArrow_MovesSelectionDown(t *testing.T) {
+	actions := []PaletteAction{
+		{Name: "alpha"},
+		{Name: "beta"},
+	}
+	m := newPaletteTestCockpit(actions, &cistern.Droplet{ID: "ci-aaa"}).openPalette()
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	um := updated.(cockpitModel)
+	if um.paletteCursor != 1 {
+		t.Errorf("paletteCursor = %d, want 1", um.paletteCursor)
+	}
+}
+
+// TestCockpit_Palette_UpArrow_MovesSelectionUp verifies that pressing the
+// up arrow key in the palette moves the cursor up.
+//
+// Given: palette open with 2 actions, paletteCursor=1
+// When:  up arrow is pressed
+// Then:  paletteCursor=0
+func TestCockpit_Palette_UpArrow_MovesSelectionUp(t *testing.T) {
+	actions := []PaletteAction{
+		{Name: "alpha"},
+		{Name: "beta"},
+	}
+	m := newPaletteTestCockpit(actions, &cistern.Droplet{ID: "ci-aaa"}).openPalette()
+	m.paletteCursor = 1
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	um := updated.(cockpitModel)
+	if um.paletteCursor != 0 {
+		t.Errorf("paletteCursor = %d, want 0", um.paletteCursor)
+	}
+}
+
+// ── viewPalette empty-filtered branch (ci-gg7gp-ltsxt) ───────────────────────
+
+// TestCockpit_View_Palette_EmptyFiltered_ShowsNoMatchMessage verifies that when
+// the palette is active and paletteFiltered is empty, the view renders the
+// "(no matching actions)" message.
+//
+// Given: paletteActive=true and paletteFiltered=[]
+// When:  View() is called
+// Then:  output contains "(no matching actions)"
+func TestCockpit_View_Palette_EmptyFiltered_ShowsNoMatchMessage(t *testing.T) {
+	m := newCockpitModel("", "")
+	m.paletteActive = true
+	m.paletteFiltered = []PaletteAction{}
+
+	if !strings.Contains(m.View(), "(no matching actions)") {
+		t.Error("View() with empty paletteFiltered does not contain '(no matching actions)'")
+	}
+}
