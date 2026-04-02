@@ -46,6 +46,7 @@ var (
 	_ TUIPanel = dropletsPanel{}
 	_ TUIPanel = placeholderPanel{}
 	_ TUIPanel = dashboardPanel{}
+	_ TUIPanel = reposSkillsPanel{}
 )
 
 // ── dropletsPanel ────────────────────────────────────────────────────────────
@@ -232,6 +233,8 @@ func newCockpitModel(cfgPath, dbPath string) cockpitModel {
 		placeholderPanel{title: "Aqueducts"},
 		newDoctorPanel(),
 		placeholderPanel{title: "Inspect"},
+		placeholderPanel{title: "Audit"},
+		newReposSkillsPanel(cfgPath, dbPath),
 	}
 	// Only panel[0] is initialized in Init(). All others are lazily initialized
 	// on first activation to prevent their tick chains from firing into the wrong
@@ -375,13 +378,20 @@ func (m cockpitModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 		return m, nil
-	case doctorOutputMsg:
-		if len(m.panels) > 4 {
-			updated, cmd := m.panels[4].Update(msg)
-			m.panels[4] = updated.(TUIPanel)
-			return m, cmd
-		}
-		return m, nil
+		case doctorOutputMsg:
+			if len(m.panels) > 4 {
+				updated, cmd := m.panels[4].Update(msg)
+				m.panels[4] = updated.(TUIPanel)
+				return m, cmd
+			}
+			return m, nil
+		case reposSkillsDataMsg:
+			if len(m.panels) > 7 {
+				updated, cmd := m.panels[7].Update(msg)
+				m.panels[7] = updated.(TUIPanel)
+				return m, cmd
+			}
+			return m, nil
 	}
 
 	// Forward all other non-key messages and panel-focused key messages to the active panel.

@@ -29,6 +29,17 @@ The command palette provides an alternative to memorizing single-key action bind
 **Impact**: Users can now discover and execute panel actions without leaving the cockpit or memorizing key bindings. Panels can extend the palette with custom actions by implementing the per-panel action registry.
 
 **Documentation**: See `openclaw/cistern/references/commands.md#command-palette` for usage details.
+### TUI cockpit: Repos & Skills module (ci-6b62p)
+
+Added module 7 to the interactive cockpit (`ct tui`): **Repos & Skills**, a read-only view of registered repositories and installed skills.
+
+**New features:**
+- **Repositories section**: Shows all registered repos from `ct repo list` with NAME, PREFIX, and URL columns
+- **Skills section**: Shows all installed skills from `ct skills list` with NAME and SOURCE columns
+- **Keyboard navigation**: Scroll with `↑↓` or `jk`, jump to top/bottom with `g`/`G`, and force refresh with `r`
+- **Module access**: Press `7` in the cockpit sidebar to open the Repos & Skills module
+
+**Use case**: Quickly browse active repositories and available skills without leaving the cockpit interface.
 
 ### Integration tests: session name isolation and production opt-out (ci-47i5f)
 

@@ -308,6 +308,9 @@ The cockpit provides a two-pane interface: persistent left sidebar for module na
 - **Left sidebar**: Lists all available modules (Droplets, Dashboard, Status, Inspect, Doctor) with keyboard shortcuts (1–9)
   - Cursor highlight indicates focus: `▶` = panel focused (green), `▷` = sidebar focused (yellow)
   - Currently, Droplets, Status, and Doctor modules are fully implemented; others ship as placeholders
+- **Left sidebar**: Lists all available modules (Droplets, Flow, Dashboard, Status, Aqueducts, Inspect, Audit, Repos & Skills) with keyboard shortcuts (1–9)
+  - Cursor highlight indicates focus: `▶` = panel focused (green), `▷` = sidebar focused (yellow)
+  - Currently, Droplets, Dashboard, Status, and Repos & Skills modules are fully implemented; others ship as placeholders
 - **Right pane**: Displays the active module's content
 
 **Navigation**
@@ -380,6 +383,23 @@ The module shows the last-run timestamp and supports the following controls:
 - `↑↓` or `j/k` — **Scroll** — Navigate through the output
 - `g` — **Go to top** — Jump to the beginning
 - `G` — **Go to bottom** — Jump to the end
+**Repos & Skills Module** (key: 7)
+
+The Repos & Skills module displays registered repositories and installed skills in a read-only view:
+
+- **Repositories Section**: Lists configured repos (from `ct repo list`) with columns:
+  - NAME: Repository identifier
+  - PREFIX: Droplet ID prefix for repos
+  - URL: Repository URL
+  - Shows "No repositories configured" if empty; run `ct repo add --url <url>` to add repos
+
+- **Skills Section**: Lists installed skills (from `ct skills list`) with columns:
+  - NAME: Skill identifier
+  - SOURCE: Source URL where the skill was installed from
+  - Shows "No skills installed" if empty; run `ct skills install <name> <url>` to install skills
+
+- **Navigation**: `↑↓` or `jk` to scroll, `g` to jump to top, `G` to jump to bottom, `r` to refresh
+- **Auto-refresh**: Displays fetch timestamp and supports `r` to force immediate refresh
 
 ## Status & Health
 
