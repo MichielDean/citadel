@@ -247,15 +247,14 @@ func (m cockpitModel) viewSidebar() string {
 	sb.WriteString(tuiStyleHeader.Render("  CISTERN") + "\n")
 	sb.WriteString(divider)
 	for i, p := range m.panels {
-		num := fmt.Sprintf("%d", i+1)
-		name := p.Title()
+		label := fmt.Sprintf("%d  %s", i+1, p.Title())
 		switch {
 		case i == m.cursor && m.panelFocused:
-			sb.WriteString(tuiStyleGreen.Render("▶ "+num+"  "+name) + "\n")
+			sb.WriteString(tuiStyleGreen.Render("▶ "+label) + "\n")
 		case i == m.cursor:
-			sb.WriteString(tuiStyleYellow.Render("▷ "+num+"  "+name) + "\n")
+			sb.WriteString(tuiStyleYellow.Render("▷ "+label) + "\n")
 		default:
-			sb.WriteString(fmt.Sprintf("  %s  %s", num, name) + "\n")
+			sb.WriteString("  " + label + "\n")
 		}
 	}
 	sb.WriteString(divider)
