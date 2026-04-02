@@ -44,7 +44,7 @@ func TestCockpit_NewModel_DropletsPreSelected(t *testing.T) {
 // Given: a new cockpitModel
 // When:  panels are inspected
 // Then:  eight panels are registered
-func TestCockpit_NewModel_HasEightPanels(t *testing.T) {)
+func TestCockpit_NewModel_HasEightPanels(t *testing.T) {
 	m := newCockpitModel("", "")
 	if len(m.panels) != 8 {
 		t.Errorf("len(panels) = %d, want 8", len(m.panels))
