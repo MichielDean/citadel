@@ -61,7 +61,7 @@ func buildCt(t *testing.T) string        { return buildBinary(t, "ct", "./cmd/ct
 // test sessions cannot collide with production sessions.
 func sessionPrefix(t *testing.T) string {
 	t.Helper()
-	sum := sha256.Sum256([]byte(filepath.Base(t.TempDir())))
+	sum := sha256.Sum256([]byte(t.TempDir()))
 	return fmt.Sprintf("%x", sum[:3]) // 3 bytes → 6 hex chars
 }
 
