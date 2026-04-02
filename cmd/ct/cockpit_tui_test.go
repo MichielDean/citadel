@@ -613,16 +613,32 @@ func TestDropletsPanel_PaletteActions_WithDroplet_ReturnsActions(t *testing.T) {
 	}
 }
 
-// TestDropletsPanel_PaletteActions_WithNilDroplet_ReturnsNil verifies that no
-// actions are returned when no droplet is in context.
+// TestDropletsPanel_PaletteActions_WithNilDroplet_ReturnsNewDropletAction verifies
+// that PaletteActions(nil) returns the always-available "new droplet" action even
+// when no droplet is selected.
 //
 // Given: a dropletsPanel
 // When:  PaletteActions(nil) is called
-// Then:  nil is returned
-func TestDropletsPanel_PaletteActions_WithNilDroplet_ReturnsNil(t *testing.T) {
+// Then:  a non-nil slice containing "new droplet" is returned
+func TestDropletsPanel_PaletteActions_WithNilDroplet_ReturnsNewDropletAction(t *testing.T) {
 	p := newDropletsPanel("", "")
-	if got := p.PaletteActions(nil); got != nil {
-		t.Errorf("PaletteActions(nil) = %v, want nil", got)
+	got := p.PaletteActions(nil)
+	if got == nil {
+		t.Fatal("PaletteActions(nil) = nil, want non-nil (should include 'new droplet' action)")
+	}
+	found := false
+	for _, a := range got {
+		if a.Name == "new droplet" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		names := make([]string, len(got))
+		for i, a := range got {
+			names[i] = a.Name
+		}
+		t.Errorf("PaletteActions(nil) does not include 'new droplet'; got %v", names)
 	}
 }
 
@@ -1629,57 +1645,68 @@ func TestFilterPaletteActions_CaseInsensitive(t *testing.T) {
 // TestDropletsPanel_PaletteActions_Run_EmitsCorrectMsg verifies that calling
 // action.Run()() on each action returned by dropletsPanel.PaletteActions emits
 // a tuiPaletteActionMsg with the correct dropletID and action fields.
-// Non-terminal (open) droplets include the outcome actions: pass, recirculate,
-// close, cancel, pool, restart, add note.
+// Non-terminal (open) droplets include outcome actions plus structural actions.
+// "new droplet" always uses dropletID="" since it is not tied to a selection.
 //
 // Given: a dropletsPanel with open droplet "ci-xyz"
 // When:  action.Run()() is called on each PaletteAction
-// Then:  each msg carries dropletID="ci-xyz" and the expected action constant
+// Then:  each msg carries the expected dropletID and action constant
 func TestDropletsPanel_PaletteActions_Run_EmitsCorrectMsg(t *testing.T) {
 	p := newDropletsPanel("", "")
 	dropletID := "ci-xyz"
 	d := &cistern.Droplet{ID: dropletID, Status: "open"}
 	actions := p.PaletteActions(d)
 
-	tests := []struct {
-		name   string
-		action string
-	}{
-		{"pass", actionPass},
-		{"recirculate", actionRecirculate},
-		{"close", actionClose},
-		{"cancel", actionCancel},
-		{"pool", actionPool},
-		{"restart", actionRestart},
-		{"add note", actionAddNote},
+	// Expected: name → {action constant, expected dropletID in msg}.
+	// "new droplet" emits "" as dropletID (no droplet required).
+	type wantMsg struct {
+		action     string
+		wantDropID string
+	}
+	want := map[string]wantMsg{
+		"new droplet":      {actionCreateDroplet, ""},
+		"pass":             {actionPass, dropletID},
+		"recirculate":      {actionRecirculate, dropletID},
+		"close":            {actionClose, dropletID},
+		"cancel":           {actionCancel, dropletID},
+		"pool":             {actionPool, dropletID},
+		"restart":          {actionRestart, dropletID},
+		"add note":         {actionAddNote, dropletID},
+		"edit metadata":    {actionEditMeta, dropletID},
+		"add dependency":   {actionAddDep, dropletID},
+		"remove dependency": {actionRemoveDep, dropletID},
+		"file issue":       {actionFileIssue, dropletID},
+		"resolve issue":    {actionResolveIssue, dropletID},
+		"reject issue":     {actionRejectIssue, dropletID},
 	}
 
-	if len(actions) != len(tests) {
-		t.Fatalf("len(actions) = %d, want %d", len(actions), len(tests))
+	if len(actions) != len(want) {
+		t.Fatalf("len(actions) = %d, want %d", len(actions), len(want))
 	}
 
-	for i, tt := range tests {
-		a := actions[i]
-		if a.Name != tt.name {
-			t.Errorf("actions[%d].Name = %q, want %q", i, a.Name, tt.name)
+	for _, a := range actions {
+		w, ok := want[a.Name]
+		if !ok {
+			t.Errorf("unexpected action name %q", a.Name)
+			continue
 		}
 		if a.Run == nil {
-			t.Fatalf("actions[%d].Run = nil", i)
+			t.Fatalf("action %q: Run = nil", a.Name)
 		}
 		cmd := a.Run()
 		if cmd == nil {
-			t.Fatalf("actions[%d].Run() returned nil cmd", i)
+			t.Fatalf("action %q: Run() returned nil cmd", a.Name)
 		}
 		msg := cmd()
 		pm, ok := msg.(tuiPaletteActionMsg)
 		if !ok {
-			t.Fatalf("actions[%d].Run()() type = %T, want tuiPaletteActionMsg", i, msg)
+			t.Fatalf("action %q: Run()() type = %T, want tuiPaletteActionMsg", a.Name, msg)
 		}
-		if pm.dropletID != dropletID {
-			t.Errorf("actions[%d] msg.dropletID = %q, want %q", i, pm.dropletID, dropletID)
+		if pm.dropletID != w.wantDropID {
+			t.Errorf("action %q: msg.dropletID = %q, want %q", a.Name, pm.dropletID, w.wantDropID)
 		}
-		if pm.action != tt.action {
-			t.Errorf("actions[%d] msg.action = %q, want %q", i, pm.action, tt.action)
+		if pm.action != w.action {
+			t.Errorf("action %q: msg.action = %q, want %q", a.Name, pm.action, w.action)
 		}
 	}
 }
@@ -1847,5 +1874,67 @@ func TestDropletsPanel_PaletteActions(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// ── Structural action palette actions ────────────────────────────────────────
+
+// TestDropletsPanel_PaletteActions_StructuralActions_Present verifies that the
+// structural actions (edit metadata, add/remove dependency, file issue,
+// resolve/reject issue) are present in the palette for a non-terminal droplet.
+//
+// Given: a dropletsPanel
+// When:  PaletteActions is called with an open (non-terminal) droplet
+// Then:  each structural action name is present in the returned slice
+func TestDropletsPanel_PaletteActions_StructuralActions_Present(t *testing.T) {
+	p := newDropletsPanel("", "")
+	d := &cistern.Droplet{ID: "ci-aaa", Status: "open"}
+	actions := p.PaletteActions(d)
+
+	wantActions := []string{
+		"edit metadata",
+		"add dependency",
+		"remove dependency",
+		"file issue",
+		"resolve issue",
+		"reject issue",
+		"new droplet",
+	}
+	for _, want := range wantActions {
+		if !containsAction(actions, want) {
+			t.Errorf("PaletteActions missing %q; got %v", want, paletteActionNames(actions))
+		}
+	}
+}
+
+// TestDropletsPanel_PaletteActions_NewDroplet_AlwaysPresentWithDroplet verifies
+// that "new droplet" action is also present when a droplet IS selected.
+//
+// Given: a dropletsPanel
+// When:  PaletteActions is called with an open droplet
+// Then:  "new droplet" is present
+func TestDropletsPanel_PaletteActions_NewDroplet_AlwaysPresentWithDroplet(t *testing.T) {
+	p := newDropletsPanel("", "")
+	d := &cistern.Droplet{ID: "ci-aaa", Status: "open"}
+	actions := p.PaletteActions(d)
+
+	if !containsAction(actions, "new droplet") {
+		t.Errorf("PaletteActions missing 'new droplet'; got %v", paletteActionNames(actions))
+	}
+}
+
+// TestDropletsPanel_PaletteActions_NewDroplet_PresentForTerminalDroplet verifies
+// that "new droplet" is still present even for a terminal (cancelled/delivered) droplet.
+//
+// Given: a dropletsPanel
+// When:  PaletteActions is called with a cancelled droplet
+// Then:  "new droplet" is present
+func TestDropletsPanel_PaletteActions_NewDroplet_PresentForTerminalDroplet(t *testing.T) {
+	p := newDropletsPanel("", "")
+	d := &cistern.Droplet{ID: "ci-aaa", Status: "cancelled"}
+	actions := p.PaletteActions(d)
+
+	if !containsAction(actions, "new droplet") {
+		t.Errorf("PaletteActions missing 'new droplet' for terminal droplet; got %v", paletteActionNames(actions))
 	}
 }

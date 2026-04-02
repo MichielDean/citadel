@@ -1,14 +1,14 @@
 # Context
 
-## Item: ci-besty
+## Item: ci-vt6x5
 
-**Title:** TUI cockpit: Castellarius control panel with start/stop/restart
+**Title:** TUI cockpit: Droplets panel structural actions via command palette
 **Status:** in_progress
 **Priority:** 2
 
 ### Description
 
-Panel registered as module 4 (key: 4) showing ct castellarius status output with live-refresh (5s ticker). Exposes start, stop, restart actions via command palette with confirm overlays. Maps to ct castellarius start/stop/restart. Acceptance: pressing 4 shows castellarius status; palette actions control the service; status refreshes after actions.
+Extend the Droplets panel command palette with structural actions: edit metadata (multi-field sequential overlay for title, priority, complexity, description — maps to ct droplet rename/edit), new droplet creation form (N key or palette, sequential field-per-field input: repo, title, description, complexity), add/remove dependency (droplet ID text input), file issue (description text input), resolve/reject issue (from inline issue list sub-section in detail panel). All multi-field forms use sequential overlay pattern (one field at a time). Acceptance: all actions accessible via palette, correctly invoke underlying ct commands, detail panel shows issue list.
 
 ## Current Step: implement
 
@@ -39,16 +39,16 @@ Panel registered as module 4 (key: 4) showing ct castellarius status output with
 When your work is done, signal your outcome using the `ct` CLI:
 
 **Pass (work complete, move to next step):**
-    ct droplet pass ci-besty
+    ct droplet pass ci-vt6x5
 
 **Recirculate (needs rework — send back upstream):**
-    ct droplet recirculate ci-besty
-    ct droplet recirculate ci-besty --to implement
+    ct droplet recirculate ci-vt6x5
+    ct droplet recirculate ci-vt6x5 --to implement
 
 **Pool (cannot currently proceed):**
-    ct droplet pool ci-besty
+    ct droplet pool ci-vt6x5
 
 Add notes before signaling:
-    ct droplet note ci-besty "What you did / found"
+    ct droplet note ci-vt6x5 "What you did / found"
 
 The `ct` binary is on your PATH.

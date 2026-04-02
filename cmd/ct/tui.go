@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -22,20 +23,28 @@ const (
 	overlayNone = iota
 	overlayConfirm
 	overlayText
+	overlayMulti // sequential multi-field form (one field at a time)
 )
 
 // Action constants identify the pending Detail-panel action.
 const (
-	actionCancel      = "cancel"
-	actionPool        = "pool"
-	actionRestart     = "restart"
-	actionAddNote     = "addnote"
-	actionSetStep     = "setstep"
-	actionPass        = "pass"
-	actionRecirculate = "recirculate"
-	actionClose       = "close"
-	actionReopen      = "reopen"
-	actionApprove     = "approve"
+	actionCancel         = "cancel"
+	actionPool           = "pool"
+	actionRestart        = "restart"
+	actionAddNote        = "addnote"
+	actionSetStep        = "setstep"
+	actionPass           = "pass"
+	actionRecirculate    = "recirculate"
+	actionClose          = "close"
+	actionReopen         = "reopen"
+	actionApprove        = "approve"
+	actionEditMeta       = "editmeta"       // multi-field: title, priority, complexity, description
+	actionCreateDroplet  = "create"         // multi-field: repo, title, description, complexity
+	actionAddDep         = "adddep"         // text: depends-on droplet ID
+	actionRemoveDep      = "removedep"      // text: dependency ID to remove
+	actionFileIssue      = "fileissue"      // text: issue description
+	actionResolveIssue   = "resolveissue"   // text: evidence (issue selected via cursor)
+	actionRejectIssue    = "rejectissue"    // text: evidence (issue selected via cursor)
 )
 
 // isTerminalStatus reports whether a droplet status string is terminal
@@ -45,7 +54,7 @@ func isTerminalStatus(status string) bool {
 	return status == "delivered" || status == "cancelled"
 }
 
-// tuiDetailDataMsg carries notes fetched for the Detail panel.
+// tuiDetailDataMsg carries notes and issues fetched for the Detail panel.
 // The dropletID field lets the handler discard stale responses when the user
 // navigates away before the fetch completes.
 // err is non-nil when the notes fetch failed; the Detail view displays an error
@@ -53,6 +62,7 @@ func isTerminalStatus(status string) bool {
 type tuiDetailDataMsg struct {
 	dropletID string
 	notes     []cistern.CataractaeNote
+	issues    []cistern.DropletIssue
 	err       error
 }
 
@@ -96,10 +106,25 @@ type tabAppModel struct {
 	detailErr     error // non-nil when the notes fetch failed
 
 	// Action overlay state — populated when an action keybinding is pressed.
-	overlayMode   int    // overlayNone, overlayConfirm, or overlayText
+	overlayMode   int    // overlayNone, overlayConfirm, overlayText, or overlayMulti
 	overlayAction string // pending action (actionCancel, actionPool, …)
-	overlayInput  string // text being typed in overlayText mode
+	overlayInput  string // text being typed in overlayText/overlayMulti mode
 	overlayErr    string // error message from the most recent action (empty = none)
+
+	// Multi-field overlay state (overlayMulti mode): one field is entered at a
+	// time; overlayInput holds the current field, overlayMultiValues accumulates
+	// completed fields.
+	overlayMultiFields []string // prompts for each field in sequence
+	overlayMultiIdx    int      // index of the field currently being entered
+	overlayMultiValues []string // collected values for completed fields
+
+	// Issues in the Detail panel.
+	detailIssues      []cistern.DropletIssue
+	detailIssueCursor int // cursor within the issue list; -1 means no selection
+
+	// pendingIssueID holds the issue ID targeted by a resolve/reject action
+	// initiated from the inline issue list (set by v/u keys when a cursor is active).
+	pendingIssueID string
 
 	// Peek tab state — populated when the Peek view opens from the Detail panel.
 	peek peekModel
@@ -110,10 +135,11 @@ type tabAppModel struct {
 
 func newTabAppModel(cfgPath, dbPath string) tabAppModel {
 	return tabAppModel{
-		cfgPath: cfgPath,
-		dbPath:  dbPath,
-		width:   100,
-		height:  24,
+		cfgPath:           cfgPath,
+		dbPath:            dbPath,
+		width:             100,
+		height:            24,
+		detailIssueCursor: -1,
 	}
 }
 
@@ -128,8 +154,10 @@ func (m tabAppModel) fetchDataCmd() tea.Cmd {
 	}
 }
 
-// fetchDetailCmd opens the DB and loads all notes for dropletID.
+// fetchDetailCmd opens the DB and loads all notes and issues for dropletID.
 // Notes are returned newest-first by the DB; the Update handler reverses them.
+// Issue fetch errors are non-fatal: the panel renders an empty list rather than
+// masking a valid notes fetch with a secondary failure.
 func (m tabAppModel) fetchDetailCmd(dropletID string) tea.Cmd {
 	dbPath := m.dbPath
 	return func() tea.Msg {
@@ -139,7 +167,11 @@ func (m tabAppModel) fetchDetailCmd(dropletID string) tea.Cmd {
 		}
 		defer c.Close()
 		notes, err := c.GetNotes(dropletID)
-		return tuiDetailDataMsg{dropletID: dropletID, notes: notes, err: err}
+		if err != nil {
+			return tuiDetailDataMsg{dropletID: dropletID, err: err}
+		}
+		issues, _ := c.ListIssues(dropletID, false, "")
+		return tuiDetailDataMsg{dropletID: dropletID, notes: notes, issues: issues}
 	}
 }
 
@@ -225,9 +257,134 @@ func (m tabAppModel) execActionCmd(dropletID, action, input string) tea.Cmd {
 				break
 			}
 			execErr = c.Assign(dropletID, "", "delivery")
+		case actionAddDep:
+			execErr = c.AddDependency(dropletID, input)
+		case actionRemoveDep:
+			execErr = c.RemoveDependency(dropletID, input)
+		case actionFileIssue:
+			_, execErr = c.AddIssue(dropletID, "tui", input)
 		}
 		return tuiActionResultMsg{dropletID: dropletID, err: execErr}
 	}
+}
+
+// execMultiActionCmd executes a multi-field action whose inputs were collected
+// via the overlayMulti sequential form. values contains one entry per field in
+// the order they were entered.
+func (m tabAppModel) execMultiActionCmd(action string, values []string) tea.Cmd {
+	dbPath := m.dbPath
+	selectedID := m.selectedID
+	return func() tea.Msg {
+		c, err := cistern.New(dbPath, "")
+		if err != nil {
+			return tuiActionResultMsg{dropletID: selectedID, err: err}
+		}
+		defer c.Close()
+		var execErr error
+		switch action {
+		case actionCreateDroplet:
+			// values: [repo, title, description, complexity]
+			repo := strings.TrimSpace(valAt(values, 0))
+			title := strings.TrimSpace(valAt(values, 1))
+			description := strings.TrimSpace(valAt(values, 2))
+			complexity := 1
+			if n, err := strconv.Atoi(strings.TrimSpace(valAt(values, 3))); err == nil && n >= 1 && n <= 3 {
+				complexity = n
+			}
+			if repo == "" || title == "" {
+				execErr = fmt.Errorf("repo and title are required to create a droplet")
+				break
+			}
+			_, execErr = c.Add(repo, title, description, 1, complexity)
+		case actionEditMeta:
+			// values: [title, priority, complexity, description]
+			// Each field is optional — skip empty/invalid values.
+			title := strings.TrimSpace(valAt(values, 0))
+			fields := cistern.EditDropletFields{}
+			if p, err := strconv.Atoi(strings.TrimSpace(valAt(values, 1))); err == nil && p > 0 {
+				fields.Priority = &p
+			}
+			if cx, err := strconv.Atoi(strings.TrimSpace(valAt(values, 2))); err == nil && cx >= 1 && cx <= 3 {
+				fields.Complexity = &cx
+			}
+			if desc := strings.TrimSpace(valAt(values, 3)); desc != "" {
+				fields.Description = &desc
+			}
+			hasEditFields := fields.Description != nil || fields.Priority != nil || fields.Complexity != nil
+			// Guard: EditDroplet rejects in_progress/delivered droplets. Check
+			// status before touching anything so no partial update occurs.
+			if hasEditFields {
+				item, err := c.Get(selectedID)
+				if err != nil {
+					execErr = err
+					break
+				}
+				if item.Status != "open" && item.Status != "pooled" {
+					execErr = fmt.Errorf("droplet %s is %s — cannot edit a droplet that has been picked up", selectedID, item.Status)
+					break
+				}
+			}
+			if title != "" {
+				if err := c.UpdateTitle(selectedID, title); err != nil {
+					execErr = err
+					break
+				}
+			}
+			if hasEditFields {
+				execErr = c.EditDroplet(selectedID, fields)
+			}
+		case actionResolveIssue, actionRejectIssue:
+			// values: [issue_id, evidence] (from palette multi-step path)
+			issueID := strings.TrimSpace(valAt(values, 0))
+			evidence := strings.TrimSpace(valAt(values, 1))
+			if issueID == "" {
+				execErr = fmt.Errorf("issue ID is required")
+				break
+			}
+			if action == actionResolveIssue {
+				execErr = c.ResolveIssue(issueID, evidence)
+			} else {
+				execErr = c.RejectIssue(issueID, evidence)
+			}
+		}
+		return tuiActionResultMsg{dropletID: selectedID, err: execErr}
+	}
+}
+
+// valAt returns values[i] if i is within bounds, otherwise "".
+func valAt(values []string, i int) string {
+	if i < len(values) {
+		return values[i]
+	}
+	return ""
+}
+
+// openMultiOverlay activates overlayMulti mode with the given field prompts.
+// overlayAction must be set by the caller before or after.
+func openMultiOverlay(m tabAppModel, fields []string) tabAppModel {
+	m.overlayMode = overlayMulti
+	m.overlayMultiFields = fields
+	m.overlayMultiIdx = 0
+	m.overlayMultiValues = make([]string, len(fields))
+	m.overlayInput = ""
+	return m
+}
+
+// openCreateDropletOverlay puts m into overlayMulti mode for the new-droplet
+// creation form. Callers set m.tab as needed before calling.
+func openCreateDropletOverlay(m tabAppModel) tabAppModel {
+	m.overlayAction = actionCreateDroplet
+	return openMultiOverlay(m, []string{"repo", "title", "description", "complexity (1-3)"})
+}
+
+// overlayMultiFooter renders the progress footer shown during a multi-field form.
+func (m tabAppModel) overlayMultiFooter() string {
+	step := ""
+	if m.overlayMultiIdx < len(m.overlayMultiFields) {
+		step = m.overlayMultiFields[m.overlayMultiIdx]
+	}
+	return tuiStyleYellow.Render(fmt.Sprintf("  [%d/%d] %s: %s_  (esc cancel)",
+		m.overlayMultiIdx+1, len(m.overlayMultiFields), step, m.overlayInput))
 }
 
 // closeOverlay resets all overlay state to inactive.
@@ -235,11 +392,15 @@ func closeOverlay(m tabAppModel) tabAppModel {
 	m.overlayMode = overlayNone
 	m.overlayAction = ""
 	m.overlayInput = ""
+	m.overlayMultiFields = nil
+	m.overlayMultiIdx = 0
+	m.overlayMultiValues = nil
+	m.pendingIssueID = ""
 	return m
 }
 
-// handleOverlayKey routes a key event to the active overlay (confirm or text-entry).
-// It is only called when overlayMode != overlayNone.
+// handleOverlayKey routes a key event to the active overlay (confirm, text-entry,
+// or multi-field sequential form). It is only called when overlayMode != overlayNone.
 func (m tabAppModel) handleOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	s := msg.String()
 	if s == "ctrl+c" {
@@ -261,12 +422,54 @@ func (m tabAppModel) handleOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "esc":
 			m = closeOverlay(m)
 		case "enter":
-			if m.overlayInput == "" && m.overlayAction != actionRecirculate {
-				break // empty input is a no-op (recirculate "" = use current step)
+			// Evidence is optional for resolve/reject; recirculate allows empty
+			// to mean "use current step". All other actions require input.
+			emptyAllowed := m.overlayAction == actionRecirculate ||
+				m.overlayAction == actionResolveIssue ||
+				m.overlayAction == actionRejectIssue
+			if m.overlayInput == "" && !emptyAllowed {
+				break // empty input is a no-op
 			}
-			action, id, input := m.overlayAction, m.selectedID, m.overlayInput
+			action := m.overlayAction
+			id := m.selectedID
+			input := m.overlayInput
+			issueID := m.pendingIssueID
 			m = closeOverlay(m)
+			if action == actionResolveIssue || action == actionRejectIssue {
+				return m, m.execMultiActionCmd(action, []string{issueID, input})
+			}
 			return m, m.execActionCmd(id, action, input)
+		case "backspace":
+			runes := []rune(m.overlayInput)
+			if len(runes) > 0 {
+				m.overlayInput = string(runes[:len(runes)-1])
+			}
+		default:
+			if msg.Type == tea.KeyRunes {
+				m.overlayInput += s
+			}
+		}
+	case overlayMulti:
+		switch s {
+		case "esc":
+			m = closeOverlay(m)
+		case "enter":
+			// Save the current field value.
+			if m.overlayMultiIdx < len(m.overlayMultiValues) {
+				m.overlayMultiValues[m.overlayMultiIdx] = m.overlayInput
+			}
+			if m.overlayMultiIdx < len(m.overlayMultiFields)-1 {
+				// More fields remain — advance to the next one.
+				m.overlayMultiIdx++
+				m.overlayInput = ""
+			} else {
+				// Last field — collect values and execute.
+				action := m.overlayAction
+				values := make([]string, len(m.overlayMultiValues))
+				copy(values, m.overlayMultiValues)
+				m = closeOverlay(m)
+				return m, m.execMultiActionCmd(action, values)
+			}
 		case "backspace":
 			runes := []rune(m.overlayInput)
 			if len(runes) > 0 {
@@ -295,6 +498,8 @@ func (m tabAppModel) openDetail(dropletID string) (tabAppModel, tea.Cmd) {
 	m.tab = tabDetail
 	m.detailDroplet = m.findDroplet(dropletID)
 	m.detailNotes = nil
+	m.detailIssues = nil
+	m.detailIssueCursor = -1
 	m.detailScrollY = 0
 	m.detailErr = nil
 	m.detailSteps = m.findStepsForDroplet(dropletID)
@@ -387,7 +592,14 @@ func (m tabAppModel) detailLineCount() int {
 	if len(m.detailSteps) > 0 {
 		n++ // pipeline position indicator
 	}
-	n++ // separator
+	n++ // separator before issues
+	n++ // "ISSUES (count)" heading
+	if len(m.detailIssues) == 0 {
+		n++ // "(no issues)"
+	} else {
+		n += len(m.detailIssues) // one line per issue
+	}
+	n++ // separator before notes
 	n++ // "NOTES (count)" heading
 
 	if m.detailErr != nil {
@@ -417,7 +629,9 @@ func (m tabAppModel) detailLineCount() int {
 // from the Detail panel while an async action is in-flight.
 func (m tabAppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if ar, ok := msg.(tuiActionResultMsg); ok {
-		if ar.dropletID != m.selectedID {
+		// dropletID=="" means a global action (e.g. create droplet) — always
+		// handle. A non-empty ID that differs from selectedID is a stale result.
+		if ar.dropletID != "" && ar.dropletID != m.selectedID {
 			return m, nil
 		}
 		if ar.err != nil {
@@ -425,9 +639,19 @@ func (m tabAppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.overlayErr = ""
 		}
-		return m, tea.Batch(m.fetchDataCmd(), m.fetchDetailCmd(m.selectedID))
+		if m.selectedID != "" {
+			return m, tea.Batch(m.fetchDataCmd(), m.fetchDetailCmd(m.selectedID))
+		}
+		return m, m.fetchDataCmd()
 	}
 	if pm, ok := msg.(tuiPaletteActionMsg); ok {
+		// actionCreateDroplet requires no selected droplet — handle before the
+		// findDroplet guard.
+		if pm.action == actionCreateDroplet {
+			m.tab = tabDroplets
+			m = openCreateDropletOverlay(m)
+			return m, nil
+		}
 		if m.findDroplet(pm.dropletID) == nil {
 			return m, nil // droplet not in data — no-op
 		}
@@ -437,8 +661,13 @@ func (m tabAppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch pm.action {
 			case actionCancel, actionPool, actionPass, actionClose, actionReopen, actionApprove:
 				updated.overlayMode = overlayConfirm
-			case actionRestart, actionAddNote, actionSetStep, actionRecirculate:
+			case actionRestart, actionAddNote, actionSetStep, actionRecirculate,
+				actionAddDep, actionRemoveDep, actionFileIssue:
 				updated.overlayMode = overlayText
+			case actionEditMeta:
+				updated = openMultiOverlay(updated, []string{"title", "priority (1-5)", "complexity (1-3)", "description"})
+			case actionResolveIssue, actionRejectIssue:
+				updated = openMultiOverlay(updated, []string{"issue ID", "evidence"})
 			}
 		}
 		return updated, cmd
@@ -472,6 +701,13 @@ func (m tabAppModel) updateDroplets(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.fetchDataCmd()
 
 	case tea.KeyMsg:
+		// When an overlay is active on the Droplets tab (e.g. create form), route
+		// all key events to the overlay handler so the form captures input.
+		if m.overlayMode != overlayNone {
+			return m.handleOverlayKey(msg)
+		}
+		// Clear any prior action error on the next keypress.
+		m.overlayErr = ""
 		items := m.visibleItems()
 		switch msg.String() {
 		case "q", "Q", "ctrl+c":
@@ -488,6 +724,9 @@ func (m tabAppModel) updateDroplets(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(items) > 0 && m.cursor < len(items) {
 				return m.openDetail(items[m.cursor].ID)
 			}
+		case "N":
+			// Open multi-field creation form for a new droplet.
+			m = openCreateDropletOverlay(m)
 		}
 		m.dropletsScrollTop = m.clampedDropletsScrollTop()
 	}
@@ -536,6 +775,11 @@ func (m tabAppModel) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 					notes[i], notes[j] = notes[j], notes[i]
 				}
 				m.detailNotes = notes
+				m.detailIssues = msg.issues
+				// Clamp issue cursor in case the issue list shrunk.
+				if m.detailIssueCursor >= len(m.detailIssues) {
+					m.detailIssueCursor = len(m.detailIssues) - 1
+				}
 			}
 		}
 
@@ -611,6 +855,27 @@ func (m tabAppModel) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.detailDroplet != nil {
 				m.overlayMode = overlayText
 				m.overlayAction = actionSetStep
+			}
+		case "]":
+			// Advance issue cursor forward (initialises to 0 if unset).
+			if m.detailIssueCursor < len(m.detailIssues)-1 {
+				m.detailIssueCursor++
+			}
+		case "[":
+			// Move issue cursor backward.
+			if m.detailIssueCursor > 0 {
+				m.detailIssueCursor--
+			}
+		case "v", "u":
+			// v resolves the selected issue; u rejects it — both prompt for evidence.
+			if m.detailDroplet != nil && m.detailIssueCursor >= 0 && m.detailIssueCursor < len(m.detailIssues) {
+				m.pendingIssueID = m.detailIssues[m.detailIssueCursor].ID
+				m.overlayMode = overlayText
+				if msg.String() == "v" {
+					m.overlayAction = actionResolveIssue
+				} else {
+					m.overlayAction = actionRejectIssue
+				}
 			}
 		}
 		// Clamp to valid range after every scroll operation.
@@ -746,7 +1011,15 @@ func (m tabAppModel) viewDroplets() string {
 	}
 
 	parts = append(parts, sep)
-	footer := tuiStyleFooter.Render("  ↑↓/jk navigate  enter/d detail  q quit")
+
+	var footer string
+	if m.overlayMode == overlayMulti {
+		footer = m.overlayMultiFooter()
+	} else if m.overlayErr != "" {
+		footer = tuiStyleRed.Render("  error: " + m.overlayErr)
+	} else {
+		footer = tuiStyleFooter.Render("  ↑↓/jk navigate  enter/d detail  N new  q quit")
+	}
 
 	// Apply viewport with scroll offset so the cursor is always visible.
 	lines := strings.Split(strings.Join(parts, "\n"), "\n")
@@ -811,15 +1084,27 @@ func (m tabAppModel) viewDetail() string {
 			prompt = "set step"
 		case actionRecirculate:
 			prompt = "recirculate to step"
+		case actionAddDep:
+			prompt = "add dependency (droplet ID)"
+		case actionRemoveDep:
+			prompt = "remove dependency (droplet ID)"
+		case actionFileIssue:
+			prompt = "file issue (description)"
+		case actionResolveIssue:
+			prompt = "resolve evidence"
+		case actionRejectIssue:
+			prompt = "reject evidence"
 		default:
 			prompt = m.overlayAction
 		}
 		footer = tuiStyleYellow.Render(fmt.Sprintf("  %s: %s_  (esc cancel)", prompt, m.overlayInput))
+	case overlayMulti:
+		footer = m.overlayMultiFooter()
 	default:
 		if m.overlayErr != "" {
 			footer = tuiStyleRed.Render("  error: " + m.overlayErr)
 		} else {
-			footer = tuiStyleFooter.Render("  esc back  ↑↓/jk scroll  g/G top/bottom  p peek  r restart  x cancel  e pool  n note  s step")
+			footer = tuiStyleFooter.Render("  esc back  ↑↓/jk scroll  g/G top/bottom  p peek  r restart  x cancel  e pool  n note  s step  [/] issue  v resolve  u reject")
 		}
 	}
 
@@ -863,6 +1148,40 @@ func (m tabAppModel) viewDetail() string {
 			avail = 40
 		}
 		parts = append(parts, "  "+pipelineLabel(ch, avail, tuiStyleGreen, tuiStyleDim))
+	}
+	parts = append(parts, sep)
+
+	// Issues sub-section. Each issue is shown on one line with a cursor indicator.
+	// Use ] / [ to navigate; v/u to resolve or reject the selected issue.
+	issueCount := len(m.detailIssues)
+	parts = append(parts, tuiStyleHeader.Render(fmt.Sprintf("  ISSUES  (%d)", issueCount)))
+	if issueCount == 0 {
+		parts = append(parts, tuiStyleDim.Render("  (no issues)"))
+	} else {
+		const issueDescMax = 50
+		for i, iss := range m.detailIssues {
+			ts := iss.FlaggedAt.Local().Format("2006-01-02")
+			desc := iss.Description
+			if len([]rune(desc)) > issueDescMax {
+				desc = string([]rune(desc)[:issueDescMax-1]) + "…"
+			}
+			var statusRendered string
+			switch iss.Status {
+			case "open":
+				statusRendered = tuiStyleYellow.Render(iss.Status)
+			case "resolved":
+				statusRendered = tuiStyleGreen.Render(iss.Status)
+			default:
+				statusRendered = tuiStyleDim.Render(iss.Status)
+			}
+			cursor := "  "
+			if i == m.detailIssueCursor {
+				cursor = tuiStyleGreen.Render("▶ ")
+			}
+			line := fmt.Sprintf("%s%-8s  %s  %s  %s",
+				cursor, statusRendered, ts, iss.ID, desc)
+			parts = append(parts, line)
+		}
 	}
 	parts = append(parts, sep)
 

@@ -329,6 +329,11 @@ The Droplets module provides three views within the active pane:
 - **Meta**: Repo name, status (colored: green=in_progress, yellow=open, red=pooled), current pipeline step
 - **Pipeline**: Visual indicator of your workflow steps with current step highlighted
   - Example: `implement → **review** → qa → delivery`
+- **Issues Section** (collapsible): Inline list of issues filed by cataractae during pipeline execution
+  - Shows issue description, filing cataractae, and status (open/resolved)
+  - Navigate with `[`/`]` or bracket keys to move cursor between issues
+  - Press `v` to resolve the selected issue (opens overlay for evidence), `u` to reject
+  - Issues marked as resolved appear with strikethrough text
 - **Notes Timeline**: Chronological list of all cataractae notes with timestamps and author attribution
   - Timestamps in local time
   - Multi-line note content with continuation line indentation
@@ -348,13 +353,21 @@ The Droplets module provides three views within the active pane:
 - `n` — **Add Note** — Append a manual note to the droplet; enter text and press Enter
 - `s` — **Set Step** — Jump to a different pipeline step; enter step name and press Enter
 
+**Structural Actions** (accessible via command palette or keyboard)
+- `N` — **Create Droplet** — File a new droplet with sequential form: repo, title, description, complexity
+- **Edit Metadata** — Update droplet metadata via sequential form: title, priority, complexity, description (via command palette: `:` then type `editmeta`)
+- **Add/Remove Dependencies** — Add or remove droplet dependencies (via command palette: `:` then type `adddep` or `removedep`)
+- **File Issue** — File a new issue on the droplet (via command palette: `:` then type `fileissue`)
+- **Resolve/Reject Issue** — Resolve or reject a selected issue from the issue list (keyboard: `v` to resolve, `u` to reject; via command palette: `:` then type `resolveissue` or `rejectissue`)
+
 **Command Palette** (while in a panel, `:` opens a searchable overlay)
 - Press `:` to open the command palette — a searchable list of all actions available for the currently selected droplet
 - Type to filter actions by name (substring match, case-insensitive)
 - Navigate with `↑↓` or `jk`, execute the highlighted action with `enter`, dismiss with `esc`
 - **Actions available in Droplets module** (vary by droplet status):
-  - For **active droplets** (non-terminal): `pass`, `recirculate`, `close`, `cancel`, `pool`, `restart`, `add note`, and `approve` (only when droplet is human-gated)
-  - For **terminal droplets** (delivered or cancelled): `reopen`
+  - **Workflow actions** (active droplets): `pass`, `recirculate`, `close`, `cancel`, `pool`, `restart`, `add note`, `approve` (only when human-gated)
+  - **Terminal droplets**: `reopen`
+  - **Structural actions** (all droplets): `create` (new droplet), `editmeta` (edit title/priority/complexity/description), `adddep` (add dependency), `removedep` (remove dependency), `fileissue` (file issue), `resolveissue` (resolve selected issue), `rejectissue` (reject selected issue)
 - Particularly useful when you want to find a specific action without memorizing single-key bindings
 
 All actions execute immediately through the cistern database. After any action completes, the detail view re-fetches and displays updated state.
@@ -394,6 +407,7 @@ The module shows the last-run timestamp and supports the following controls:
 - `↑↓` or `j/k` — **Scroll** — Navigate through the output
 - `g` — **Go to top** — Jump to the beginning
 - `G` — **Go to bottom** — Jump to the end
+
 **Repos & Skills Module** (key: 7)
 
 The Repos & Skills module displays registered repositories and installed skills in a read-only view:

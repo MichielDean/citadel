@@ -575,8 +575,10 @@ func TestTabApp_Detail_WindowResize_UpdatesDimensions(t *testing.T) {
 // ── Issue 1: detailScrollY clamping ─────────────────────────────────────────
 
 // helper: build a model with N single-line notes so content overflows the viewport.
-// height=10, viewH=9. Content (no steps): 1+1+1+1 + (2N-1) = 4+2N-1 = 2N+3 lines.
-// With N=5: 13 lines, maxScroll=4.
+// height=10, viewH=9. Content (no steps, no issues):
+//   header + meta + sep + ISSUES heading + "(no issues)" + sep + NOTES heading = 7 fixed lines
+//   + (2N-1) note lines  →  2N+6 total.
+//   With N=5: 16 lines, maxScroll = 16-9 = 7.
 func detailModelWithNotes(n int) tabAppModel {
 	m := newTabAppModel("", "")
 	m.data = &DashboardData{}
@@ -599,19 +601,19 @@ func detailModelWithNotes(n int) tabAppModel {
 // TestTabApp_Detail_ScrollDown_ClampsAtMaxScroll verifies that pressing 'j'
 // many times does not push detailScrollY past the maximum scrollable offset.
 //
-// Given: detail tab with 5 notes, height=10 (maxScroll=4)
+// Given: detail tab with 5 notes, height=10 (maxScroll=7)
 // When:  'j' is pressed 20 times
-// Then:  detailScrollY <= 4
+// Then:  detailScrollY <= 7
 func TestTabApp_Detail_ScrollDown_ClampsAtMaxScroll(t *testing.T) {
 	m := detailModelWithNotes(5)
-	// maxScroll = 2*5+3 - 9 = 13-9 = 4
+	// maxScroll = 2*5+6 - 9 = 16-9 = 7
 
 	for i := 0; i < 20; i++ {
 		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
 		m = updated.(tabAppModel)
 	}
 
-	const wantMax = 4
+	const wantMax = 7
 	if m.detailScrollY > wantMax {
 		t.Errorf("detailScrollY = %d, want <= %d (should be clamped at maxScroll)", m.detailScrollY, wantMax)
 	}
@@ -620,16 +622,16 @@ func TestTabApp_Detail_ScrollDown_ClampsAtMaxScroll(t *testing.T) {
 // TestTabApp_Detail_EndKey_ClampsToMaxScroll verifies that pressing 'G' sets
 // detailScrollY to the maximum scrollable offset, not an arbitrary large value.
 //
-// Given: detail tab with 5 notes, height=10 (maxScroll=4)
+// Given: detail tab with 5 notes, height=10 (maxScroll=7)
 // When:  'G' is pressed
-// Then:  detailScrollY == 4
+// Then:  detailScrollY == 7
 func TestTabApp_Detail_EndKey_ClampsToMaxScroll(t *testing.T) {
 	m := detailModelWithNotes(5)
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'G'}})
 	um := updated.(tabAppModel)
 
-	const wantMax = 4
+	const wantMax = 7
 	if um.detailScrollY != wantMax {
 		t.Errorf("detailScrollY = %d after 'G', want %d (maxScroll)", um.detailScrollY, wantMax)
 	}
@@ -663,16 +665,16 @@ func TestTabApp_Detail_ScrollUp_AfterEndKey_Decrements(t *testing.T) {
 // TestTabApp_Detail_PgDown_ClampsAtMaxScroll verifies that pgdown does not
 // push detailScrollY past the maximum scrollable offset.
 //
-// Given: detail tab with 5 notes, height=10 (maxScroll=4)
+// Given: detail tab with 5 notes, height=10 (maxScroll=7)
 // When:  pgdown is pressed
-// Then:  detailScrollY <= 4
+// Then:  detailScrollY <= 7
 func TestTabApp_Detail_PgDown_ClampsAtMaxScroll(t *testing.T) {
 	m := detailModelWithNotes(5)
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyPgDown})
 	um := updated.(tabAppModel)
 
-	const wantMax = 4
+	const wantMax = 7
 	if um.detailScrollY > wantMax {
 		t.Errorf("detailScrollY = %d after pgdown, want <= %d", um.detailScrollY, wantMax)
 	}
@@ -1302,6 +1304,24 @@ func TestTabApp_Droplets_ActionResult_StaleID_IsIgnored(t *testing.T) {
 	}
 	if cmd != nil {
 		t.Error("expected nil cmd for stale action result on droplets tab, got non-nil")
+	}
+}
+
+// TestTabApp_ActionResult_GlobalAction_EmptyDropletID_WithSelectedDroplet_TriggersRefetch
+// verifies that a global action result (dropletID="") is never discarded even
+// when the user has navigated to a different droplet while the action was in-flight.
+//
+// Given: a model with selectedID="ci-aaa"
+// When:  tuiActionResultMsg{dropletID:"", err:nil} arrives (global action, e.g. create droplet)
+// Then:  cmd is non-nil (refetch triggered — result was not discarded)
+func TestTabApp_ActionResult_GlobalAction_EmptyDropletID_WithSelectedDroplet_TriggersRefetch(t *testing.T) {
+	m := newTabAppModel("", "")
+	m.selectedID = "ci-aaa"
+
+	_, cmd := m.Update(tuiActionResultMsg{dropletID: "", err: nil})
+
+	if cmd == nil {
+		t.Error("expected non-nil cmd for global action result (empty dropletID) — result should not be discarded")
 	}
 }
 
@@ -2661,5 +2681,979 @@ func TestExecActionCmd_Approve_WhenNotHumanGated_ReturnsError(t *testing.T) {
 	}
 	if d.CurrentCataractae != "implement" {
 		t.Errorf("CurrentCataractae = %q, want %q (non-human droplet must not be moved to delivery)", d.CurrentCataractae, "implement")
+	}
+}
+
+// ── Structural actions: multi-field overlay ───────────────────────────────────
+
+// TestTabApp_Droplets_N_Key_OpensMultiOverlay_ForCreate verifies that pressing
+// 'N' (shift-n) in the Droplets tab activates the multi-field overlay for the
+// new-droplet creation form.
+//
+// Given: a model in Droplets tab with data loaded
+// When:  'N' is pressed
+// Then:  overlayMode=overlayMulti, overlayAction=actionCreateDroplet, overlayMultiIdx=0
+func TestTabApp_Droplets_N_Key_OpensMultiOverlay_ForCreate(t *testing.T) {
+	m := newTabAppModel("", "")
+	m.data = &DashboardData{}
+	m.width = 120
+	m.height = 30
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'N'}})
+	um := updated.(tabAppModel)
+
+	if um.overlayMode != overlayMulti {
+		t.Errorf("overlayMode = %d, want overlayMulti (%d)", um.overlayMode, overlayMulti)
+	}
+	if um.overlayAction != actionCreateDroplet {
+		t.Errorf("overlayAction = %q, want %q", um.overlayAction, actionCreateDroplet)
+	}
+	if um.overlayMultiIdx != 0 {
+		t.Errorf("overlayMultiIdx = %d, want 0", um.overlayMultiIdx)
+	}
+	if len(um.overlayMultiFields) == 0 {
+		t.Error("overlayMultiFields should be non-empty after opening create form")
+	}
+}
+
+// TestTabApp_MultiOverlay_TypeChar_AppendsToInput verifies that pressing a
+// printable key while overlayMulti is active appends to overlayInput.
+//
+// Given: a model with overlayMulti active and overlayInput=""
+// When:  'a', 'b', 'c' are pressed
+// Then:  overlayInput becomes "abc"
+func TestTabApp_MultiOverlay_TypeChar_AppendsToInput(t *testing.T) {
+	m := detailModelWithDroplet()
+	m.overlayMode = overlayMulti
+	m.overlayAction = actionEditMeta
+	m.overlayMultiFields = []string{"title", "priority (1-5)", "complexity (1-3)", "description"}
+	m.overlayMultiIdx = 0
+	m.overlayMultiValues = make([]string, 4)
+	m.overlayInput = ""
+
+	for _, ch := range []rune{'a', 'b', 'c'} {
+		raw, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{ch}})
+		m = raw.(tabAppModel)
+	}
+
+	if m.overlayInput != "abc" {
+		t.Errorf("overlayInput = %q, want %q", m.overlayInput, "abc")
+	}
+	if m.overlayMode != overlayMulti {
+		t.Errorf("overlayMode = %d, want overlayMulti (%d) — should stay open during typing", m.overlayMode, overlayMulti)
+	}
+}
+
+// TestTabApp_MultiOverlay_Backspace_RemovesLastChar verifies that pressing
+// backspace in the multi-field overlay removes the last rune.
+//
+// Given: a model with overlayMulti active and overlayInput="hello"
+// When:  backspace is pressed
+// Then:  overlayInput becomes "hell"
+func TestTabApp_MultiOverlay_Backspace_RemovesLastChar(t *testing.T) {
+	m := detailModelWithDroplet()
+	m.overlayMode = overlayMulti
+	m.overlayAction = actionEditMeta
+	m.overlayMultiFields = []string{"title", "priority"}
+	m.overlayMultiIdx = 0
+	m.overlayMultiValues = make([]string, 2)
+	m.overlayInput = "hello"
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	um := updated.(tabAppModel)
+
+	if um.overlayInput != "hell" {
+		t.Errorf("overlayInput = %q, want %q after backspace", um.overlayInput, "hell")
+	}
+}
+
+// TestTabApp_MultiOverlay_Enter_AdvancesToNextField verifies that pressing
+// Enter on a non-last field saves the value and advances to the next field.
+//
+// Given: a model with overlayMulti active on field 0 of 2, overlayInput="myrepo"
+// When:  enter is pressed
+// Then:  overlayMultiIdx becomes 1, overlayInput is cleared, overlayMultiValues[0]="myrepo"
+func TestTabApp_MultiOverlay_Enter_AdvancesToNextField(t *testing.T) {
+	m := newTabAppModel("", "")
+	m.data = &DashboardData{}
+	m.tab = tabDroplets
+	m.width = 120
+	m.height = 30
+	m.overlayMode = overlayMulti
+	m.overlayAction = actionCreateDroplet
+	m.overlayMultiFields = []string{"repo", "title", "description", "complexity (1-3)"}
+	m.overlayMultiIdx = 0
+	m.overlayMultiValues = make([]string, 4)
+	m.overlayInput = "myrepo"
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	um := updated.(tabAppModel)
+
+	if um.overlayMultiIdx != 1 {
+		t.Errorf("overlayMultiIdx = %d, want 1 after enter on field 0", um.overlayMultiIdx)
+	}
+	if um.overlayInput != "" {
+		t.Errorf("overlayInput = %q, want empty after advancing to next field", um.overlayInput)
+	}
+	if um.overlayMultiValues[0] != "myrepo" {
+		t.Errorf("overlayMultiValues[0] = %q, want %q", um.overlayMultiValues[0], "myrepo")
+	}
+	if um.overlayMode != overlayMulti {
+		t.Errorf("overlayMode = %d, want overlayMulti (%d) — form should remain open", um.overlayMode, overlayMulti)
+	}
+}
+
+// TestTabApp_MultiOverlay_Enter_OnLastField_ClosesAndDispatches verifies that
+// pressing Enter on the last field closes the overlay and returns a non-nil cmd.
+//
+// Given: a model with overlayMulti on the last field, overlayInput="2"
+// When:  enter is pressed
+// Then:  overlayMode=overlayNone, cmd != nil
+func TestTabApp_MultiOverlay_Enter_OnLastField_ClosesAndDispatches(t *testing.T) {
+	m := newTabAppModel("", "")
+	m.data = &DashboardData{}
+	m.tab = tabDroplets
+	m.width = 120
+	m.height = 30
+	m.overlayMode = overlayMulti
+	m.overlayAction = actionCreateDroplet
+	m.overlayMultiFields = []string{"repo", "title", "description", "complexity (1-3)"}
+	m.overlayMultiIdx = 3 // last field
+	m.overlayMultiValues = []string{"myrepo", "mytitle", "desc", ""}
+	m.overlayInput = "2"
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	um := updated.(tabAppModel)
+
+	if um.overlayMode != overlayNone {
+		t.Errorf("overlayMode = %d, want overlayNone (%d) after completing last field", um.overlayMode, overlayNone)
+	}
+	if cmd == nil {
+		t.Error("expected non-nil cmd after completing last field, got nil")
+	}
+}
+
+// TestTabApp_MultiOverlay_Esc_DismissesOverlay verifies that pressing esc in
+// the multi-field overlay closes it without executing any action.
+//
+// Given: a model with overlayMulti active on field 1 with overlayInput="foo"
+// When:  esc is pressed
+// Then:  overlayMode=overlayNone, overlayInput=""
+func TestTabApp_MultiOverlay_Esc_DismissesOverlay(t *testing.T) {
+	m := detailModelWithDroplet()
+	m.overlayMode = overlayMulti
+	m.overlayAction = actionEditMeta
+	m.overlayMultiFields = []string{"title", "priority"}
+	m.overlayMultiIdx = 1
+	m.overlayMultiValues = []string{"saved-title", ""}
+	m.overlayInput = "foo"
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	um := updated.(tabAppModel)
+
+	if um.overlayMode != overlayNone {
+		t.Errorf("overlayMode = %d, want overlayNone (%d) after esc", um.overlayMode, overlayNone)
+	}
+	if um.overlayInput != "" {
+		t.Errorf("overlayInput = %q, want empty after esc", um.overlayInput)
+	}
+	if cmd != nil {
+		t.Error("expected nil cmd after esc dismissal, got non-nil")
+	}
+}
+
+// ── Detail panel: issue list and cursor ──────────────────────────────────────
+
+// TestTabApp_DetailDataMsg_WithIssues_PopulatesDetailIssues verifies that a
+// tuiDetailDataMsg carrying issues populates detailIssues on the model.
+//
+// Given: a model in Detail tab with selectedID="ci-aaa"
+// When:  tuiDetailDataMsg arrives with one issue
+// Then:  detailIssues has length 1
+func TestTabApp_DetailDataMsg_WithIssues_PopulatesDetailIssues(t *testing.T) {
+	m := detailModelWithDroplet()
+
+	updated, _ := m.Update(tuiDetailDataMsg{
+		dropletID: "ci-aaa",
+		issues: []cistern.DropletIssue{
+			{ID: "ci-aaa-xxxxx", DropletID: "ci-aaa", Description: "test issue", Status: "open"},
+		},
+	})
+	um := updated.(tabAppModel)
+
+	if len(um.detailIssues) != 1 {
+		t.Errorf("detailIssues len = %d, want 1", len(um.detailIssues))
+	}
+}
+
+// TestTabApp_Detail_BracketRight_MoveIssueCursorForward verifies that pressing
+// ']' advances the issue cursor to the next issue.
+//
+// Given: a model with detailIssues=[2 issues] and detailIssueCursor=0
+// When:  ']' is pressed
+// Then:  detailIssueCursor becomes 1
+func TestTabApp_Detail_BracketRight_MoveIssueCursorForward(t *testing.T) {
+	m := detailModelWithDroplet()
+	m.detailIssues = []cistern.DropletIssue{
+		{ID: "ci-aaa-xxxxx", Status: "open"},
+		{ID: "ci-aaa-yyyyy", Status: "open"},
+	}
+	m.detailIssueCursor = 0
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{']'}})
+	um := updated.(tabAppModel)
+
+	if um.detailIssueCursor != 1 {
+		t.Errorf("detailIssueCursor = %d, want 1 after ']'", um.detailIssueCursor)
+	}
+}
+
+// TestTabApp_Detail_BracketLeft_MoveIssueCursorBackward verifies that pressing
+// '[' moves the issue cursor to the previous issue.
+//
+// Given: a model with detailIssues=[2 issues] and detailIssueCursor=1
+// When:  '[' is pressed
+// Then:  detailIssueCursor becomes 0
+func TestTabApp_Detail_BracketLeft_MoveIssueCursorBackward(t *testing.T) {
+	m := detailModelWithDroplet()
+	m.detailIssues = []cistern.DropletIssue{
+		{ID: "ci-aaa-xxxxx", Status: "open"},
+		{ID: "ci-aaa-yyyyy", Status: "open"},
+	}
+	m.detailIssueCursor = 1
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}})
+	um := updated.(tabAppModel)
+
+	if um.detailIssueCursor != 0 {
+		t.Errorf("detailIssueCursor = %d, want 0 after '['", um.detailIssueCursor)
+	}
+}
+
+// TestTabApp_Detail_BracketRight_AtLastItem_Stays verifies that pressing ']'
+// at the last issue does not advance the cursor past the end.
+//
+// Given: a model with detailIssues=[2 issues] and detailIssueCursor=1 (last item)
+// When:  ']' is pressed
+// Then:  detailIssueCursor stays at 1
+func TestTabApp_Detail_BracketRight_AtLastItem_Stays(t *testing.T) {
+	m := detailModelWithDroplet()
+	m.detailIssues = []cistern.DropletIssue{
+		{ID: "ci-aaa-xxxxx", Status: "open"},
+		{ID: "ci-aaa-yyyyy", Status: "open"},
+	}
+	m.detailIssueCursor = 1
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{']'}})
+	um := updated.(tabAppModel)
+
+	if um.detailIssueCursor != 1 {
+		t.Errorf("detailIssueCursor = %d, want 1 (should not advance past last item)", um.detailIssueCursor)
+	}
+}
+
+// TestTabApp_Detail_BracketLeft_AtZero_Stays verifies that pressing '[' at the
+// first issue does not move the cursor to a negative index.
+//
+// Given: a model with detailIssues=[2 issues] and detailIssueCursor=0
+// When:  '[' is pressed
+// Then:  detailIssueCursor stays at 0
+func TestTabApp_Detail_BracketLeft_AtZero_Stays(t *testing.T) {
+	m := detailModelWithDroplet()
+	m.detailIssues = []cistern.DropletIssue{
+		{ID: "ci-aaa-xxxxx", Status: "open"},
+		{ID: "ci-aaa-yyyyy", Status: "open"},
+	}
+	m.detailIssueCursor = 0
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}})
+	um := updated.(tabAppModel)
+
+	if um.detailIssueCursor != 0 {
+		t.Errorf("detailIssueCursor = %d, want 0 (should not go below 0)", um.detailIssueCursor)
+	}
+}
+
+// TestTabApp_Detail_BracketRight_AtNoCursor_MovesToFirst verifies that pressing
+// ']' when detailIssueCursor=-1 (no selection) selects the first issue.
+//
+// Given: a model with detailIssues=[1 issue] and detailIssueCursor=-1
+// When:  ']' is pressed
+// Then:  detailIssueCursor becomes 0
+func TestTabApp_Detail_BracketRight_AtNoCursor_MovesToFirst(t *testing.T) {
+	m := detailModelWithDroplet()
+	m.detailIssues = []cistern.DropletIssue{
+		{ID: "ci-aaa-xxxxx", Status: "open"},
+	}
+	m.detailIssueCursor = -1
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{']'}})
+	um := updated.(tabAppModel)
+
+	if um.detailIssueCursor != 0 {
+		t.Errorf("detailIssueCursor = %d, want 0 after ']' from no-selection", um.detailIssueCursor)
+	}
+}
+
+// ── Detail panel: resolve/reject issue via inline cursor ─────────────────────
+
+// TestTabApp_Detail_V_Key_OpensTextOverlay_ForResolve verifies that pressing 'v'
+// when an issue is selected activates overlayText for the resolve action.
+//
+// Given: a model with detailIssues=[1 issue], detailIssueCursor=0
+// When:  'v' is pressed
+// Then:  overlayMode=overlayText, overlayAction=actionResolveIssue, pendingIssueID set
+func TestTabApp_Detail_V_Key_OpensTextOverlay_ForResolve(t *testing.T) {
+	m := detailModelWithDroplet()
+	m.detailIssues = []cistern.DropletIssue{
+		{ID: "ci-aaa-xxxxx", Status: "open"},
+	}
+	m.detailIssueCursor = 0
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
+	um := updated.(tabAppModel)
+
+	if um.overlayMode != overlayText {
+		t.Errorf("overlayMode = %d, want overlayText (%d)", um.overlayMode, overlayText)
+	}
+	if um.overlayAction != actionResolveIssue {
+		t.Errorf("overlayAction = %q, want %q", um.overlayAction, actionResolveIssue)
+	}
+	if um.pendingIssueID != "ci-aaa-xxxxx" {
+		t.Errorf("pendingIssueID = %q, want %q", um.pendingIssueID, "ci-aaa-xxxxx")
+	}
+}
+
+// TestTabApp_Detail_V_Key_NoIssueSelected_IsNoOp verifies that pressing 'v'
+// when no issue is selected (cursor=-1) does not open an overlay.
+//
+// Given: a model with detailIssues=[1 issue], detailIssueCursor=-1
+// When:  'v' is pressed
+// Then:  overlayMode remains overlayNone
+func TestTabApp_Detail_V_Key_NoIssueSelected_IsNoOp(t *testing.T) {
+	m := detailModelWithDroplet()
+	m.detailIssues = []cistern.DropletIssue{
+		{ID: "ci-aaa-xxxxx", Status: "open"},
+	}
+	m.detailIssueCursor = -1
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
+	um := updated.(tabAppModel)
+
+	if um.overlayMode != overlayNone {
+		t.Errorf("overlayMode = %d, want overlayNone (%d) — no issue selected", um.overlayMode, overlayNone)
+	}
+}
+
+// TestTabApp_Detail_U_Key_OpensTextOverlay_ForReject verifies that pressing 'u'
+// when an issue is selected activates overlayText for the reject action.
+//
+// Given: a model with detailIssues=[1 issue], detailIssueCursor=0
+// When:  'u' is pressed
+// Then:  overlayMode=overlayText, overlayAction=actionRejectIssue
+func TestTabApp_Detail_U_Key_OpensTextOverlay_ForReject(t *testing.T) {
+	m := detailModelWithDroplet()
+	m.detailIssues = []cistern.DropletIssue{
+		{ID: "ci-aaa-xxxxx", Status: "open"},
+	}
+	m.detailIssueCursor = 0
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
+	um := updated.(tabAppModel)
+
+	if um.overlayMode != overlayText {
+		t.Errorf("overlayMode = %d, want overlayText (%d)", um.overlayMode, overlayText)
+	}
+	if um.overlayAction != actionRejectIssue {
+		t.Errorf("overlayAction = %q, want %q", um.overlayAction, actionRejectIssue)
+	}
+}
+
+// TestTabApp_Detail_V_Key_Enter_EmptyEvidence_DispatchesCmd verifies that
+// pressing enter with empty evidence on a resolve overlay dispatches a cmd
+// (evidence is optional for resolve/reject).
+//
+// Given: a model with overlayText/actionResolveIssue active, overlayInput=""
+// When:  enter is pressed
+// Then:  cmd != nil (not a no-op even with empty input)
+func TestTabApp_Detail_V_Key_Enter_EmptyEvidence_DispatchesCmd(t *testing.T) {
+	m := detailModelWithDroplet()
+	m.overlayMode = overlayText
+	m.overlayAction = actionResolveIssue
+	m.pendingIssueID = "ci-aaa-xxxxx"
+	m.overlayInput = ""
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	um := updated.(tabAppModel)
+
+	if um.overlayMode != overlayNone {
+		t.Errorf("overlayMode = %d, want overlayNone (%d) — should close after enter", um.overlayMode, overlayNone)
+	}
+	if cmd == nil {
+		t.Error("expected non-nil cmd for resolve with empty evidence (evidence is optional), got nil")
+	}
+}
+
+// ── execActionCmd: new structural actions ─────────────────────────────────────
+
+// TestExecActionCmd_AddDependency_AddsDep verifies that execActionCmd with
+// actionAddDep creates a dependency between two droplets.
+//
+// Given: a real cistern DB with two droplets
+// When:  execActionCmd with actionAddDep is executed with the second droplet ID as input
+// Then:  tuiActionResultMsg.err is nil and GetDependencies returns the second droplet
+func TestExecActionCmd_AddDependency_AddsDep(t *testing.T) {
+	dbPath, id := newTestDBWithDroplet(t)
+
+	c, err := cistern.New(dbPath, "ci")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep, err := c.Add("test-repo", "dep droplet", "", 1, 1)
+	c.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m := newTabAppModel("", dbPath)
+	cmd := m.execActionCmd(id, actionAddDep, dep.ID)
+	msg := cmd()
+
+	am, ok := msg.(tuiActionResultMsg)
+	if !ok {
+		t.Fatalf("expected tuiActionResultMsg, got %T", msg)
+	}
+	if am.err != nil {
+		t.Errorf("err = %v, want nil", am.err)
+	}
+
+	c2, err := cistern.New(dbPath, "ci")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c2.Close()
+	deps, err := c2.GetDependencies(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deps) != 1 || deps[0] != dep.ID {
+		t.Errorf("GetDependencies = %v, want [%q]", deps, dep.ID)
+	}
+}
+
+// TestExecActionCmd_RemoveDependency_RemovesDep verifies that execActionCmd with
+// actionRemoveDep removes a previously added dependency.
+//
+// Given: a real cistern DB with a droplet that has one dependency
+// When:  execActionCmd with actionRemoveDep is executed
+// Then:  tuiActionResultMsg.err is nil and GetDependencies returns empty
+func TestExecActionCmd_RemoveDependency_RemovesDep(t *testing.T) {
+	dbPath, id := newTestDBWithDroplet(t)
+
+	c, err := cistern.New(dbPath, "ci")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep, err := c.Add("test-repo", "dep droplet", "", 1, 1)
+	if err != nil {
+		c.Close()
+		t.Fatal(err)
+	}
+	if err := c.AddDependency(id, dep.ID); err != nil {
+		c.Close()
+		t.Fatal(err)
+	}
+	c.Close()
+
+	m := newTabAppModel("", dbPath)
+	cmd := m.execActionCmd(id, actionRemoveDep, dep.ID)
+	msg := cmd()
+
+	am, ok := msg.(tuiActionResultMsg)
+	if !ok {
+		t.Fatalf("expected tuiActionResultMsg, got %T", msg)
+	}
+	if am.err != nil {
+		t.Errorf("err = %v, want nil", am.err)
+	}
+
+	c2, err := cistern.New(dbPath, "ci")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c2.Close()
+	deps, err := c2.GetDependencies(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deps) != 0 {
+		t.Errorf("GetDependencies = %v, want empty after removal", deps)
+	}
+}
+
+// TestExecActionCmd_FileIssue_CreatesIssue verifies that execActionCmd with
+// actionFileIssue creates an open issue on the droplet.
+//
+// Given: a real cistern DB with a droplet
+// When:  execActionCmd with actionFileIssue and a description is executed
+// Then:  tuiActionResultMsg.err is nil and ListIssues returns one open issue
+func TestExecActionCmd_FileIssue_CreatesIssue(t *testing.T) {
+	dbPath, id := newTestDBWithDroplet(t)
+
+	m := newTabAppModel("", dbPath)
+	cmd := m.execActionCmd(id, actionFileIssue, "missing tests")
+	msg := cmd()
+
+	am, ok := msg.(tuiActionResultMsg)
+	if !ok {
+		t.Fatalf("expected tuiActionResultMsg, got %T", msg)
+	}
+	if am.err != nil {
+		t.Errorf("err = %v, want nil", am.err)
+	}
+
+	c, err := cistern.New(dbPath, "ci")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	issues, err := c.ListIssues(id, true, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(issues) != 1 {
+		t.Errorf("ListIssues len = %d, want 1", len(issues))
+	}
+	if issues[0].Description != "missing tests" {
+		t.Errorf("issue description = %q, want %q", issues[0].Description, "missing tests")
+	}
+}
+
+// ── execMultiActionCmd: create droplet ───────────────────────────────────────
+
+// TestExecMultiActionCmd_CreateDroplet_CreatesDroplet verifies that
+// execMultiActionCmd with actionCreateDroplet creates a new droplet in the DB.
+//
+// Given: a real cistern DB
+// When:  execMultiActionCmd with actionCreateDroplet and [repo, title, desc, complexity]
+// Then:  tuiActionResultMsg.err is nil and a droplet with the given title exists
+func TestExecMultiActionCmd_CreateDroplet_CreatesDroplet(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+
+	m := newTabAppModel("", dbPath)
+	cmd := m.execMultiActionCmd(actionCreateDroplet, []string{"test-repo", "my new task", "some description", "2"})
+	msg := cmd()
+
+	am, ok := msg.(tuiActionResultMsg)
+	if !ok {
+		t.Fatalf("expected tuiActionResultMsg, got %T", msg)
+	}
+	if am.err != nil {
+		t.Errorf("err = %v, want nil", am.err)
+	}
+
+	c, err := cistern.New(dbPath, "ci")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	items, err := c.List("test-repo", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("List len = %d, want 1", len(items))
+	}
+	if items[0].Title != "my new task" {
+		t.Errorf("title = %q, want %q", items[0].Title, "my new task")
+	}
+	if items[0].Complexity != 2 {
+		t.Errorf("complexity = %d, want 2", items[0].Complexity)
+	}
+}
+
+// TestExecMultiActionCmd_CreateDroplet_EmptyRepo_ReturnsError verifies that
+// execMultiActionCmd with actionCreateDroplet and an empty repo returns an error.
+//
+// Given: a real cistern DB
+// When:  execMultiActionCmd is invoked with repo=""
+// Then:  tuiActionResultMsg.err is non-nil
+func TestExecMultiActionCmd_CreateDroplet_EmptyRepo_ReturnsError(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+
+	m := newTabAppModel("", dbPath)
+	cmd := m.execMultiActionCmd(actionCreateDroplet, []string{"", "my title", "", "1"})
+	msg := cmd()
+
+	am, ok := msg.(tuiActionResultMsg)
+	if !ok {
+		t.Fatalf("expected tuiActionResultMsg, got %T", msg)
+	}
+	if am.err == nil {
+		t.Error("err = nil, want non-nil when repo is empty")
+	}
+}
+
+// TestExecMultiActionCmd_CreateDroplet_EmptyTitle_ReturnsError verifies that
+// execMultiActionCmd with actionCreateDroplet and an empty title returns an error.
+//
+// Given: a real cistern DB
+// When:  execMultiActionCmd is invoked with title=""
+// Then:  tuiActionResultMsg.err is non-nil
+func TestExecMultiActionCmd_CreateDroplet_EmptyTitle_ReturnsError(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+
+	m := newTabAppModel("", dbPath)
+	cmd := m.execMultiActionCmd(actionCreateDroplet, []string{"myrepo", "", "", "1"})
+	msg := cmd()
+
+	am, ok := msg.(tuiActionResultMsg)
+	if !ok {
+		t.Fatalf("expected tuiActionResultMsg, got %T", msg)
+	}
+	if am.err == nil {
+		t.Error("err = nil, want non-nil when title is empty")
+	}
+}
+
+// TestExecMultiActionCmd_EditMeta_UpdatesTitle verifies that execMultiActionCmd
+// with actionEditMeta updates the droplet title.
+//
+// Given: a real cistern DB with an open droplet
+// When:  execMultiActionCmd is invoked with a new title
+// Then:  tuiActionResultMsg.err is nil and the droplet has the new title
+func TestExecMultiActionCmd_EditMeta_UpdatesTitle(t *testing.T) {
+	dbPath, id := newTestDBWithDroplet(t)
+
+	m := newTabAppModel("", dbPath)
+	m.selectedID = id
+	cmd := m.execMultiActionCmd(actionEditMeta, []string{"updated title", "", "", ""})
+	msg := cmd()
+
+	am, ok := msg.(tuiActionResultMsg)
+	if !ok {
+		t.Fatalf("expected tuiActionResultMsg, got %T", msg)
+	}
+	if am.err != nil {
+		t.Errorf("err = %v, want nil", am.err)
+	}
+
+	c, err := cistern.New(dbPath, "ci")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	d, err := c.Get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Title != "updated title" {
+		t.Errorf("title = %q, want %q", d.Title, "updated title")
+	}
+}
+
+// ── tuiPaletteActionMsg: new structural actions ───────────────────────────────
+
+// TestTabApp_PaletteActionMsg_StructuralActions_OpensDetailAndOverlay verifies
+// that structural palette actions (edit meta, add dep, remove dep, file issue)
+// open the Detail tab with the correct overlay.
+//
+// Given: a tabAppModel with one droplet in CisternItems
+// When:  tuiPaletteActionMsg arrives for each structural action
+// Then:  tab=tabDetail, overlayMode=expected, overlayAction=action
+func TestTabApp_PaletteActionMsg_StructuralActions_OpensDetailAndOverlay(t *testing.T) {
+	tests := []struct {
+		action      string
+		overlayMode int
+	}{
+		{actionAddDep, overlayText},
+		{actionRemoveDep, overlayText},
+		{actionFileIssue, overlayText},
+		{actionEditMeta, overlayMulti},
+		{actionResolveIssue, overlayMulti},
+		{actionRejectIssue, overlayMulti},
+	}
+	for _, tt := range tests {
+		m := newTabAppModel("", "")
+		m.data = &DashboardData{
+			CisternItems: []*cistern.Droplet{
+				{ID: "ci-aaa", Title: "Test", Status: "open"},
+			},
+		}
+		updated, _ := m.Update(tuiPaletteActionMsg{dropletID: "ci-aaa", action: tt.action})
+		um := updated.(tabAppModel)
+		if um.tab != tabDetail {
+			t.Errorf("action %q: tab = %d, want tabDetail (%d)", tt.action, um.tab, tabDetail)
+		}
+		if um.overlayMode != tt.overlayMode {
+			t.Errorf("action %q: overlayMode = %d, want %d", tt.action, um.overlayMode, tt.overlayMode)
+		}
+		if um.overlayAction != tt.action {
+			t.Errorf("action %q: overlayAction = %q, want %q", tt.action, um.overlayAction, tt.action)
+		}
+	}
+}
+
+// TestTabApp_PaletteActionMsg_CreateDroplet_SetsMultiOverlayOnDropletsTab verifies
+// that actionCreateDroplet via palette sets overlayMulti on the Droplets tab
+// without requiring a selected droplet.
+//
+// Given: a tabAppModel with no data
+// When:  tuiPaletteActionMsg{dropletID: "", action: actionCreateDroplet} arrives
+// Then:  tab=tabDroplets, overlayMode=overlayMulti, overlayAction=actionCreateDroplet
+func TestTabApp_PaletteActionMsg_CreateDroplet_SetsMultiOverlayOnDropletsTab(t *testing.T) {
+	m := newTabAppModel("", "")
+	m.data = &DashboardData{}
+
+	updated, _ := m.Update(tuiPaletteActionMsg{dropletID: "", action: actionCreateDroplet})
+	um := updated.(tabAppModel)
+
+	if um.tab != tabDroplets {
+		t.Errorf("tab = %d, want tabDroplets (%d)", um.tab, tabDroplets)
+	}
+	if um.overlayMode != overlayMulti {
+		t.Errorf("overlayMode = %d, want overlayMulti (%d)", um.overlayMode, overlayMulti)
+	}
+	if um.overlayAction != actionCreateDroplet {
+		t.Errorf("overlayAction = %q, want %q", um.overlayAction, actionCreateDroplet)
+	}
+	if len(um.overlayMultiFields) == 0 {
+		t.Error("overlayMultiFields should be non-empty for create form")
+	}
+}
+
+// TestTabApp_MultiOverlay_EditMeta_MultiFields verifies that editMeta multi-field
+// overlay has the expected number of fields (title, priority, complexity, description).
+//
+// Given: a tuiPaletteActionMsg for actionEditMeta on an existing droplet
+// When:  the message is handled
+// Then:  overlayMultiFields has 4 fields
+func TestTabApp_MultiOverlay_EditMeta_MultiFields(t *testing.T) {
+	m := newTabAppModel("", "")
+	m.data = &DashboardData{
+		CisternItems: []*cistern.Droplet{
+			{ID: "ci-aaa", Title: "Test", Status: "open"},
+		},
+	}
+
+	updated, _ := m.Update(tuiPaletteActionMsg{dropletID: "ci-aaa", action: actionEditMeta})
+	um := updated.(tabAppModel)
+
+	if len(um.overlayMultiFields) != 4 {
+		t.Errorf("overlayMultiFields len = %d, want 4 for editMeta", len(um.overlayMultiFields))
+	}
+}
+
+// TestTabApp_Detail_V_Key_TextOverlay_WithEvidence_DispatchesIssueCmd verifies
+// that entering evidence text and pressing enter dispatches a non-nil cmd.
+//
+// Given: a model with overlayText/actionResolveIssue active and some evidence text
+// When:  enter is pressed
+// Then:  overlayMode=overlayNone, cmd != nil
+func TestTabApp_Detail_V_Key_TextOverlay_WithEvidence_DispatchesIssueCmd(t *testing.T) {
+	m := detailModelWithDroplet()
+	m.overlayMode = overlayText
+	m.overlayAction = actionResolveIssue
+	m.pendingIssueID = "ci-aaa-xxxxx"
+	m.overlayInput = "fixed the issue"
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	um := updated.(tabAppModel)
+
+	if um.overlayMode != overlayNone {
+		t.Errorf("overlayMode = %d, want overlayNone (%d)", um.overlayMode, overlayNone)
+	}
+	if cmd == nil {
+		t.Error("expected non-nil cmd after enter with evidence text, got nil")
+	}
+}
+
+// ── execMultiActionCmd: resolve/reject issue (palette path) ──────────────────
+
+// TestExecMultiActionCmd_ResolveIssue_ResolvesIssue verifies that
+// execMultiActionCmd with actionResolveIssue marks the targeted issue as resolved.
+//
+// Given: a real cistern DB with a droplet and an open issue
+// When:  execMultiActionCmd with actionResolveIssue and [issueID, evidence] is executed
+// Then:  tuiActionResultMsg.err is nil and the issue status is "resolved"
+func TestExecMultiActionCmd_ResolveIssue_ResolvesIssue(t *testing.T) {
+	dbPath, id := newTestDBWithDroplet(t)
+
+	c, err := cistern.New(dbPath, "ci")
+	if err != nil {
+		t.Fatal(err)
+	}
+	iss, err := c.AddIssue(id, "test-flagger", "found a problem")
+	c.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m := newTabAppModel("", dbPath)
+	m.selectedID = id
+	cmd := m.execMultiActionCmd(actionResolveIssue, []string{iss.ID, "all fixed"})
+	msg := cmd()
+
+	am, ok := msg.(tuiActionResultMsg)
+	if !ok {
+		t.Fatalf("expected tuiActionResultMsg, got %T", msg)
+	}
+	if am.err != nil {
+		t.Errorf("err = %v, want nil", am.err)
+	}
+
+	c2, err := cistern.New(dbPath, "ci")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c2.Close()
+	issues, err := c2.ListIssues(id, false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(issues) != 1 || issues[0].Status != "resolved" {
+		t.Errorf("issue status = %q (after resolve), want %q", issues[0].Status, "resolved")
+	}
+}
+
+// TestExecMultiActionCmd_RejectIssue_RejectsIssue verifies that
+// execMultiActionCmd with actionRejectIssue marks the targeted issue as unresolved.
+//
+// Given: a real cistern DB with a droplet and an open issue
+// When:  execMultiActionCmd with actionRejectIssue and [issueID, evidence] is executed
+// Then:  tuiActionResultMsg.err is nil and the issue status is "unresolved"
+func TestExecMultiActionCmd_RejectIssue_RejectsIssue(t *testing.T) {
+	dbPath, id := newTestDBWithDroplet(t)
+
+	c, err := cistern.New(dbPath, "ci")
+	if err != nil {
+		t.Fatal(err)
+	}
+	iss, err := c.AddIssue(id, "test-flagger", "found a problem")
+	c.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m := newTabAppModel("", dbPath)
+	m.selectedID = id
+	cmd := m.execMultiActionCmd(actionRejectIssue, []string{iss.ID, "still an issue"})
+	msg := cmd()
+
+	am, ok := msg.(tuiActionResultMsg)
+	if !ok {
+		t.Fatalf("expected tuiActionResultMsg, got %T", msg)
+	}
+	if am.err != nil {
+		t.Errorf("err = %v, want nil", am.err)
+	}
+
+	c2, err := cistern.New(dbPath, "ci")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c2.Close()
+	issues, err := c2.ListIssues(id, false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(issues) != 1 || issues[0].Status != "unresolved" {
+		t.Errorf("issue status = %q (after reject), want %q", issues[0].Status, "unresolved")
+	}
+}
+
+// TestExecMultiActionCmd_ResolveIssue_EmptyID_ReturnsError verifies that
+// execMultiActionCmd returns an error when no issue ID is provided.
+//
+// Given: a real cistern DB
+// When:  execMultiActionCmd with actionResolveIssue and ["", ""] is executed
+// Then:  tuiActionResultMsg.err is non-nil
+func TestExecMultiActionCmd_ResolveIssue_EmptyID_ReturnsError(t *testing.T) {
+	dbPath, id := newTestDBWithDroplet(t)
+
+	m := newTabAppModel("", dbPath)
+	m.selectedID = id
+	cmd := m.execMultiActionCmd(actionResolveIssue, []string{"", ""})
+	msg := cmd()
+
+	am, ok := msg.(tuiActionResultMsg)
+	if !ok {
+		t.Fatalf("expected tuiActionResultMsg, got %T", msg)
+	}
+	if am.err == nil {
+		t.Error("expected error for empty issue ID, got nil")
+	}
+}
+
+// ── updateDroplets: overlayErr cleared on keypress ────────────────────────────
+
+// TestUpdateDroplets_KeyPress_ClearsOverlayErr verifies that pressing a key in
+// the Droplets tab (with no overlay active) clears a prior overlayErr.
+//
+// Given: a model on the Droplets tab with overlayErr set and no overlay active
+// When:  a key is pressed
+// Then:  overlayErr is ""
+func TestUpdateDroplets_KeyPress_ClearsOverlayErr(t *testing.T) {
+	m := newTabAppModel("", "")
+	m.data = &DashboardData{}
+	m.tab = tabDroplets
+	m.overlayMode = overlayNone
+	m.overlayErr = "something went wrong"
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	um := updated.(tabAppModel)
+
+	if um.overlayErr != "" {
+		t.Errorf("overlayErr = %q after keypress, want empty string", um.overlayErr)
+	}
+}
+
+// ── execMultiActionCmd: actionEditMeta partial-update guard ──────────────────
+
+// TestExecMultiActionCmd_EditMeta_InProgress_NoPartialUpdate verifies that
+// editing a droplet that is in_progress with non-title fields returns an error
+// and does NOT update the title (atomic: no partial state).
+//
+// Given: a cistern DB with a droplet whose status is in_progress
+// When:  execMultiActionCmd with actionEditMeta and [newTitle, priority, "", ""]
+// Then:  tuiActionResultMsg.err is non-nil and the title is unchanged
+func TestExecMultiActionCmd_EditMeta_InProgress_NoPartialUpdate(t *testing.T) {
+	dbPath, id := newTestDBWithDroplet(t)
+
+	c, err := cistern.New(dbPath, "ci")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.UpdateStatus(id, "in_progress"); err != nil {
+		c.Close()
+		t.Fatal(err)
+	}
+	c.Close()
+
+	m := newTabAppModel("", dbPath)
+	m.selectedID = id
+	// Title AND priority — EditDroplet will fail for in_progress, title must not be committed.
+	cmd := m.execMultiActionCmd(actionEditMeta, []string{"new title", "3", "", ""})
+	msg := cmd()
+
+	am, ok := msg.(tuiActionResultMsg)
+	if !ok {
+		t.Fatalf("expected tuiActionResultMsg, got %T", msg)
+	}
+	if am.err == nil {
+		t.Error("expected error for in_progress droplet with edit fields, got nil")
+	}
+
+	c2, err := cistern.New(dbPath, "ci")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c2.Close()
+	d, err := c2.Get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Title == "new title" {
+		t.Error("title was updated despite error — partial update occurred")
 	}
 }

@@ -85,6 +85,8 @@ func (p dropletsPanel) KeyHelp() string {
 }
 
 func (p dropletsPanel) OverlayActive() bool {
+	// True when the Detail/Peek tab is open (not the Droplets list) OR when
+	// any overlay (confirm, text-entry, or multi-field form) is active on any tab.
 	return p.inner.tab != tabDroplets || p.inner.overlayMode != overlayNone
 }
 
@@ -105,15 +107,20 @@ func (p dropletsPanel) SelectedDroplet() *cistern.Droplet {
 }
 
 func (p dropletsPanel) PaletteActions(droplet *cistern.Droplet) []PaletteAction {
+	// "new droplet" is always available regardless of selection.
+	alwaysActions := []PaletteAction{
+		dropletPaletteAction("new droplet", "create a new droplet", "", actionCreateDroplet),
+	}
+
 	if droplet == nil {
-		return nil
+		return alwaysActions
 	}
 	id := droplet.ID
 
 	if isTerminalStatus(droplet.Status) {
-		return []PaletteAction{
+		return append(alwaysActions,
 			dropletPaletteAction("reopen", "return to cistern", id, actionReopen),
-		}
+		)
 	}
 	actions := []PaletteAction{
 		dropletPaletteAction("pass", "signal pass — advance to next step", id, actionPass),
@@ -123,11 +130,17 @@ func (p dropletsPanel) PaletteActions(droplet *cistern.Droplet) []PaletteAction 
 		dropletPaletteAction("pool", "move droplet to pool", id, actionPool),
 		dropletPaletteAction("restart", "restart this droplet", id, actionRestart),
 		dropletPaletteAction("add note", "add a note to this droplet", id, actionAddNote),
+		dropletPaletteAction("edit metadata", "edit title, priority, complexity, description", id, actionEditMeta),
+		dropletPaletteAction("add dependency", "add a droplet dependency", id, actionAddDep),
+		dropletPaletteAction("remove dependency", "remove a droplet dependency", id, actionRemoveDep),
+		dropletPaletteAction("file issue", "file an issue against this droplet", id, actionFileIssue),
+		dropletPaletteAction("resolve issue", "resolve an issue by ID", id, actionResolveIssue),
+		dropletPaletteAction("reject issue", "reject an issue by ID", id, actionRejectIssue),
 	}
 	if droplet.CurrentCataractae == "human" {
 		actions = append(actions, dropletPaletteAction("approve", "approve for delivery", id, actionApprove))
 	}
-	return actions
+	return append(alwaysActions, actions...)
 }
 
 // dropletPaletteAction constructs a PaletteAction whose Run emits a
