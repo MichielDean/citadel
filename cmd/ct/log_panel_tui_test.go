@@ -945,7 +945,7 @@ func TestFileLogReader_ReadTail_SmallFile_MaxLinesLargerThanContent_ReturnsAll(t
 //	maxLines=5
 //
 // When:  ReadTail is called
-// Then:  only lines 6-10 are returned; lines 1-5 are absent
+// Then:  only lines 7-10 are returned; lines 1-5 are absent
 func TestFileLogReader_ReadTail_SmallFile_MaxLinesLimitsToLastN(t *testing.T) {
 	f, err := os.CreateTemp(t.TempDir(), "tail-*.log")
 	if err != nil {
