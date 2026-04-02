@@ -26,11 +26,16 @@ const (
 
 // Action constants identify the pending Detail-panel action.
 const (
-	actionCancel  = "cancel"
-	actionPool    = "pool"
-	actionRestart = "restart"
-	actionAddNote = "addnote"
-	actionSetStep = "setstep"
+	actionCancel       = "cancel"
+	actionPool         = "pool"
+	actionRestart      = "restart"
+	actionAddNote      = "addnote"
+	actionSetStep      = "setstep"
+	actionPass         = "pass"
+	actionRecirculate  = "recirculate"
+	actionClose        = "close"
+	actionReopen       = "reopen"
+	actionApprove      = "approve"
 )
 
 // tuiDetailDataMsg carries notes fetched for the Detail panel.
@@ -154,6 +159,44 @@ func (m tabAppModel) execActionCmd(dropletID, action, input string) tea.Cmd {
 			execErr = c.AddNote(dropletID, "manual", input)
 		case actionSetStep:
 			execErr = c.SetCataractae(dropletID, input)
+		case actionPass:
+			item, err := c.Get(dropletID)
+			if err != nil {
+				execErr = err
+				break
+			}
+			if err := c.SetOutcome(dropletID, "pass"); err != nil {
+				execErr = err
+				break
+			}
+			if item.Status != "in_progress" {
+				execErr = c.CloseItem(dropletID)
+			}
+		case actionRecirculate:
+			item, err := c.Get(dropletID)
+			if err != nil {
+				execErr = err
+				break
+			}
+			target := input
+			if target == "" {
+				target = item.CurrentCataractae
+			}
+			if item.Status != "in_progress" {
+				execErr = c.Assign(dropletID, "", target)
+				break
+			}
+			outcome := "recirculate"
+			if input != "" {
+				outcome = "recirculate:" + input
+			}
+			execErr = c.SetOutcome(dropletID, outcome)
+		case actionClose:
+			execErr = c.CloseItem(dropletID)
+		case actionReopen:
+			execErr = c.UpdateStatus(dropletID, "open")
+		case actionApprove:
+			execErr = c.Assign(dropletID, "", "delivery")
 		}
 		return tuiActionResultMsg{dropletID: dropletID, err: execErr}
 	}
@@ -190,8 +233,8 @@ func (m tabAppModel) handleOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "esc":
 			m = closeOverlay(m)
 		case "enter":
-			if m.overlayInput == "" {
-				break // empty input is a no-op
+			if m.overlayInput == "" && m.overlayAction != actionRecirculate {
+				break // empty input is a no-op (recirculate "" = use current step)
 			}
 			action, id, input := m.overlayAction, m.selectedID, m.overlayInput
 			m = closeOverlay(m)
@@ -364,9 +407,9 @@ func (m tabAppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if updated.detailDroplet != nil {
 			updated.overlayAction = pm.action
 			switch pm.action {
-			case actionCancel, actionPool:
+			case actionCancel, actionPool, actionPass, actionClose, actionReopen, actionApprove:
 				updated.overlayMode = overlayConfirm
-			case actionRestart, actionAddNote:
+			case actionRestart, actionAddNote, actionSetStep, actionRecirculate:
 				updated.overlayMode = overlayText
 			}
 		}
@@ -717,6 +760,14 @@ func (m tabAppModel) viewDetail() string {
 			prompt = "cancel this droplet?"
 		case actionPool:
 			prompt = "pool this droplet?"
+		case actionPass:
+			prompt = "pass this droplet?"
+		case actionClose:
+			prompt = "close this droplet?"
+		case actionReopen:
+			prompt = "reopen this droplet?"
+		case actionApprove:
+			prompt = "approve this droplet?"
 		default:
 			prompt = m.overlayAction + "?"
 		}
@@ -730,6 +781,8 @@ func (m tabAppModel) viewDetail() string {
 			prompt = "note"
 		case actionSetStep:
 			prompt = "set step"
+		case actionRecirculate:
+			prompt = "recirculate to step"
 		default:
 			prompt = m.overlayAction
 		}

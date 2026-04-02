@@ -1962,3 +1962,411 @@ func TestTabApp_PaletteActionMsg_UnknownDroplet_IsNoOp(t *testing.T) {
 		t.Errorf("overlayMode = %d, want overlayNone (%d)", um.overlayMode, overlayNone)
 	}
 }
+
+// ── New outcome/state action palette msg → overlay dispatch ──────────────────
+
+// TestTabApp_PaletteActionMsg_NewActions_OpensDetailAndOverlay verifies that
+// the five new outcome/state actions open the Detail tab with the correct
+// overlay mode: overlayConfirm for pass/close/reopen/approve,
+// overlayText for recirculate.
+//
+// Given: a tabAppModel with one droplet in CisternItems
+// When:  tuiPaletteActionMsg{dropletID: "ci-aaa", action: <action>} arrives
+// Then:  tab=tabDetail, overlayMode=<expected>, overlayAction=<action>
+func TestTabApp_PaletteActionMsg_NewActions_OpensDetailAndOverlay(t *testing.T) {
+	tests := []struct {
+		action      string
+		overlayMode int
+	}{
+		{actionPass, overlayConfirm},
+		{actionRecirculate, overlayText},
+		{actionClose, overlayConfirm},
+		{actionReopen, overlayConfirm},
+		{actionApprove, overlayConfirm},
+	}
+	for _, tt := range tests {
+		m := newTabAppModel("", "")
+		m.data = &DashboardData{
+			CisternItems: []*cistern.Droplet{
+				{ID: "ci-aaa", Title: "Test", Status: "in_progress"},
+			},
+		}
+		updated, _ := m.Update(tuiPaletteActionMsg{dropletID: "ci-aaa", action: tt.action})
+		um := updated.(tabAppModel)
+		if um.tab != tabDetail {
+			t.Errorf("action %q: tab = %d, want tabDetail (%d)", tt.action, um.tab, tabDetail)
+		}
+		if um.overlayMode != tt.overlayMode {
+			t.Errorf("action %q: overlayMode = %d, want %d", tt.action, um.overlayMode, tt.overlayMode)
+		}
+		if um.overlayAction != tt.action {
+			t.Errorf("action %q: overlayAction = %q, want %q", tt.action, um.overlayAction, tt.action)
+		}
+	}
+}
+
+// ── Recirculate text overlay: empty input is valid ───────────────────────────
+
+// TestTabApp_Detail_TextOverlay_Recirculate_EmptyInput_ExecutesCmd verifies
+// that pressing enter in the recirculate text overlay with empty input still
+// closes the overlay and returns an action cmd (empty = "use current step").
+//
+// Given: a model with overlayText active for actionRecirculate and overlayInput=""
+// When:  enter is pressed
+// Then:  overlayMode=overlayNone and cmd != nil
+func TestTabApp_Detail_TextOverlay_Recirculate_EmptyInput_ExecutesCmd(t *testing.T) {
+	m := detailModelWithDroplet()
+	m.overlayMode = overlayText
+	m.overlayAction = actionRecirculate
+	m.overlayInput = ""
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	um := updated.(tabAppModel)
+
+	if um.overlayMode != overlayNone {
+		t.Errorf("overlayMode = %d, want overlayNone (%d) after enter", um.overlayMode, overlayNone)
+	}
+	if cmd == nil {
+		t.Error("expected a non-nil cmd for recirculate with empty input, got nil")
+	}
+}
+
+// ── viewDetail footer prompts for new actions ─────────────────────────────────
+
+// TestTabApp_ViewDetail_Footer_Pass_ShowsPassPrompt verifies that when the
+// pass confirm overlay is active, the detail footer shows "pass this droplet?".
+//
+// Given: a model in Detail tab with overlayConfirm and actionPass
+// When:  View() is called
+// Then:  view contains "pass this droplet?"
+func TestTabApp_ViewDetail_Footer_Pass_ShowsPassPrompt(t *testing.T) {
+	m := detailModelWithDroplet()
+	m.overlayMode = overlayConfirm
+	m.overlayAction = actionPass
+
+	if !strings.Contains(m.View(), "pass this droplet?") {
+		t.Error("viewDetail footer missing 'pass this droplet?' for actionPass confirm overlay")
+	}
+}
+
+// TestTabApp_ViewDetail_Footer_Close_ShowsClosePrompt verifies that when the
+// close confirm overlay is active, the detail footer shows "close this droplet?".
+//
+// Given: a model in Detail tab with overlayConfirm and actionClose
+// When:  View() is called
+// Then:  view contains "close this droplet?"
+func TestTabApp_ViewDetail_Footer_Close_ShowsClosePrompt(t *testing.T) {
+	m := detailModelWithDroplet()
+	m.overlayMode = overlayConfirm
+	m.overlayAction = actionClose
+
+	if !strings.Contains(m.View(), "close this droplet?") {
+		t.Error("viewDetail footer missing 'close this droplet?' for actionClose confirm overlay")
+	}
+}
+
+// TestTabApp_ViewDetail_Footer_Reopen_ShowsReopenPrompt verifies that when the
+// reopen confirm overlay is active, the detail footer shows "reopen this droplet?".
+//
+// Given: a model in Detail tab with overlayConfirm and actionReopen
+// When:  View() is called
+// Then:  view contains "reopen this droplet?"
+func TestTabApp_ViewDetail_Footer_Reopen_ShowsReopenPrompt(t *testing.T) {
+	m := detailModelWithDroplet()
+	m.overlayMode = overlayConfirm
+	m.overlayAction = actionReopen
+
+	if !strings.Contains(m.View(), "reopen this droplet?") {
+		t.Error("viewDetail footer missing 'reopen this droplet?' for actionReopen confirm overlay")
+	}
+}
+
+// TestTabApp_ViewDetail_Footer_Approve_ShowsApprovePrompt verifies that when the
+// approve confirm overlay is active, the detail footer shows "approve this droplet?".
+//
+// Given: a model in Detail tab with overlayConfirm and actionApprove
+// When:  View() is called
+// Then:  view contains "approve this droplet?"
+func TestTabApp_ViewDetail_Footer_Approve_ShowsApprovePrompt(t *testing.T) {
+	m := detailModelWithDroplet()
+	m.overlayMode = overlayConfirm
+	m.overlayAction = actionApprove
+
+	if !strings.Contains(m.View(), "approve this droplet?") {
+		t.Error("viewDetail footer missing 'approve this droplet?' for actionApprove confirm overlay")
+	}
+}
+
+// TestTabApp_ViewDetail_Footer_Recirculate_ShowsRecirculatePrompt verifies that
+// when the recirculate text overlay is active, the detail footer shows
+// "recirculate to step".
+//
+// Given: a model in Detail tab with overlayText and actionRecirculate
+// When:  View() is called
+// Then:  view contains "recirculate to step"
+func TestTabApp_ViewDetail_Footer_Recirculate_ShowsRecirculatePrompt(t *testing.T) {
+	m := detailModelWithDroplet()
+	m.overlayMode = overlayText
+	m.overlayAction = actionRecirculate
+
+	if !strings.Contains(m.View(), "recirculate to step") {
+		t.Error("viewDetail footer missing 'recirculate to step' for actionRecirculate text overlay")
+	}
+}
+
+// ── execActionCmd: new outcome/state actions ──────────────────────────────────
+
+// TestExecActionCmd_Pass_OnOpenDroplet_SetsDelivered verifies that execActionCmd
+// with actionPass on an open (non-in_progress) droplet sets status to "delivered".
+//
+// Given: a real cistern DB with an open droplet
+// When:  execActionCmd with actionPass is executed
+// Then:  tuiActionResultMsg.err is nil and droplet status is "delivered"
+func TestExecActionCmd_Pass_OnOpenDroplet_SetsDelivered(t *testing.T) {
+	dbPath, id := newTestDBWithDroplet(t)
+	m := newTabAppModel("", dbPath)
+
+	cmd := m.execActionCmd(id, actionPass, "")
+	msg := cmd()
+
+	am, ok := msg.(tuiActionResultMsg)
+	if !ok {
+		t.Fatalf("expected tuiActionResultMsg, got %T", msg)
+	}
+	if am.dropletID != id {
+		t.Errorf("dropletID = %q, want %q", am.dropletID, id)
+	}
+	if am.err != nil {
+		t.Errorf("err = %v, want nil", am.err)
+	}
+
+	c, err := cistern.New(dbPath, "ci")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	d, err := c.Get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Status != "delivered" {
+		t.Errorf("status = %q, want %q", d.Status, "delivered")
+	}
+}
+
+// TestExecActionCmd_Recirculate_WithStep_SetsOpenAtStep verifies that
+// execActionCmd with actionRecirculate and an explicit step sets the droplet to
+// "open" at that cataractae.
+//
+// Given: a real cistern DB with an open droplet
+// When:  execActionCmd with actionRecirculate and input "review" is executed
+// Then:  tuiActionResultMsg.err is nil, status is "open", CurrentCataractae is "review"
+func TestExecActionCmd_Recirculate_WithStep_SetsOpenAtStep(t *testing.T) {
+	dbPath, id := newTestDBWithDroplet(t)
+	m := newTabAppModel("", dbPath)
+
+	cmd := m.execActionCmd(id, actionRecirculate, "review")
+	msg := cmd()
+
+	am, ok := msg.(tuiActionResultMsg)
+	if !ok {
+		t.Fatalf("expected tuiActionResultMsg, got %T", msg)
+	}
+	if am.err != nil {
+		t.Errorf("err = %v, want nil", am.err)
+	}
+
+	c, err := cistern.New(dbPath, "ci")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	d, err := c.Get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Status != "open" {
+		t.Errorf("status = %q, want %q", d.Status, "open")
+	}
+	if d.CurrentCataractae != "review" {
+		t.Errorf("CurrentCataractae = %q, want %q", d.CurrentCataractae, "review")
+	}
+}
+
+// TestExecActionCmd_Recirculate_EmptyStep_UsesCurrentCataractae verifies that
+// execActionCmd with actionRecirculate and empty input falls back to the droplet's
+// current cataractae.
+//
+// Given: a droplet with CurrentCataractae="implement"
+// When:  execActionCmd with actionRecirculate and input "" is executed
+// Then:  tuiActionResultMsg.err is nil and CurrentCataractae remains "implement"
+func TestExecActionCmd_Recirculate_EmptyStep_UsesCurrentCataractae(t *testing.T) {
+	dbPath, id := newTestDBWithDroplet(t)
+
+	// Set a known cataractae so the empty-input fallback is testable.
+	c, err := cistern.New(dbPath, "ci")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SetCataractae(id, "implement"); err != nil {
+		c.Close()
+		t.Fatal(err)
+	}
+	c.Close()
+
+	m := newTabAppModel("", dbPath)
+	cmd := m.execActionCmd(id, actionRecirculate, "")
+	msg := cmd()
+
+	am, ok := msg.(tuiActionResultMsg)
+	if !ok {
+		t.Fatalf("expected tuiActionResultMsg, got %T", msg)
+	}
+	if am.err != nil {
+		t.Errorf("err = %v, want nil", am.err)
+	}
+
+	c2, err := cistern.New(dbPath, "ci")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c2.Close()
+	d, err := c2.Get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.CurrentCataractae != "implement" {
+		t.Errorf("CurrentCataractae = %q, want %q (empty input should use current cataractae)", d.CurrentCataractae, "implement")
+	}
+}
+
+// TestExecActionCmd_Close_SetsDelivered verifies that execActionCmd with
+// actionClose sets the droplet status to "delivered".
+//
+// Given: a real cistern DB with an open droplet
+// When:  execActionCmd with actionClose is executed
+// Then:  tuiActionResultMsg.err is nil and droplet status is "delivered"
+func TestExecActionCmd_Close_SetsDelivered(t *testing.T) {
+	dbPath, id := newTestDBWithDroplet(t)
+	m := newTabAppModel("", dbPath)
+
+	cmd := m.execActionCmd(id, actionClose, "")
+	msg := cmd()
+
+	am, ok := msg.(tuiActionResultMsg)
+	if !ok {
+		t.Fatalf("expected tuiActionResultMsg, got %T", msg)
+	}
+	if am.err != nil {
+		t.Errorf("err = %v, want nil", am.err)
+	}
+
+	c, err := cistern.New(dbPath, "ci")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	d, err := c.Get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Status != "delivered" {
+		t.Errorf("status = %q, want %q", d.Status, "delivered")
+	}
+}
+
+// TestExecActionCmd_Reopen_SetsOpen verifies that execActionCmd with
+// actionReopen sets the droplet status to "open".
+//
+// Given: a real cistern DB with a droplet closed as delivered
+// When:  execActionCmd with actionReopen is executed
+// Then:  tuiActionResultMsg.err is nil and droplet status is "open"
+func TestExecActionCmd_Reopen_SetsOpen(t *testing.T) {
+	dbPath, id := newTestDBWithDroplet(t)
+
+	// First close it so reopen has something to act on.
+	c, err := cistern.New(dbPath, "ci")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.CloseItem(id); err != nil {
+		c.Close()
+		t.Fatal(err)
+	}
+	c.Close()
+
+	m := newTabAppModel("", dbPath)
+	cmd := m.execActionCmd(id, actionReopen, "")
+	msg := cmd()
+
+	am, ok := msg.(tuiActionResultMsg)
+	if !ok {
+		t.Fatalf("expected tuiActionResultMsg, got %T", msg)
+	}
+	if am.err != nil {
+		t.Errorf("err = %v, want nil", am.err)
+	}
+
+	c2, err := cistern.New(dbPath, "ci")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c2.Close()
+	d, err := c2.Get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Status != "open" {
+		t.Errorf("status = %q, want %q", d.Status, "open")
+	}
+}
+
+// TestExecActionCmd_Approve_SetsDeliveryStep verifies that execActionCmd with
+// actionApprove sets the droplet's current_cataractae to "delivery" and
+// status to "open" (via Assign).
+//
+// Given: a real cistern DB with a droplet at cataractae "human"
+// When:  execActionCmd with actionApprove is executed
+// Then:  tuiActionResultMsg.err is nil, status is "open", CurrentCataractae is "delivery"
+func TestExecActionCmd_Approve_SetsDeliveryStep(t *testing.T) {
+	dbPath, id := newTestDBWithDroplet(t)
+
+	// Set cataractae to "human" to simulate human-gated state.
+	c, err := cistern.New(dbPath, "ci")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SetCataractae(id, "human"); err != nil {
+		c.Close()
+		t.Fatal(err)
+	}
+	c.Close()
+
+	m := newTabAppModel("", dbPath)
+	cmd := m.execActionCmd(id, actionApprove, "")
+	msg := cmd()
+
+	am, ok := msg.(tuiActionResultMsg)
+	if !ok {
+		t.Fatalf("expected tuiActionResultMsg, got %T", msg)
+	}
+	if am.err != nil {
+		t.Errorf("err = %v, want nil", am.err)
+	}
+
+	c2, err := cistern.New(dbPath, "ci")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c2.Close()
+	d, err := c2.Get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.CurrentCataractae != "delivery" {
+		t.Errorf("CurrentCataractae = %q, want %q", d.CurrentCataractae, "delivery")
+	}
+	if d.Status != "open" {
+		t.Errorf("status = %q, want %q (Assign should set status=open)", d.Status, "open")
+	}
+}
