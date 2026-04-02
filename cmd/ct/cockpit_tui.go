@@ -181,7 +181,7 @@ func (p dashboardPanel) View() string {
 	return p.inner.View()
 }
 
-func (p dashboardPanel) Title() string { return "Flow" }
+func (p dashboardPanel) Title() string { return "Dashboard" }
 
 func (p dashboardPanel) KeyHelp() string {
 	return "↑↓/jk scroll  p peek  r refresh"
