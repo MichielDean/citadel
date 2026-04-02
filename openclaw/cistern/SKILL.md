@@ -69,7 +69,6 @@ implement → review → qa → security-review → docs → delivery
 
 ### Direct — when requirements are already clear:
 ```bash
-export ANTHROPIC_API_KEY=$(pass anthropic/claude)
 ct droplet add \
   --title "Short imperative description" \
   --repo <repo-name> \
@@ -81,10 +80,15 @@ ct droplet add \
 
 Filtration is a **thinking tool**, not a filing tool. It refines ideas into clear specs — filing is always done separately with `ct droplet add`.
 
-**Step 1 — Start:**
+**⚠️ Filtration pitfalls:**
+- **Never set `ANTHROPIC_API_KEY` before running `ct filter`** — ct filter uses claude CLI OAuth, not API key auth. Setting `ANTHROPIC_API_KEY` in the environment causes claude to attempt API key auth, which fails with "Invalid API key" and ct filter exits with a confusing usage-help message.
+- **Run `ct filter` from `~/cistern`** — it uses `--allowedTools` to read codebase context. Running from another directory gives the agent no context.
+- **Don't use `--description` for long text** — pass the title only; provide full context in the first interactive turn instead.
+
+**Step 1 — Start (from ~/cistern, no ANTHROPIC_API_KEY exported):**
 ```bash
-export ANTHROPIC_API_KEY=$(pass anthropic/claude)
-ct filter --repo <repo> --title "Rough idea" --description "Intent..."
+cd ~/cistern
+ct filter --title "Rough idea"
 ```
 
 **Step 2 — Resume with answers:**
@@ -176,7 +180,7 @@ systemctl --user start cistern-ttyd.service
 | Symptom | Check |
 |---------|-------|
 | Castellarius not running | `systemctl --user status cistern-castellarius` → start it |
-| Sessions failing auth | `claude auth status` — if that shows logged in, Claude's own auth is fine. Check nothing is setting ANTHROPIC_API_KEY in the env |
+| Sessions failing auth / ct filter exits with usage help | `claude auth status` — if logged in, Claude's own auth is fine. **Unset ANTHROPIC_API_KEY** — if it's exported, claude switches from OAuth to API key mode and fails. Run `unset ANTHROPIC_API_KEY` before any ct command. |
 | Droplet stuck | `ct droplet show <id>` — check notes; `ct droplet restart <id>` |
 | Logs | `journalctl --user -u cistern-castellarius -f` or `cat ~/.cistern/castellarius.log` |
 | Dashboard stale after rebuild | Kill old process on port 5737, restart cistern-ttyd.service |
