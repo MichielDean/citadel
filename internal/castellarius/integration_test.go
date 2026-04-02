@@ -73,8 +73,9 @@ func sessionPrefix(t *testing.T) string {
 // It creates a minimal CONTEXT.md in a temp workdir so fakeagent can read the
 // droplet ID and signal pass via `ct droplet pass <id>`.
 //
-// Session names are prefixed with a short hash derived from t.TempDir() to
-// prevent collision with production sessions and with other concurrent tests.
+// Session isolation is achieved by embedding a per-test prefix into the repo
+// name via intConfig(prefix), so both the runner and the Castellarius heartbeat
+// derive identical session names (repo.Name + "-" + assignee).
 type integrationRunner struct {
 	t        *testing.T
 	agentBin string            // absolute path to the fakeagent binary
@@ -92,8 +93,6 @@ type integrationRunner struct {
 	mu         sync.Mutex
 	sessions   []string // tmux session names for cleanup
 	spawnCount int      // incremented on each Spawn call, protected by mu
-
-	prefix string // short hash prefix that isolates test sessions from production
 }
 
 // intShellQuote wraps s in single quotes, escaping any single quotes within.
@@ -104,8 +103,9 @@ func intShellQuote(s string) string {
 // Spawn creates a workdir, writes CONTEXT.md, and starts a tmux session running
 // fakeagent. Returns immediately (non-blocking).
 //
-// Session names are prefixed with r.prefix so they cannot collide with
-// production sessions regardless of repo or aqueduct name.
+// Session names are derived as req.RepoConfig.Name+"-"+req.AqueductName. The
+// per-test prefix is embedded in RepoConfig.Name by intConfig, so the heartbeat
+// (which computes the same formula) finds the correct session.
 func (r *integrationRunner) Spawn(_ context.Context, req castellarius.CataractaeRequest) error {
 	dir, err := os.MkdirTemp("", "cistern-inttest-*")
 	if err != nil {
@@ -119,9 +119,10 @@ func (r *integrationRunner) Spawn(_ context.Context, req castellarius.Cataractae
 		return fmt.Errorf("integrationRunner: write CONTEXT.md: %w", err)
 	}
 
-	// Session name: <prefix>-<repo>-<aqueduct>.  The prefix isolates test
-	// sessions from production and from concurrent test runs.
-	sessionID := r.prefix + "-" + req.RepoConfig.Name + "-" + req.AqueductName
+	// Session name: <repo>-<aqueduct>. The prefix is embedded in the repo name
+	// by intConfig so the heartbeat (which computes repo.Name+"-"+assignee) and
+	// this runner derive identical session names.
+	sessionID := req.RepoConfig.Name + "-" + req.AqueductName
 	r.mu.Lock()
 	r.sessions = append(r.sessions, sessionID)
 	n := r.spawnCount
@@ -229,11 +230,15 @@ func intWorkflow() *aqueduct.Workflow {
 }
 
 // intConfig returns a minimal AqueductConfig for integration tests.
-func intConfig() aqueduct.AqueductConfig {
+// The prefix is embedded in the repo name so that the Castellarius heartbeat
+// (which computes sessionID as repo.Name+"-"+assignee) matches the session
+// names created by integrationRunner.Spawn, preventing false-positive heartbeat
+// recovery and ensuring test sessions never collide with production.
+func intConfig(prefix string) aqueduct.AqueductConfig {
 	return aqueduct.AqueductConfig{
 		Repos: []aqueduct.RepoConfig{
 			{
-				Name:       "myrepo",
+				Name:       prefix + "-myrepo",
 				Cataractae: 1,
 				Names:      []string{"worker-alpha"},
 				Prefix:     "it",
@@ -245,11 +250,13 @@ func intConfig() aqueduct.AqueductConfig {
 
 // newIntScheduler creates a Castellarius configured for integration tests with
 // short poll and heartbeat intervals to keep test runtime under 30s.
-func newIntScheduler(client *cistern.Client, runner castellarius.CataractaeRunner) *castellarius.Castellarius {
-	workflows := map[string]*aqueduct.Workflow{"myrepo": intWorkflow()}
-	clients := map[string]castellarius.CisternClient{"myrepo": client}
+// prefix must match the value embedded in the repo name via intConfig.
+func newIntScheduler(client *cistern.Client, runner castellarius.CataractaeRunner, prefix string) *castellarius.Castellarius {
+	repoName := prefix + "-myrepo"
+	workflows := map[string]*aqueduct.Workflow{repoName: intWorkflow()}
+	clients := map[string]castellarius.CisternClient{repoName: client}
 
-	return castellarius.NewFromParts(intConfig(), workflows, clients, runner,
+	return castellarius.NewFromParts(intConfig(prefix), workflows, clients, runner,
 		castellarius.WithPollInterval(500*time.Millisecond),
 		castellarius.WithHeartbeatInterval(time.Second),
 		castellarius.WithDrainTimeout(3*time.Second),
@@ -290,6 +297,7 @@ func TestIntegration_HappyPath_FakeAgentDeliversDroplet(t *testing.T) {
 	checkIntegrationPrereqs(t)
 	fakeagentPath := buildFakeagent(t)
 	ctPath := buildCt(t)
+	prefix := sessionPrefix(t)
 
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	client, err := cistern.New(dbPath, "it")
@@ -304,13 +312,12 @@ func TestIntegration_HappyPath_FakeAgentDeliversDroplet(t *testing.T) {
 		ctBin:    ctPath,
 		dbPath:   dbPath,
 		logDir:   t.TempDir(),
-		prefix:   sessionPrefix(t),
 	}
 	t.Cleanup(runner.cleanup)
 
-	sched := newIntScheduler(client, runner)
+	sched := newIntScheduler(client, runner, prefix)
 
-	droplet, err := client.Add("myrepo", "integration happy path", "desc", 1, 3)
+	droplet, err := client.Add(prefix+"-myrepo", "integration happy path", "desc", 1, 3)
 	if err != nil {
 		t.Fatalf("client.Add: %v", err)
 	}
@@ -341,6 +348,7 @@ func TestIntegration_StartupRecovery_OrphanedDroplet_RedeliversDroplet(t *testin
 	checkIntegrationPrereqs(t)
 	fakeagentPath := buildFakeagent(t)
 	ctPath := buildCt(t)
+	prefix := sessionPrefix(t)
 
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	client, err := cistern.New(dbPath, "it")
@@ -355,18 +363,17 @@ func TestIntegration_StartupRecovery_OrphanedDroplet_RedeliversDroplet(t *testin
 		ctBin:    ctPath,
 		dbPath:   dbPath,
 		logDir:   t.TempDir(),
-		prefix:   sessionPrefix(t),
 	}
 	t.Cleanup(runner.cleanup)
 
 	// Add a droplet and put it into in_progress/no-outcome state — simulating a
 	// prior Castellarius run where the agent session died before signaling.
-	droplet, err := client.Add("myrepo", "recovery test", "desc", 1, 3)
+	droplet, err := client.Add(prefix+"-myrepo", "recovery test", "desc", 1, 3)
 	if err != nil {
 		t.Fatalf("client.Add: %v", err)
 	}
 	// GetReady atomically marks the item in_progress (mimics a prior dispatch).
-	if _, err := client.GetReady("myrepo"); err != nil {
+	if _, err := client.GetReady(prefix + "-myrepo"); err != nil {
 		t.Fatalf("client.GetReady: %v", err)
 	}
 	// Give it a dead assignee so recoverInProgress sees a realistic stale item.
@@ -386,7 +393,7 @@ func TestIntegration_StartupRecovery_OrphanedDroplet_RedeliversDroplet(t *testin
 
 	// Start the Castellarius.  recoverInProgress will reset the item to open,
 	// then dispatchRepo picks it up and fakeagent delivers it.
-	sched := newIntScheduler(client, runner)
+	sched := newIntScheduler(client, runner, prefix)
 
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
@@ -414,6 +421,7 @@ func TestIntegration_HeartbeatRecovery_DeadSession_RedeliversDroplet(t *testing.
 	checkIntegrationPrereqs(t)
 	fakeagentPath := buildFakeagent(t)
 	ctPath := buildCt(t)
+	prefix := sessionPrefix(t)
 
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	client, err := cistern.New(dbPath, "it")
@@ -432,13 +440,12 @@ func TestIntegration_HeartbeatRecovery_DeadSession_RedeliversDroplet(t *testing.
 		ctBin:      ctPath,
 		dbPath:     dbPath,
 		spawnModes: []string{"no_signal", ""},
-		prefix:     sessionPrefix(t),
 	}
 	t.Cleanup(runner.cleanup)
 
-	sched := newIntScheduler(client, runner)
+	sched := newIntScheduler(client, runner, prefix)
 
-	droplet, err := client.Add("myrepo", "heartbeat recovery test", "desc", 1, 3)
+	droplet, err := client.Add(prefix+"-myrepo", "heartbeat recovery test", "desc", 1, 3)
 	if err != nil {
 		t.Fatalf("client.Add: %v", err)
 	}
@@ -469,6 +476,7 @@ func TestIntegration_EnvHygiene_APIKeyNotForwardedToSession(t *testing.T) {
 	checkIntegrationPrereqs(t)
 	fakeagentPath := buildFakeagent(t)
 	ctPath := buildCt(t)
+	prefix := sessionPrefix(t)
 
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	client, err := cistern.New(dbPath, "it")
@@ -487,7 +495,6 @@ func TestIntegration_EnvHygiene_APIKeyNotForwardedToSession(t *testing.T) {
 		ctBin:    ctPath,
 		dbPath:   dbPath,
 		logDir:   logDir,
-		prefix:   sessionPrefix(t),
 		extraEnv: map[string]string{
 			"FAKEAGENT_MODE": "env_dump", // causes fakeagent to print its env to stdout
 		},
@@ -500,9 +507,9 @@ func TestIntegration_EnvHygiene_APIKeyNotForwardedToSession(t *testing.T) {
 	const sentinelVal = "test-secret-must-not-leak"
 	t.Setenv(sentinelKey, sentinelVal)
 
-	sched := newIntScheduler(client, runner)
+	sched := newIntScheduler(client, runner, prefix)
 
-	droplet, err := client.Add("myrepo", "env hygiene test", "desc", 1, 3)
+	droplet, err := client.Add(prefix+"-myrepo", "env hygiene test", "desc", 1, 3)
 	if err != nil {
 		t.Fatalf("client.Add: %v", err)
 	}
