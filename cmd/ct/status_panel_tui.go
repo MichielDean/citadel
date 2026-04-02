@@ -148,23 +148,18 @@ func (p statusPanel) View() string {
 	}
 
 	// ── Castellarius health ──────────────────────────────────────────────────
+	farmStatus := tuiStyleRed.Render("stopped")
 	if p.data.FarmRunning {
-		lines = append(lines, "  Castellarius  "+tuiStyleGreen.Render("watching"), "")
-	} else {
-		lines = append(lines, "  Castellarius  "+tuiStyleRed.Render("stopped"), "")
+		farmStatus = tuiStyleGreen.Render("watching")
 	}
+	lines = append(lines, "  Castellarius  "+farmStatus, "")
 
 	// ── Aqueduct flow summary ────────────────────────────────────────────────
 	if len(p.data.Cataractae) > 0 {
 		// Compute max name width for consistent column alignment.
-		maxNameW := 0
+		maxNameW := 8
 		for _, ch := range p.data.Cataractae {
-			if len(ch.Name) > maxNameW {
-				maxNameW = len(ch.Name)
-			}
-		}
-		if maxNameW < 8 {
-			maxNameW = 8
+			maxNameW = max(maxNameW, len(ch.Name))
 		}
 
 		for _, ch := range p.data.Cataractae {
@@ -201,22 +196,9 @@ func (p statusPanel) View() string {
 
 	// ── Scroll ───────────────────────────────────────────────────────────────
 	total := len(lines)
-	viewH := p.height - 1
-	if viewH < 1 {
-		viewH = 1
-	}
-	maxScroll := total - viewH
-	if maxScroll < 0 {
-		maxScroll = 0
-	}
-	top := p.scrollY
-	if top > maxScroll {
-		top = maxScroll
-	}
-	end := top + viewH
-	if end > total {
-		end = total
-	}
+	viewH := max(1, p.height-1)
+	top := min(p.scrollY, max(0, total-viewH))
+	end := min(top+viewH, total)
 	return strings.Join(lines[top:end], "\n")
 }
 
