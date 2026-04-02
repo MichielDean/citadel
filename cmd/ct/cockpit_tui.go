@@ -29,6 +29,11 @@ type TUIPanel interface {
 	// PaletteActions returns the actions available for the given droplet.
 	// droplet may be nil when no droplet is selected.
 	PaletteActions(droplet *cistern.Droplet) []PaletteAction
+	// OverlayActive reports whether the panel currently has an overlay open
+	// (e.g. a confirmation dialog or text-entry prompt). The cockpit uses this
+	// to decide whether to intercept Esc for return-to-sidebar navigation or
+	// forward it to the panel so the overlay can be dismissed first.
+	OverlayActive() bool
 }
 
 // Compile-time interface checks.
@@ -69,6 +74,10 @@ func (p dropletsPanel) KeyHelp() string {
 	return "↑↓/jk navigate  enter/d detail  p peek"
 }
 
+func (p dropletsPanel) OverlayActive() bool {
+	return p.inner.overlayMode != overlayNone
+}
+
 func (p dropletsPanel) PaletteActions(droplet *cistern.Droplet) []PaletteAction {
 	if droplet == nil {
 		return nil
@@ -99,6 +108,8 @@ func (p placeholderPanel) View() string {
 func (p placeholderPanel) Title() string { return p.title }
 
 func (p placeholderPanel) KeyHelp() string { return "" }
+
+func (p placeholderPanel) OverlayActive() bool { return false }
 
 func (p placeholderPanel) PaletteActions(_ *cistern.Droplet) []PaletteAction { return nil }
 
@@ -211,7 +222,13 @@ func (m cockpitModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		// panelFocused=true: fall through to forward the key to the active panel.
+		// panelFocused=true: esc returns to sidebar unless the panel has an active
+		// overlay (in that case forward esc so the panel can dismiss it first).
+		if s == "esc" && m.cursor < len(m.panels) && !m.panels[m.cursor].OverlayActive() {
+			m.panelFocused = false
+			return m, nil
+		}
+		// All other panel-focused keys fall through to forwarding below.
 	}
 
 	// Forward all non-key messages and panel-focused key messages to the active panel.
@@ -253,7 +270,7 @@ func (m cockpitModel) viewSidebar() string {
 	sb.WriteString(divider)
 	hint := "  tab→panel"
 	if m.panelFocused {
-		hint = "  tab→sidebar"
+		hint = "  esc→sidebar"
 	}
 	sb.WriteString(tuiStyleDim.Render(hint) + "\n")
 	return sb.String()

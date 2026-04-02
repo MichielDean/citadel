@@ -605,3 +605,112 @@ func TestJoinSideBySide_JoinsWithSeparator(t *testing.T) {
 		}
 	}
 }
+
+// ── OverlayActive ─────────────────────────────────────────────────────────────
+
+// overlayActivePanel is a test-only TUIPanel stub that always reports an overlay
+// as active, allowing cockpit tests to exercise overlay-gated key handling.
+type overlayActivePanel struct {
+	placeholderPanel
+}
+
+func (p overlayActivePanel) OverlayActive() bool { return true }
+
+// TestPlaceholderPanel_OverlayActive_ReturnsFalse verifies that the placeholder
+// panel always reports no active overlay.
+//
+// Given: a placeholderPanel
+// When:  OverlayActive() is called
+// Then:  false is returned
+func TestPlaceholderPanel_OverlayActive_ReturnsFalse(t *testing.T) {
+	p := placeholderPanel{title: "Test"}
+	if p.OverlayActive() {
+		t.Error("OverlayActive() = true, want false for placeholderPanel")
+	}
+}
+
+// TestDropletsPanel_OverlayActive_ReturnsFalse_WhenNoOverlay verifies that
+// dropletsPanel reports no overlay when tabAppModel is in its default state.
+//
+// Given: a freshly constructed dropletsPanel (no overlay active)
+// When:  OverlayActive() is called
+// Then:  false is returned
+func TestDropletsPanel_OverlayActive_ReturnsFalse_WhenNoOverlay(t *testing.T) {
+	p := newDropletsPanel("", "")
+	if p.OverlayActive() {
+		t.Error("OverlayActive() = true, want false when no overlay is active")
+	}
+}
+
+// ── esc return-to-sidebar ─────────────────────────────────────────────────────
+
+// TestCockpit_Esc_ReturnsToCockpit_WhenNoOverlayActive verifies that pressing Esc
+// when panelFocused=true and no panel overlay is active returns the cockpit to
+// sidebar mode.
+//
+// Given: panelFocused=true, active panel overlay is not active
+// When:  Esc is pressed
+// Then:  panelFocused=false
+func TestCockpit_Esc_ReturnsToCockpit_WhenNoOverlayActive(t *testing.T) {
+	m := newCockpitModel("", "")
+	m.panelFocused = true
+	m.panels[0] = placeholderPanel{title: "Test"} // OverlayActive() == false
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	um := updated.(cockpitModel)
+
+	if um.panelFocused {
+		t.Error("panelFocused = true, want false (esc should return to sidebar when no overlay is active)")
+	}
+}
+
+// TestCockpit_Esc_ForwardedToPanel_WhenOverlayActive verifies that pressing Esc
+// when panelFocused=true and an overlay is active forwards the key to the panel
+// instead of returning to sidebar.
+//
+// Given: panelFocused=true, active panel overlay is active
+// When:  Esc is pressed
+// Then:  panelFocused remains true (esc was forwarded to panel, not cockpit-handled)
+func TestCockpit_Esc_ForwardedToPanel_WhenOverlayActive(t *testing.T) {
+	m := newCockpitModel("", "")
+	m.panelFocused = true
+	m.panels[0] = overlayActivePanel{placeholderPanel{title: "Test"}} // OverlayActive() == true
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	um := updated.(cockpitModel)
+
+	if !um.panelFocused {
+		t.Error("panelFocused = false, want true (esc must not return to sidebar when overlay is active)")
+	}
+}
+
+// ── sidebar hint ──────────────────────────────────────────────────────────────
+
+// TestCockpit_View_Hint_ContainsTabToPanel_WhenSidebarFocused verifies that the
+// sidebar footer hint shows "tab→panel" when in sidebar navigation mode.
+//
+// Given: panelFocused=false
+// When:  View() is called
+// Then:  output contains "tab→panel"
+func TestCockpit_View_Hint_ContainsTabToPanel_WhenSidebarFocused(t *testing.T) {
+	m := newCockpitModel("", "")
+
+	if !strings.Contains(m.View(), "tab→panel") {
+		t.Error("View() does not contain 'tab→panel' hint when sidebar is focused")
+	}
+}
+
+// TestCockpit_View_Hint_ContainsEscToSidebar_WhenPanelFocused verifies that the
+// sidebar footer hint shows "esc→sidebar" when a panel has focus.
+//
+// Given: panelFocused=true
+// When:  View() is called
+// Then:  output contains "esc→sidebar"
+func TestCockpit_View_Hint_ContainsEscToSidebar_WhenPanelFocused(t *testing.T) {
+	m := newCockpitModel("", "")
+	m.panelFocused = true
+
+	if !strings.Contains(m.View(), "esc→sidebar") {
+		t.Error("View() does not contain 'esc→sidebar' hint when panel is focused")
+	}
+}
