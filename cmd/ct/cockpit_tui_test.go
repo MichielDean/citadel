@@ -642,6 +642,34 @@ func TestDropletsPanel_OverlayActive_ReturnsFalse_WhenNoOverlay(t *testing.T) {
 	}
 }
 
+// TestDropletsPanel_OverlayActive_ReturnsTrue_WhenOverlayConfirm verifies that
+// dropletsPanel reports an active overlay when the inner model is in overlayConfirm.
+//
+// Given: a dropletsPanel whose inner overlayMode is overlayConfirm
+// When:  OverlayActive() is called
+// Then:  true is returned
+func TestDropletsPanel_OverlayActive_ReturnsTrue_WhenOverlayConfirm(t *testing.T) {
+	p := newDropletsPanel("", "")
+	p.inner.overlayMode = overlayConfirm
+	if !p.OverlayActive() {
+		t.Error("OverlayActive() = false, want true when overlayMode is overlayConfirm")
+	}
+}
+
+// TestDropletsPanel_OverlayActive_ReturnsTrue_WhenOverlayText verifies that
+// dropletsPanel reports an active overlay when the inner model is in overlayText.
+//
+// Given: a dropletsPanel whose inner overlayMode is overlayText
+// When:  OverlayActive() is called
+// Then:  true is returned
+func TestDropletsPanel_OverlayActive_ReturnsTrue_WhenOverlayText(t *testing.T) {
+	p := newDropletsPanel("", "")
+	p.inner.overlayMode = overlayText
+	if !p.OverlayActive() {
+		t.Error("OverlayActive() = false, want true when overlayMode is overlayText")
+	}
+}
+
 // ── esc return-to-sidebar ─────────────────────────────────────────────────────
 
 // TestCockpit_Esc_ReturnsToCockpit_WhenNoOverlayActive verifies that pressing Esc
