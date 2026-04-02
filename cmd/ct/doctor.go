@@ -54,13 +54,17 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		return err
 	}, nil) && ok
 
-	ok = checkWithFix("gh authenticated", func() error {
+	// gh authenticated — informational warning only; does not affect ok.
+	// gh auth is required for delivery but not needed for fresh installs or
+	// CI environments where gh is not configured.
+	{
 		out, err := exec.Command("gh", "auth", "status").CombinedOutput()
 		if err != nil {
-			return fmt.Errorf("%s", out)
+			fmt.Printf("⚠ gh authenticated: %s\n", strings.TrimSpace(string(out)))
+		} else {
+			fmt.Printf("✓ gh authenticated\n")
 		}
-		return nil
-	}, nil) && ok
+	}
 
 	home, _ := os.UserHomeDir()
 	cfgPath := filepath.Join(home, ".cistern", "cistern.yaml")

@@ -21,7 +21,7 @@ cataractae:
     timeout_minutes: 30
     on_pass: simplify
     on_fail: pooled
-    on_pool: human
+    on_pool: pooled
 
   - name: simplify
     type: agent
@@ -36,7 +36,7 @@ cataractae:
     on_pass: review
     on_fail: implement
     on_recirculate: implement
-    on_pool: human
+    on_pool: pooled
 
   - name: review
     type: agent
@@ -52,7 +52,7 @@ cataractae:
     on_pass: qa
     on_fail: implement
     on_recirculate: implement
-    on_pool: human
+    on_pool: pooled
 
   - name: qa
     type: agent
@@ -66,7 +66,7 @@ cataractae:
     on_pass: security-review
     on_fail: implement
     on_recirculate: implement
-    on_pool: human
+    on_pool: pooled
 
   - name: security-review
     type: agent
@@ -79,7 +79,7 @@ cataractae:
     on_pass: docs
     on_fail: implement
     on_recirculate: implement
-    on_pool: human
+    on_pool: pooled
 
   - name: docs
     type: agent
@@ -93,7 +93,7 @@ cataractae:
     on_pass: delivery
     on_fail: implement
     on_recirculate: implement
-    on_pool: human
+    on_pool: pooled
 
   - name: delivery
     type: agent
@@ -106,4 +106,4 @@ cataractae:
     timeout_minutes: 60
     on_pass: done
     on_recirculate: implement
-    on_pool: human
+    on_pool: pooled
