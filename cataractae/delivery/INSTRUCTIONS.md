@@ -235,10 +235,13 @@ Wait for all checks to pass before merging. If `gh pr checks` returns no output,
 ## Step 5 — Merge
 
 ```bash
-git fetch origin \
-  && git rebase origin/$BASE \
-  && git push --force-with-lease \
-  && gh pr merge "$PR_URL" --squash --delete-branch
+git fetch origin && git rebase origin/$BASE
+if grep -rq '<<<<<<' . --include='*.md' --include='*.go' --include='*.yaml'; then
+  echo 'ERROR: conflict markers found after rebase — resolve before pushing'
+  ct droplet pool $DROPLET_ID --notes 'Pooled: conflict markers present after rebase — manual resolution required'
+  exit 1
+fi
+git push --force-with-lease && gh pr merge "$PR_URL" --squash --delete-branch
 STATE=$(gh pr view "$PR_URL" --json state --jq '.state')
 if [ "$STATE" != "MERGED" ]; then
   echo "ERROR: merge failed — state is $STATE"
