@@ -352,7 +352,9 @@ The Droplets module provides three views within the active pane:
 - Press `:` to open the command palette — a searchable list of all actions available for the currently selected droplet
 - Type to filter actions by name (substring match, case-insensitive)
 - Navigate with `↑↓` or `jk`, execute the highlighted action with `enter`, dismiss with `esc`
-- Actions available vary by panel and context: the Droplets module palette includes cancel, pool, restart, and add note
+- **Actions available in Droplets module** (vary by droplet status):
+  - For **active droplets** (non-terminal): `pass`, `recirculate`, `close`, `cancel`, `pool`, `restart`, `add note`, and `approve` (only when droplet is human-gated)
+  - For **terminal droplets** (delivered or cancelled): `reopen`
 - Particularly useful when you want to find a specific action without memorizing single-key bindings
 
 All actions execute immediately through the cistern database. After any action completes, the detail view re-fetches and displays updated state.

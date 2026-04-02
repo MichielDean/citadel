@@ -109,12 +109,25 @@ func (p dropletsPanel) PaletteActions(droplet *cistern.Droplet) []PaletteAction 
 		return nil
 	}
 	id := droplet.ID
-	return []PaletteAction{
+
+	if isTerminalStatus(droplet.Status) {
+		return []PaletteAction{
+			dropletPaletteAction("reopen", "return to cistern", id, actionReopen),
+		}
+	}
+	actions := []PaletteAction{
+		dropletPaletteAction("pass", "signal pass — advance to next step", id, actionPass),
+		dropletPaletteAction("recirculate", "send back upstream for rework", id, actionRecirculate),
+		dropletPaletteAction("close", "mark as delivered", id, actionClose),
 		dropletPaletteAction("cancel", "cancel this droplet", id, actionCancel),
 		dropletPaletteAction("pool", "move droplet to pool", id, actionPool),
 		dropletPaletteAction("restart", "restart this droplet", id, actionRestart),
 		dropletPaletteAction("add note", "add a note to this droplet", id, actionAddNote),
 	}
+	if droplet.CurrentCataractae == "human" {
+		actions = append(actions, dropletPaletteAction("approve", "approve for delivery", id, actionApprove))
+	}
+	return actions
 }
 
 // dropletPaletteAction constructs a PaletteAction whose Run emits a

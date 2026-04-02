@@ -22,7 +22,7 @@ Added a searchable command palette overlay to the Cistern cockpit (`ct tui`). Pr
 - **Keyboard navigation**: Use `↑↓` or `jk` to navigate, `enter` to execute, `esc` to dismiss
 - **Context-aware actions**: The palette displays only actions relevant to the selected droplet and current panel; actions vary by panel type
 - **Per-panel registry**: Each cockpit panel (Droplets, Dashboard, etc.) defines its own set of available actions via the `PaletteActions()` interface
-- **Initial implementation**: Droplets module palette includes cancel, pool, restart, and add note actions
+- **Initial implementation**: Droplets module palette includes pass, recirculate, close, cancel, pool, restart, add note, and approve (when human-gated) actions. For terminal droplets, only reopen is shown.
 
 The command palette provides an alternative to memorizing single-key action bindings and makes discoverability easier for new users while maintaining keyboard efficiency for power users.
 
