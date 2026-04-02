@@ -880,32 +880,25 @@ func (m tabAppModel) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.overlayAction = actionSetStep
 			}
 		case "]":
-			// Advance issue cursor forward.
-			if len(m.detailIssues) > 0 {
-				if m.detailIssueCursor < 0 {
-					m.detailIssueCursor = 0
-				} else if m.detailIssueCursor < len(m.detailIssues)-1 {
-					m.detailIssueCursor++
-				}
+			// Advance issue cursor forward (initialises to 0 if unset).
+			if m.detailIssueCursor < len(m.detailIssues)-1 {
+				m.detailIssueCursor++
 			}
 		case "[":
 			// Move issue cursor backward.
 			if m.detailIssueCursor > 0 {
 				m.detailIssueCursor--
 			}
-		case "v":
-			// Resolve selected issue — prompt for evidence.
+		case "v", "u":
+			// v resolves the selected issue; u rejects it — both prompt for evidence.
 			if m.detailDroplet != nil && m.detailIssueCursor >= 0 && m.detailIssueCursor < len(m.detailIssues) {
 				m.pendingIssueID = m.detailIssues[m.detailIssueCursor].ID
 				m.overlayMode = overlayText
-				m.overlayAction = actionResolveIssue
-			}
-		case "u":
-			// Reject selected issue — prompt for evidence.
-			if m.detailDroplet != nil && m.detailIssueCursor >= 0 && m.detailIssueCursor < len(m.detailIssues) {
-				m.pendingIssueID = m.detailIssues[m.detailIssueCursor].ID
-				m.overlayMode = overlayText
-				m.overlayAction = actionRejectIssue
+				if msg.String() == "v" {
+					m.overlayAction = actionResolveIssue
+				} else {
+					m.overlayAction = actionRejectIssue
+				}
 			}
 		}
 		// Clamp to valid range after every scroll operation.
