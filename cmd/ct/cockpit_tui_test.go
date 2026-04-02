@@ -1473,11 +1473,7 @@ func TestCockpit_Palette_Down_MovesSelectionDown(t *testing.T) {
 		{Name: "alpha"},
 		{Name: "beta"},
 	}
-	m := newPaletteTestCockpit(actions, &cistern.Droplet{ID: "ci-aaa"})
-	m.paletteActive = true
-	m.paletteAll = actions
-	m.paletteFiltered = actions
-	m.paletteCursor = 0
+	m := newPaletteTestCockpit(actions, &cistern.Droplet{ID: "ci-aaa"}).openPalette()
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
 	um := updated.(cockpitModel)
@@ -1497,10 +1493,7 @@ func TestCockpit_Palette_Down_AtLastAction_Stays(t *testing.T) {
 		{Name: "alpha"},
 		{Name: "beta"},
 	}
-	m := newPaletteTestCockpit(actions, &cistern.Droplet{ID: "ci-aaa"})
-	m.paletteActive = true
-	m.paletteAll = actions
-	m.paletteFiltered = actions
+	m := newPaletteTestCockpit(actions, &cistern.Droplet{ID: "ci-aaa"}).openPalette()
 	m.paletteCursor = 1
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
@@ -1521,10 +1514,7 @@ func TestCockpit_Palette_Up_MovesSelectionUp(t *testing.T) {
 		{Name: "alpha"},
 		{Name: "beta"},
 	}
-	m := newPaletteTestCockpit(actions, &cistern.Droplet{ID: "ci-aaa"})
-	m.paletteActive = true
-	m.paletteAll = actions
-	m.paletteFiltered = actions
+	m := newPaletteTestCockpit(actions, &cistern.Droplet{ID: "ci-aaa"}).openPalette()
 	m.paletteCursor = 1
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
@@ -1545,11 +1535,7 @@ func TestCockpit_Palette_Up_AtFirstAction_Stays(t *testing.T) {
 		{Name: "alpha"},
 		{Name: "beta"},
 	}
-	m := newPaletteTestCockpit(actions, &cistern.Droplet{ID: "ci-aaa"})
-	m.paletteActive = true
-	m.paletteAll = actions
-	m.paletteFiltered = actions
-	m.paletteCursor = 0
+	m := newPaletteTestCockpit(actions, &cistern.Droplet{ID: "ci-aaa"}).openPalette()
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
 	um := updated.(cockpitModel)
@@ -1572,10 +1558,7 @@ func TestCockpit_Palette_Type_FiltersActions(t *testing.T) {
 		{Name: "pool"},
 		{Name: "restart"},
 	}
-	m := newPaletteTestCockpit(actions, &cistern.Droplet{ID: "ci-aaa"})
-	m.paletteActive = true
-	m.paletteAll = actions
-	m.paletteFiltered = actions
+	m := newPaletteTestCockpit(actions, &cistern.Droplet{ID: "ci-aaa"}).openPalette()
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	um := updated.(cockpitModel)
@@ -1597,10 +1580,7 @@ func TestCockpit_Palette_Filter_ResetsCursorToZero(t *testing.T) {
 		{Name: "alpha"},
 		{Name: "aleph"},
 	}
-	m := newPaletteTestCockpit(actions, &cistern.Droplet{ID: "ci-aaa"})
-	m.paletteActive = true
-	m.paletteAll = actions
-	m.paletteFiltered = actions
+	m := newPaletteTestCockpit(actions, &cistern.Droplet{ID: "ci-aaa"}).openPalette()
 	m.paletteCursor = 1
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
@@ -1618,11 +1598,8 @@ func TestCockpit_Palette_Filter_ResetsCursorToZero(t *testing.T) {
 // Then:  paletteQuery = "c"
 func TestCockpit_Palette_Backspace_RemovesLastChar(t *testing.T) {
 	actions := []PaletteAction{{Name: "cancel"}}
-	m := newPaletteTestCockpit(actions, &cistern.Droplet{ID: "ci-aaa"})
-	m.paletteActive = true
-	m.paletteAll = actions
+	m := newPaletteTestCockpit(actions, &cistern.Droplet{ID: "ci-aaa"}).openPalette()
 	m.paletteQuery = "ca"
-	m.paletteFiltered = actions
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
 	um := updated.(cockpitModel)
@@ -1645,11 +1622,7 @@ func TestCockpit_Palette_Enter_ClosesPalette(t *testing.T) {
 			Run:  func() tea.Cmd { ran = true; return nil },
 		},
 	}
-	m := newPaletteTestCockpit(actions, &cistern.Droplet{ID: "ci-aaa"})
-	m.paletteActive = true
-	m.paletteAll = actions
-	m.paletteFiltered = actions
-	m.paletteCursor = 0
+	m := newPaletteTestCockpit(actions, &cistern.Droplet{ID: "ci-aaa"}).openPalette()
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	um := updated.(cockpitModel)
@@ -1677,11 +1650,7 @@ func TestCockpit_Palette_Enter_ReturnsCmdFromAction(t *testing.T) {
 			},
 		},
 	}
-	m := newPaletteTestCockpit(actions, &cistern.Droplet{ID: "ci-aaa"})
-	m.paletteActive = true
-	m.paletteAll = actions
-	m.paletteFiltered = actions
-	m.paletteCursor = 0
+	m := newPaletteTestCockpit(actions, &cistern.Droplet{ID: "ci-aaa"}).openPalette()
 
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	if cmd == nil {
@@ -1723,11 +1692,7 @@ func TestCockpit_Palette_Enter_SetsPanelFocused(t *testing.T) {
 	actions := []PaletteAction{
 		{Name: "test", Run: func() tea.Cmd { return nil }},
 	}
-	m := newPaletteTestCockpit(actions, &cistern.Droplet{ID: "ci-aaa"})
-	m.paletteActive = true
-	m.paletteAll = actions
-	m.paletteFiltered = actions
-	m.panelFocused = false
+	m := newPaletteTestCockpit(actions, &cistern.Droplet{ID: "ci-aaa"}).openPalette()
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	um := updated.(cockpitModel)
@@ -1762,10 +1727,7 @@ func TestCockpit_View_Palette_ContainsActionNames(t *testing.T) {
 		{Name: "alpha"},
 		{Name: "beta"},
 	}
-	m := newPaletteTestCockpit(actions, &cistern.Droplet{ID: "ci-aaa"})
-	m.paletteActive = true
-	m.paletteAll = actions
-	m.paletteFiltered = actions
+	m := newPaletteTestCockpit(actions, &cistern.Droplet{ID: "ci-aaa"}).openPalette()
 
 	v := m.View()
 	if !strings.Contains(v, "alpha") {
@@ -1898,11 +1860,7 @@ func TestCockpit_Palette_Enter_NilRun_DoesNotPanic(t *testing.T) {
 	actions := []PaletteAction{
 		{Name: "noop", Description: "no run func"},
 	}
-	m := newPaletteTestCockpit(actions, &cistern.Droplet{ID: "ci-aaa"})
-	m.paletteActive = true
-	m.paletteAll = actions
-	m.paletteFiltered = actions
-	m.paletteCursor = 0
+	m := newPaletteTestCockpit(actions, &cistern.Droplet{ID: "ci-aaa"}).openPalette()
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	um := updated.(cockpitModel)
@@ -2022,11 +1980,7 @@ func TestDropletsPanel_PaletteActions_Run_EmitsCorrectMsg(t *testing.T) {
 // Then:  paletteQuery="" and len(paletteFiltered)=1
 func TestCockpit_Palette_Backspace_EmptyQuery_IsNoOp(t *testing.T) {
 	actions := []PaletteAction{{Name: "cancel"}}
-	m := newPaletteTestCockpit(actions, &cistern.Droplet{ID: "ci-aaa"})
-	m.paletteActive = true
-	m.paletteAll = actions
-	m.paletteQuery = ""
-	m.paletteFiltered = actions
+	m := newPaletteTestCockpit(actions, &cistern.Droplet{ID: "ci-aaa"}).openPalette()
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
 	um := updated.(cockpitModel)

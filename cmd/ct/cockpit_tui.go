@@ -302,7 +302,6 @@ func (m cockpitModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if s == "ctrl+c" {
 			return m, tea.Quit
 		}
-		// When the palette is active, all key events are handled by the palette.
 		if m.paletteActive {
 			return m.updatePalette(msg)
 		}
