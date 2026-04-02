@@ -169,10 +169,10 @@ func (m cockpitModel) Init() tea.Cmd {
 //
 // Global intercepts (handled regardless of focus mode):
 //   - ctrl+c           → quit
+//   - 1-9              → jump to panel[n-1] and activate it (skipped when overlay active)
 //
 // Sidebar mode (!panelFocused):
 //   - tab / enter      → activate panel focus
-//   - 1-9              → jump to panel[n-1] and activate it
 //   - q / Q            → quit
 //   - up / k           → move cursor up
 //   - down / j         → move cursor down
