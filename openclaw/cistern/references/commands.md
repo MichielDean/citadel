@@ -305,9 +305,9 @@ ct tui                           # Launch interactive cockpit (requires active t
 The cockpit provides a two-pane interface: persistent left sidebar for module navigation, and a right pane showing the active module's content.
 
 **Cockpit Layout**
-- **Left sidebar**: Lists all available modules (Droplets, Flow, Status, Aqueducts, Inspect, Audit) with keyboard shortcuts (1–9)
+- **Left sidebar**: Lists all available modules (Droplets, Dashboard, Status, Inspect, Doctor) with keyboard shortcuts (1–9)
   - Cursor highlight indicates focus: `▶` = panel focused (green), `▷` = sidebar focused (yellow)
-  - Currently, Droplets and Status modules are fully implemented; others ship as placeholders
+  - Currently, Droplets, Status, and Doctor modules are fully implemented; others ship as placeholders
 - **Right pane**: Displays the active module's content
 
 **Navigation**
@@ -359,6 +359,20 @@ The Status module displays real-time system health and pipeline status:
 - **Castellarius Health**: Daemon status, last poll time, and scheduler liveness
 
 The status view auto-refreshes every 5 seconds. When the display hasn't changed for 2+ cycles, it backs off to a 30-second refresh interval to reduce database load. Press `r` at any time to force an immediate refresh.
+
+**Doctor Module** (key: 5)
+
+The Doctor module runs `ct doctor` on activation and displays system health and configuration checks in a scrollable pane:
+
+- **Credentials & Auth**: Claude OAuth token, API key fallback, provider binary availability, and required environment variables
+- **Configuration**: Agent instruction files, installed skills, aqueduct YAML validity
+- **Runtime Health**: Castellarius daemon status, scheduler liveness, stalled droplet warnings
+
+The module shows the last-run timestamp and supports the following controls:
+- `r` — **Re-run** — Execute `ct doctor` again (disabled while a run is in progress)
+- `↑↓` or `j/k` — **Scroll** — Navigate through the output
+- `g` — **Go to top** — Jump to the beginning
+- `G` — **Go to bottom** — Jump to the end
 
 ## Status & Health
 
