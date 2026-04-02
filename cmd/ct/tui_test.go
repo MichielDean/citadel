@@ -2930,6 +2930,50 @@ func TestTabApp_Detail_BracketLeft_MoveIssueCursorBackward(t *testing.T) {
 	}
 }
 
+// TestTabApp_Detail_BracketRight_AtLastItem_Stays verifies that pressing ']'
+// at the last issue does not advance the cursor past the end.
+//
+// Given: a model with detailIssues=[2 issues] and detailIssueCursor=1 (last item)
+// When:  ']' is pressed
+// Then:  detailIssueCursor stays at 1
+func TestTabApp_Detail_BracketRight_AtLastItem_Stays(t *testing.T) {
+	m := detailModelWithDroplet()
+	m.detailIssues = []cistern.DropletIssue{
+		{ID: "ci-aaa-xxxxx", Status: "open"},
+		{ID: "ci-aaa-yyyyy", Status: "open"},
+	}
+	m.detailIssueCursor = 1
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{']'}})
+	um := updated.(tabAppModel)
+
+	if um.detailIssueCursor != 1 {
+		t.Errorf("detailIssueCursor = %d, want 1 (should not advance past last item)", um.detailIssueCursor)
+	}
+}
+
+// TestTabApp_Detail_BracketLeft_AtZero_Stays verifies that pressing '[' at the
+// first issue does not move the cursor to a negative index.
+//
+// Given: a model with detailIssues=[2 issues] and detailIssueCursor=0
+// When:  '[' is pressed
+// Then:  detailIssueCursor stays at 0
+func TestTabApp_Detail_BracketLeft_AtZero_Stays(t *testing.T) {
+	m := detailModelWithDroplet()
+	m.detailIssues = []cistern.DropletIssue{
+		{ID: "ci-aaa-xxxxx", Status: "open"},
+		{ID: "ci-aaa-yyyyy", Status: "open"},
+	}
+	m.detailIssueCursor = 0
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}})
+	um := updated.(tabAppModel)
+
+	if um.detailIssueCursor != 0 {
+		t.Errorf("detailIssueCursor = %d, want 0 (should not go below 0)", um.detailIssueCursor)
+	}
+}
+
 // TestTabApp_Detail_BracketRight_AtNoCursor_MovesToFirst verifies that pressing
 // ']' when detailIssueCursor=-1 (no selection) selects the first issue.
 //
