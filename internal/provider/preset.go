@@ -107,7 +107,7 @@ var builtins = []ProviderPreset{
 		ModelFlag:        "--model",
 		AddDirFlag:       "--add-dir",
 		PromptFlag:       "-p",
-		ContinueFlag:     "", // disabled — each cataractae starts fresh; context passed via CONTEXT.md
+		ContinueFlag:     "--continue",
 		ResumeFlag:       "--resume",
 		InstructionsFile: "CLAUDE.md",
 		SupportsAddDir:   true,
