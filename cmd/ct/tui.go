@@ -373,6 +373,19 @@ func valAt(values []string, i int) string {
 	return ""
 }
 
+// openCreateDropletOverlay puts m into overlayMulti mode for the new-droplet
+// creation form. Callers set m.tab as needed before calling.
+func openCreateDropletOverlay(m tabAppModel) tabAppModel {
+	fields := []string{"repo", "title", "description", "complexity (1-3)"}
+	m.overlayMode = overlayMulti
+	m.overlayAction = actionCreateDroplet
+	m.overlayMultiFields = fields
+	m.overlayMultiIdx = 0
+	m.overlayMultiValues = make([]string, len(fields))
+	m.overlayInput = ""
+	return m
+}
+
 // closeOverlay resets all overlay state to inactive.
 func closeOverlay(m tabAppModel) tabAppModel {
 	m.overlayMode = overlayNone
@@ -635,12 +648,7 @@ func (m tabAppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// findDroplet guard.
 		if pm.action == actionCreateDroplet {
 			m.tab = tabDroplets
-			m.overlayMode = overlayMulti
-			m.overlayAction = actionCreateDroplet
-			m.overlayMultiFields = []string{"repo", "title", "description", "complexity (1-3)"}
-			m.overlayMultiIdx = 0
-			m.overlayMultiValues = make([]string, 4)
-			m.overlayInput = ""
+			m = openCreateDropletOverlay(m)
 			return m, nil
 		}
 		if m.findDroplet(pm.dropletID) == nil {
@@ -659,13 +667,13 @@ func (m tabAppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				updated.overlayMode = overlayMulti
 				updated.overlayMultiFields = []string{"title", "priority (1-5)", "complexity (1-3)", "description"}
 				updated.overlayMultiIdx = 0
-				updated.overlayMultiValues = make([]string, 4)
+				updated.overlayMultiValues = make([]string, len(updated.overlayMultiFields))
 				updated.overlayInput = ""
 			case actionResolveIssue, actionRejectIssue:
 				updated.overlayMode = overlayMulti
 				updated.overlayMultiFields = []string{"issue ID", "evidence"}
 				updated.overlayMultiIdx = 0
-				updated.overlayMultiValues = make([]string, 2)
+				updated.overlayMultiValues = make([]string, len(updated.overlayMultiFields))
 				updated.overlayInput = ""
 			}
 		}
@@ -723,12 +731,7 @@ func (m tabAppModel) updateDroplets(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "N":
 			// Open multi-field creation form for a new droplet.
-			m.overlayMode = overlayMulti
-			m.overlayAction = actionCreateDroplet
-			m.overlayMultiFields = []string{"repo", "title", "description", "complexity (1-3)"}
-			m.overlayMultiIdx = 0
-			m.overlayMultiValues = make([]string, 4)
-			m.overlayInput = ""
+			m = openCreateDropletOverlay(m)
 		}
 		m.dropletsScrollTop = m.clampedDropletsScrollTop()
 	}
