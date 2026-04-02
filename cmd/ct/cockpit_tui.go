@@ -264,7 +264,6 @@ func newCockpitModel(cfgPath, dbPath string) cockpitModel {
 		newLogPanel(defaultLogReader, nil),
 		newReposSkillsPanel(cfgPath, dbPath),
 		newFilterPanel(),
-		placeholderPanel{title: "Audit"},
 	}
 	// Only panel[0] is initialized in Init(). All others are lazily initialized
 	// on first activation to prevent their tick chains from firing into the wrong
