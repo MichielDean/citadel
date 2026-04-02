@@ -148,19 +148,11 @@ func (s *Session) spawn() error {
 		"context_type", contextType,
 	)
 
-	// Session output log: tee the agent command's stdout+stderr to a file so
-	// we can read the last few lines when diagnosing quick-exit failures.
-	// The log is written to ~/.cistern/session-logs/<sessionID>.log and is
-	// cleaned up after a successful run (or after being read on quick-exit).
+	// Session output log: prepare the log directory so pipe-pane can write to it
+	// after the session is created. The log path is also read by the heartbeat
+	// for quick-exit diagnostics.
 	sessionLogPath := filepath.Join(home, ".cistern", "session-logs", s.ID+".log")
-	if err := os.MkdirAll(filepath.Dir(sessionLogPath), 0o750); err == nil {
-		// Wrap the agent command to tee stdout+stderr to the session log file.
-		// IMPORTANT: use 'bash' explicitly — tmux spawns commands via /bin/sh
-		// which may be dash on Ubuntu/Debian, and dash does not support PIPESTATUS.
-		// We need PIPESTATUS[0] to propagate the agent's exit code through the pipe
-		// so the tmux session exits with the correct status.
-		agentCmd = "bash -c " + shellQuote("( "+agentCmd+" ) 2>&1 | tee "+shellQuote(sessionLogPath)+"; exit ${PIPESTATUS[0]}")
-	}
+	logDirReady := os.MkdirAll(filepath.Dir(sessionLogPath), 0o750) == nil
 
 	args = append(args, s.collectEnvArgs()...)
 	args = append(args, agentCmd)
@@ -195,6 +187,13 @@ func (s *Session) spawn() error {
 		}
 	}
 
+	// Attach pipe-pane to capture PTY output to the session log. This must happen
+	// after the session exists. Unlike the former tee wrapper around stdout/stderr,
+	// pipe-pane captures everything rendered to the tmux pane — including output
+	// that the agent writes directly to the PTY device, bypassing stdout/stderr.
+	if logDirReady {
+		execTmuxPipePaneCmd(s.ID, sessionLogPath)
+	}
 	return nil
 }
 
@@ -295,6 +294,17 @@ var execTmuxNewSession = func(args []string) ([]byte, error) {
 // It is a variable so tests can substitute a no-op without requiring tmux.
 var execTmuxKillServer = func() {
 	exec.Command("tmux", "kill-server").Run() //nolint:errcheck
+}
+
+// execTmuxPipePaneCmd attaches tmux pipe-pane to the named session, appending all
+// PTY output to logPath. Unlike a tee wrapper around stdout/stderr, pipe-pane
+// hooks into tmux's own PTY capture and works regardless of how the agent writes
+// output — including direct PTY writes that bypass stdout/stderr entirely.
+// Errors are silently ignored: the session is already running and a pipe-pane
+// failure only means the log will be empty, not that the agent is broken.
+// It is a variable so tests can substitute a no-op without requiring tmux.
+var execTmuxPipePaneCmd = func(sessionID, logPath string) {
+	exec.Command("tmux", "pipe-pane", "-o", "-t", sessionID, "cat >> "+shellQuote(logPath)).Run() //nolint:errcheck
 }
 
 // redactArgs returns a copy of args with the value portion of any -e KEY=VALUE

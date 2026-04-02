@@ -2077,3 +2077,116 @@ func TestBuildPrompt_TemplateCtxWiring_NonAddDirProvider_RendersMarker(t *testin
 		t.Error("prompt still contains unreplaced template marker — RenderTemplate not called")
 	}
 }
+
+// --- pipe-pane logging tests ---
+
+// TestSpawn_NoBashTeeWrapper_AgentCommandDirectlySpawned verifies that the agent
+// command passed to tmux new-session is the direct agent command — not wrapped
+// in a bash -c tee pipeline. The tee wrapper was removed because claude writes
+// its TUI output directly to the PTY device (pts/N), bypassing stdout/stderr,
+// so tee received nothing and the log file stayed at 0 bytes.
+func TestSpawn_NoBashTeeWrapper_AgentCommandDirectlySpawned(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_PATH", "claude")
+
+	var capturedArgs []string
+	origSpawn := execTmuxNewSession
+	execTmuxNewSession = func(args []string) ([]byte, error) {
+		capturedArgs = args
+		return nil, nil
+	}
+	t.Cleanup(func() { execTmuxNewSession = origSpawn })
+
+	origPipePane := execTmuxPipePaneCmd
+	execTmuxPipePaneCmd = func(_, _ string) {}
+	t.Cleanup(func() { execTmuxPipePaneCmd = origPipePane })
+
+	s := &Session{
+		ID:      "no-tee-test",
+		WorkDir: t.TempDir(),
+	}
+	_ = s.spawn()
+
+	if len(capturedArgs) == 0 {
+		t.Fatal("execTmuxNewSession was not called")
+	}
+	// The agent command is the last element passed to tmux new-session.
+	cmd := capturedArgs[len(capturedArgs)-1]
+	if strings.Contains(cmd, "tee") {
+		t.Errorf("agent command must not contain 'tee' (bash wrapper was not removed): %s", cmd)
+	}
+	if strings.Contains(cmd, "bash -c") {
+		t.Errorf("agent command must not be wrapped in 'bash -c' (tee wrapper was not removed): %s", cmd)
+	}
+	if strings.Contains(cmd, "PIPESTATUS") {
+		t.Errorf("agent command must not contain PIPESTATUS (tee wrapper was not removed): %s", cmd)
+	}
+}
+
+// TestSpawn_PipePaneCalled_AfterSuccessfulSpawn verifies that execTmuxPipePaneCmd
+// is called with the correct session ID and log path after a successful spawn.
+// This is the replacement for the tee wrapper: pipe-pane hooks into tmux's own
+// PTY capture and captures output regardless of how the agent writes it.
+func TestSpawn_PipePaneCalled_AfterSuccessfulSpawn(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_PATH", "claude")
+
+	origSpawn := execTmuxNewSession
+	execTmuxNewSession = func(_ []string) ([]byte, error) { return nil, nil }
+	t.Cleanup(func() { execTmuxNewSession = origSpawn })
+
+	var capturedSessionID, capturedLogPath string
+	origPipePane := execTmuxPipePaneCmd
+	execTmuxPipePaneCmd = func(sessionID, logPath string) {
+		capturedSessionID = sessionID
+		capturedLogPath = logPath
+	}
+	t.Cleanup(func() { execTmuxPipePaneCmd = origPipePane })
+
+	s := &Session{
+		ID:      "pipe-pane-test",
+		WorkDir: t.TempDir(),
+	}
+	if err := s.spawn(); err != nil {
+		t.Fatalf("spawn returned unexpected error: %v", err)
+	}
+
+	if capturedSessionID != s.ID {
+		t.Errorf("execTmuxPipePaneCmd called with sessionID = %q, want %q", capturedSessionID, s.ID)
+	}
+	expectedLogPath := filepath.Join(home, ".cistern", "session-logs", s.ID+".log")
+	if capturedLogPath != expectedLogPath {
+		t.Errorf("execTmuxPipePaneCmd called with logPath = %q, want %q", capturedLogPath, expectedLogPath)
+	}
+}
+
+// TestSpawn_PipePaneNotCalled_WhenSpawnFails verifies that execTmuxPipePaneCmd is
+// not called when tmux new-session fails. There is no session to attach a pipe to.
+func TestSpawn_PipePaneNotCalled_WhenSpawnFails(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_PATH", "claude")
+
+	origSpawn := execTmuxNewSession
+	execTmuxNewSession = func(_ []string) ([]byte, error) {
+		return []byte("invalid option: -Z"), fmt.Errorf("exit status 1")
+	}
+	t.Cleanup(func() { execTmuxNewSession = origSpawn })
+
+	pipePaneCalled := false
+	origPipePane := execTmuxPipePaneCmd
+	execTmuxPipePaneCmd = func(_, _ string) { pipePaneCalled = true }
+	t.Cleanup(func() { execTmuxPipePaneCmd = origPipePane })
+
+	s := &Session{
+		ID:      "pipe-pane-no-call-test",
+		WorkDir: t.TempDir(),
+	}
+	_ = s.spawn() // error expected
+
+	if pipePaneCalled {
+		t.Error("execTmuxPipePaneCmd must not be called when spawn fails")
+	}
+}
