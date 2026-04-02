@@ -1311,3 +1311,538 @@ func TestCockpit_AnimMsg_RoutedToInitializedFlowPanel_WhenFlowPanelNotActive(t *
 		t.Error("dashboardPanel.inner.frame did not advance — animation tick was not routed to initialized inactive panel")
 	}
 }
+
+// ── command palette ───────────────────────────────────────────────────────────
+
+// paletteActionPanel is a test-only TUIPanel stub that returns a fixed set of
+// PaletteActions and a fixed SelectedDroplet for exercising palette behaviour.
+type paletteActionPanel struct {
+	placeholderPanel
+	actions  []PaletteAction
+	selected *cistern.Droplet
+}
+
+func (p paletteActionPanel) PaletteActions(_ *cistern.Droplet) []PaletteAction {
+	return p.actions
+}
+
+func (p paletteActionPanel) SelectedDroplet() *cistern.Droplet { return p.selected }
+
+// newPaletteTestCockpit builds a cockpitModel whose first panel returns the
+// given actions and selected droplet, for use in palette tests.
+func newPaletteTestCockpit(actions []PaletteAction, selected *cistern.Droplet) cockpitModel {
+	m := newCockpitModel("", "")
+	m.panels[0] = paletteActionPanel{
+		placeholderPanel: placeholderPanel{title: "Test"},
+		actions:          actions,
+		selected:         selected,
+	}
+	return m
+}
+
+// TestCockpit_Colon_OpensPalette_WhenSidebarFocused verifies that pressing ':'
+// in sidebar mode opens the command palette.
+//
+// Given: panelFocused=false
+// When:  ':' is pressed
+// Then:  paletteActive=true
+func TestCockpit_Colon_OpensPalette_WhenSidebarFocused(t *testing.T) {
+	m := newCockpitModel("", "")
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
+	um := updated.(cockpitModel)
+	if !um.paletteActive {
+		t.Error("paletteActive = false, want true after ':' in sidebar mode")
+	}
+}
+
+// TestCockpit_Colon_OpensPalette_WhenPanelFocused verifies that pressing ':'
+// in panel-focused mode also opens the command palette.
+//
+// Given: panelFocused=true
+// When:  ':' is pressed
+// Then:  paletteActive=true
+func TestCockpit_Colon_OpensPalette_WhenPanelFocused(t *testing.T) {
+	m := newCockpitModel("", "")
+	m.panelFocused = true
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
+	um := updated.(cockpitModel)
+	if !um.paletteActive {
+		t.Error("paletteActive = false, want true after ':' in panel-focused mode")
+	}
+}
+
+// TestCockpit_Palette_StartsWithEmptyQuery verifies that opening the palette
+// resets the filter query to empty.
+//
+// Given: a new cockpit
+// When:  ':' is pressed
+// Then:  paletteQuery = ""
+func TestCockpit_Palette_StartsWithEmptyQuery(t *testing.T) {
+	m := newCockpitModel("", "")
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
+	um := updated.(cockpitModel)
+	if um.paletteQuery != "" {
+		t.Errorf("paletteQuery = %q, want empty string", um.paletteQuery)
+	}
+}
+
+// TestCockpit_Palette_Open_LoadsActionsFromPanel verifies that opening the
+// palette populates paletteFiltered with the active panel's actions.
+//
+// Given: a cockpit whose first panel returns 2 PaletteActions
+// When:  ':' is pressed
+// Then:  len(paletteFiltered) = 2
+func TestCockpit_Palette_Open_LoadsActionsFromPanel(t *testing.T) {
+	actions := []PaletteAction{
+		{Name: "alpha", Description: "first"},
+		{Name: "beta", Description: "second"},
+	}
+	m := newPaletteTestCockpit(actions, &cistern.Droplet{ID: "ci-aaa"})
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
+	um := updated.(cockpitModel)
+	if len(um.paletteFiltered) != 2 {
+		t.Errorf("len(paletteFiltered) = %d, want 2", len(um.paletteFiltered))
+	}
+}
+
+// TestCockpit_Palette_Esc_ClosesPalette verifies that pressing Esc when the
+// palette is open closes it.
+//
+// Given: paletteActive=true
+// When:  Esc is pressed
+// Then:  paletteActive=false
+func TestCockpit_Palette_Esc_ClosesPalette(t *testing.T) {
+	m := newCockpitModel("", "")
+	m.paletteActive = true
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	um := updated.(cockpitModel)
+	if um.paletteActive {
+		t.Error("paletteActive = true, want false after Esc dismisses palette")
+	}
+}
+
+// TestCockpit_Palette_Down_MovesSelectionDown verifies that pressing 'j' in
+// the palette advances the paletteCursor.
+//
+// Given: palette open with 2 actions, paletteCursor=0
+// When:  'j' is pressed
+// Then:  paletteCursor=1
+func TestCockpit_Palette_Down_MovesSelectionDown(t *testing.T) {
+	actions := []PaletteAction{
+		{Name: "alpha"},
+		{Name: "beta"},
+	}
+	m := newPaletteTestCockpit(actions, &cistern.Droplet{ID: "ci-aaa"})
+	m.paletteActive = true
+	m.paletteAll = actions
+	m.paletteFiltered = actions
+	m.paletteCursor = 0
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	um := updated.(cockpitModel)
+	if um.paletteCursor != 1 {
+		t.Errorf("paletteCursor = %d, want 1", um.paletteCursor)
+	}
+}
+
+// TestCockpit_Palette_Down_AtLastAction_Stays verifies that the palette cursor
+// does not advance past the last action.
+//
+// Given: palette open with 2 actions, paletteCursor=1 (last)
+// When:  'j' is pressed
+// Then:  paletteCursor remains 1
+func TestCockpit_Palette_Down_AtLastAction_Stays(t *testing.T) {
+	actions := []PaletteAction{
+		{Name: "alpha"},
+		{Name: "beta"},
+	}
+	m := newPaletteTestCockpit(actions, &cistern.Droplet{ID: "ci-aaa"})
+	m.paletteActive = true
+	m.paletteAll = actions
+	m.paletteFiltered = actions
+	m.paletteCursor = 1
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	um := updated.(cockpitModel)
+	if um.paletteCursor != 1 {
+		t.Errorf("paletteCursor = %d, want 1 (should not advance past last action)", um.paletteCursor)
+	}
+}
+
+// TestCockpit_Palette_Up_MovesSelectionUp verifies that pressing 'k' in
+// the palette moves the cursor up.
+//
+// Given: palette open with 2 actions, paletteCursor=1
+// When:  'k' is pressed
+// Then:  paletteCursor=0
+func TestCockpit_Palette_Up_MovesSelectionUp(t *testing.T) {
+	actions := []PaletteAction{
+		{Name: "alpha"},
+		{Name: "beta"},
+	}
+	m := newPaletteTestCockpit(actions, &cistern.Droplet{ID: "ci-aaa"})
+	m.paletteActive = true
+	m.paletteAll = actions
+	m.paletteFiltered = actions
+	m.paletteCursor = 1
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	um := updated.(cockpitModel)
+	if um.paletteCursor != 0 {
+		t.Errorf("paletteCursor = %d, want 0", um.paletteCursor)
+	}
+}
+
+// TestCockpit_Palette_Up_AtFirstAction_Stays verifies that the palette cursor
+// does not go below 0.
+//
+// Given: palette open with 2 actions, paletteCursor=0
+// When:  'k' is pressed
+// Then:  paletteCursor remains 0
+func TestCockpit_Palette_Up_AtFirstAction_Stays(t *testing.T) {
+	actions := []PaletteAction{
+		{Name: "alpha"},
+		{Name: "beta"},
+	}
+	m := newPaletteTestCockpit(actions, &cistern.Droplet{ID: "ci-aaa"})
+	m.paletteActive = true
+	m.paletteAll = actions
+	m.paletteFiltered = actions
+	m.paletteCursor = 0
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	um := updated.(cockpitModel)
+	if um.paletteCursor != 0 {
+		t.Errorf("paletteCursor = %d, want 0 (should not go below 0)", um.paletteCursor)
+	}
+}
+
+// TestCockpit_Palette_Type_FiltersActions verifies that typing into the palette
+// filters actions by case-insensitive substring match on Name.
+//
+// Given: palette open with actions ["cancel", "pool", "restart"]
+// When:  'a' is typed
+// Then:  paletteFiltered contains only actions whose names contain "a"
+//
+//	(cancel and restart match; pool does not)
+func TestCockpit_Palette_Type_FiltersActions(t *testing.T) {
+	actions := []PaletteAction{
+		{Name: "cancel"},
+		{Name: "pool"},
+		{Name: "restart"},
+	}
+	m := newPaletteTestCockpit(actions, &cistern.Droplet{ID: "ci-aaa"})
+	m.paletteActive = true
+	m.paletteAll = actions
+	m.paletteFiltered = actions
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	um := updated.(cockpitModel)
+
+	// "cancel" contains "a", "pool" does not, "restart" contains "a"
+	if len(um.paletteFiltered) != 2 {
+		t.Errorf("len(paletteFiltered) = %d, want 2 (cancel and restart match 'a')", len(um.paletteFiltered))
+	}
+}
+
+// TestCockpit_Palette_Filter_ResetsCursorToZero verifies that typing a filter
+// character resets the palette cursor to 0.
+//
+// Given: palette open with 2 actions, paletteCursor=1
+// When:  a character is typed
+// Then:  paletteCursor=0
+func TestCockpit_Palette_Filter_ResetsCursorToZero(t *testing.T) {
+	actions := []PaletteAction{
+		{Name: "alpha"},
+		{Name: "aleph"},
+	}
+	m := newPaletteTestCockpit(actions, &cistern.Droplet{ID: "ci-aaa"})
+	m.paletteActive = true
+	m.paletteAll = actions
+	m.paletteFiltered = actions
+	m.paletteCursor = 1
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	um := updated.(cockpitModel)
+	if um.paletteCursor != 0 {
+		t.Errorf("paletteCursor = %d, want 0 after typing a filter character", um.paletteCursor)
+	}
+}
+
+// TestCockpit_Palette_Backspace_RemovesLastChar verifies that pressing Backspace
+// removes the last character from the filter query.
+//
+// Given: palette open with query "ca"
+// When:  Backspace is pressed
+// Then:  paletteQuery = "c"
+func TestCockpit_Palette_Backspace_RemovesLastChar(t *testing.T) {
+	actions := []PaletteAction{{Name: "cancel"}}
+	m := newPaletteTestCockpit(actions, &cistern.Droplet{ID: "ci-aaa"})
+	m.paletteActive = true
+	m.paletteAll = actions
+	m.paletteQuery = "ca"
+	m.paletteFiltered = actions
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	um := updated.(cockpitModel)
+	if um.paletteQuery != "c" {
+		t.Errorf("paletteQuery = %q, want %q", um.paletteQuery, "c")
+	}
+}
+
+// TestCockpit_Palette_Enter_ClosesPalette verifies that pressing Enter when
+// an action is selected closes the palette and calls the action's Run function.
+//
+// Given: palette open with 1 action at cursor=0
+// When:  Enter is pressed
+// Then:  paletteActive=false and action.Run() was called
+func TestCockpit_Palette_Enter_ClosesPalette(t *testing.T) {
+	ran := false
+	actions := []PaletteAction{
+		{
+			Name: "test",
+			Run:  func() tea.Cmd { ran = true; return nil },
+		},
+	}
+	m := newPaletteTestCockpit(actions, &cistern.Droplet{ID: "ci-aaa"})
+	m.paletteActive = true
+	m.paletteAll = actions
+	m.paletteFiltered = actions
+	m.paletteCursor = 0
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	um := updated.(cockpitModel)
+	if um.paletteActive {
+		t.Error("paletteActive = true, want false after Enter executes action")
+	}
+	if !ran {
+		t.Error("action Run() was not called")
+	}
+}
+
+// TestCockpit_Palette_Enter_ReturnsCmdFromAction verifies that pressing Enter
+// returns the tea.Cmd produced by the selected action's Run function.
+//
+// Given: palette open with 1 action whose Run() returns a non-nil cmd
+// When:  Enter is pressed
+// Then:  the returned cmd is the action's cmd
+func TestCockpit_Palette_Enter_ReturnsCmdFromAction(t *testing.T) {
+	type sentinelMsg struct{}
+	actions := []PaletteAction{
+		{
+			Name: "test",
+			Run: func() tea.Cmd {
+				return func() tea.Msg { return sentinelMsg{} }
+			},
+		},
+	}
+	m := newPaletteTestCockpit(actions, &cistern.Droplet{ID: "ci-aaa"})
+	m.paletteActive = true
+	m.paletteAll = actions
+	m.paletteFiltered = actions
+	m.paletteCursor = 0
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("cmd = nil, want action's cmd")
+	}
+	if _, ok := cmd().(sentinelMsg); !ok {
+		t.Errorf("cmd() did not return sentinelMsg")
+	}
+}
+
+// TestCockpit_Palette_Enter_EmptyFiltered_IsNoOp verifies that pressing Enter
+// when no actions match the filter is a no-op.
+//
+// Given: palette open with empty paletteFiltered
+// When:  Enter is pressed
+// Then:  paletteActive remains true, cmd is nil
+func TestCockpit_Palette_Enter_EmptyFiltered_IsNoOp(t *testing.T) {
+	m := newCockpitModel("", "")
+	m.paletteActive = true
+	m.paletteFiltered = nil
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	um := updated.(cockpitModel)
+	if !um.paletteActive {
+		t.Error("paletteActive = false, want true (Enter on empty palette should be no-op)")
+	}
+	if cmd != nil {
+		t.Error("cmd is non-nil, want nil for no-op enter")
+	}
+}
+
+// TestCockpit_Palette_Enter_SetsPanelFocused verifies that executing a palette
+// action activates panel focus so the panel receives subsequent input.
+//
+// Given: palette open, panelFocused=false
+// When:  Enter is pressed on a valid action
+// Then:  panelFocused=true
+func TestCockpit_Palette_Enter_SetsPanelFocused(t *testing.T) {
+	actions := []PaletteAction{
+		{Name: "test", Run: func() tea.Cmd { return nil }},
+	}
+	m := newPaletteTestCockpit(actions, &cistern.Droplet{ID: "ci-aaa"})
+	m.paletteActive = true
+	m.paletteAll = actions
+	m.paletteFiltered = actions
+	m.panelFocused = false
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	um := updated.(cockpitModel)
+	if !um.panelFocused {
+		t.Error("panelFocused = false, want true after executing palette action")
+	}
+}
+
+// TestCockpit_View_Palette_ContainsSearchPrompt verifies that when the palette
+// is active the View includes the '>' search prompt indicator.
+//
+// Given: paletteActive=true
+// When:  View() is called
+// Then:  output contains ">"
+func TestCockpit_View_Palette_ContainsSearchPrompt(t *testing.T) {
+	m := newCockpitModel("", "")
+	m.paletteActive = true
+	m.paletteFiltered = nil
+	if !strings.Contains(m.View(), ">") {
+		t.Error("View() with palette active does not contain '>' search prompt")
+	}
+}
+
+// TestCockpit_View_Palette_ContainsActionNames verifies that when the palette
+// is active, action names appear in the rendered view.
+//
+// Given: paletteActive=true with actions ["alpha", "beta"]
+// When:  View() is called
+// Then:  output contains both action names
+func TestCockpit_View_Palette_ContainsActionNames(t *testing.T) {
+	actions := []PaletteAction{
+		{Name: "alpha"},
+		{Name: "beta"},
+	}
+	m := newPaletteTestCockpit(actions, &cistern.Droplet{ID: "ci-aaa"})
+	m.paletteActive = true
+	m.paletteAll = actions
+	m.paletteFiltered = actions
+
+	v := m.View()
+	if !strings.Contains(v, "alpha") {
+		t.Error("View() with palette does not contain action name 'alpha'")
+	}
+	if !strings.Contains(v, "beta") {
+		t.Error("View() with palette does not contain action name 'beta'")
+	}
+}
+
+// ── dropletsPanel.SelectedDroplet ────────────────────────────────────────────
+
+// TestDropletsPanel_SelectedDroplet_NoData_ReturnsNil verifies that
+// SelectedDroplet returns nil when no dashboard data is loaded.
+//
+// Given: a dropletsPanel with no data
+// When:  SelectedDroplet() is called
+// Then:  nil is returned
+func TestDropletsPanel_SelectedDroplet_NoData_ReturnsNil(t *testing.T) {
+	p := newDropletsPanel("", "")
+	if got := p.SelectedDroplet(); got != nil {
+		t.Errorf("SelectedDroplet() = %v, want nil when no data loaded", got)
+	}
+}
+
+// TestDropletsPanel_SelectedDroplet_WithData_ReturnsCursorItem verifies that
+// SelectedDroplet returns the droplet at the current cursor position.
+//
+// Given: a dropletsPanel with 2 items and cursor=1
+// When:  SelectedDroplet() is called
+// Then:  the second droplet (ci-bbb) is returned
+func TestDropletsPanel_SelectedDroplet_WithData_ReturnsCursorItem(t *testing.T) {
+	p := newDropletsPanel("", "")
+	p.inner.data = &DashboardData{
+		CisternItems: []*cistern.Droplet{
+			{ID: "ci-aaa"},
+			{ID: "ci-bbb"},
+		},
+	}
+	p.inner.cursor = 1
+
+	got := p.SelectedDroplet()
+	if got == nil {
+		t.Fatal("SelectedDroplet() = nil, want droplet ci-bbb")
+	}
+	if got.ID != "ci-bbb" {
+		t.Errorf("SelectedDroplet().ID = %q, want %q", got.ID, "ci-bbb")
+	}
+}
+
+// TestDropletsPanel_SelectedDroplet_DetailView_ReturnsDetailDroplet verifies
+// that when the inner model is in the Detail tab, SelectedDroplet returns the
+// open detail droplet.
+//
+// Given: dropletsPanel in tabDetail with detailDroplet set
+// When:  SelectedDroplet() is called
+// Then:  the detail droplet is returned
+func TestDropletsPanel_SelectedDroplet_DetailView_ReturnsDetailDroplet(t *testing.T) {
+	p := newDropletsPanel("", "")
+	detail := &cistern.Droplet{ID: "ci-detail"}
+	p.inner.tab = tabDetail
+	p.inner.detailDroplet = detail
+
+	got := p.SelectedDroplet()
+	if got == nil {
+		t.Fatal("SelectedDroplet() = nil, want detail droplet")
+	}
+	if got.ID != "ci-detail" {
+		t.Errorf("SelectedDroplet().ID = %q, want %q", got.ID, "ci-detail")
+	}
+}
+
+// TestPlaceholderPanel_SelectedDroplet_ReturnsNil verifies that
+// placeholderPanel always returns nil from SelectedDroplet.
+//
+// Given: any placeholderPanel
+// When:  SelectedDroplet() is called
+// Then:  nil is returned
+func TestPlaceholderPanel_SelectedDroplet_ReturnsNil(t *testing.T) {
+	p := placeholderPanel{title: "Test"}
+	if got := p.SelectedDroplet(); got != nil {
+		t.Errorf("SelectedDroplet() = %v, want nil", got)
+	}
+}
+
+// TestDropletsPanel_PaletteActions_HasRunFunctions verifies that all actions
+// returned by dropletsPanel.PaletteActions have non-nil Run functions.
+//
+// Given: a dropletsPanel with a non-nil droplet
+// When:  PaletteActions(droplet) is called
+// Then:  every action has a non-nil Run function
+func TestDropletsPanel_PaletteActions_HasRunFunctions(t *testing.T) {
+	p := newDropletsPanel("", "")
+	d := &cistern.Droplet{ID: "ci-aaa"}
+	actions := p.PaletteActions(d)
+	for i, a := range actions {
+		if a.Run == nil {
+			t.Errorf("action[%d] %q has nil Run function", i, a.Name)
+		}
+	}
+}
+
+// TestDropletsPanel_PaletteActions_HasNameAndDescription verifies that all
+// actions returned have non-empty Name and Description fields.
+//
+// Given: a dropletsPanel with a non-nil droplet
+// When:  PaletteActions(droplet) is called
+// Then:  every action has non-empty Name and Description
+func TestDropletsPanel_PaletteActions_HasNameAndDescription(t *testing.T) {
+	p := newDropletsPanel("", "")
+	d := &cistern.Droplet{ID: "ci-aaa"}
+	actions := p.PaletteActions(d)
+	for i, a := range actions {
+		if a.Name == "" {
+			t.Errorf("action[%d] has empty Name", i)
+		}
+		if a.Description == "" {
+			t.Errorf("action[%d] %q has empty Description", i, a.Name)
+		}
+	}
+}

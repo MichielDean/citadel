@@ -52,6 +52,15 @@ type tuiActionResultMsg struct {
 	err       error
 }
 
+// tuiPaletteActionMsg is emitted by a palette action's Run function when the
+// user selects an action in the command palette. The tabAppModel handles it by
+// opening the Detail view for the target droplet and activating the matching
+// action overlay (confirm or text-entry).
+type tuiPaletteActionMsg struct {
+	dropletID string
+	action    string
+}
+
 // tabAppModel is the root Bubble Tea model for `ct tui`.
 // It manages three views: the Droplets list, the Detail panel, and the Peek panel.
 type tabAppModel struct {
@@ -332,9 +341,9 @@ func (m tabAppModel) detailLineCount() int {
 }
 
 // Update routes messages to the active view's handler.
-// tuiActionResultMsg is handled here before tab dispatch so it is never
-// silently dropped when the user navigates away from the Detail panel while
-// an async action is in-flight (e.g. during a SQLite busy-timeout delay).
+// tuiActionResultMsg and tuiPaletteActionMsg are handled here before tab
+// dispatch so they are never silently dropped when the user navigates away
+// from the Detail panel while an async action is in-flight.
 func (m tabAppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if ar, ok := msg.(tuiActionResultMsg); ok {
 		if ar.dropletID != m.selectedID {
@@ -346,6 +355,29 @@ func (m tabAppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.overlayErr = ""
 		}
 		return m, tea.Batch(m.fetchDataCmd(), m.fetchDetailCmd(m.selectedID))
+	}
+	if pm, ok := msg.(tuiPaletteActionMsg); ok {
+		if m.findDroplet(pm.dropletID) == nil {
+			return m, nil // droplet not in data — no-op
+		}
+		updated, cmd := m.openDetail(pm.dropletID)
+		if updated.detailDroplet != nil {
+			switch pm.action {
+			case actionCancel:
+				updated.overlayMode = overlayConfirm
+				updated.overlayAction = actionCancel
+			case actionPool:
+				updated.overlayMode = overlayConfirm
+				updated.overlayAction = actionPool
+			case actionRestart:
+				updated.overlayMode = overlayText
+				updated.overlayAction = actionRestart
+			case actionAddNote:
+				updated.overlayMode = overlayText
+				updated.overlayAction = actionAddNote
+			}
+		}
+		return updated, cmd
 	}
 	switch m.tab {
 	case tabDetail:

@@ -10,12 +10,13 @@ import (
 	"github.com/MichielDean/cistern/internal/cistern"
 )
 
-// PaletteAction describes a keyboard-triggered action a panel can offer in the
-// cockpit command palette when a droplet is in context. Panels return a slice
-// of these from PaletteActions so the cockpit can render a unified action bar.
+// PaletteAction describes an action a panel can expose in the cockpit command
+// palette when a droplet is in context. Panels return a slice of these from
+// PaletteActions; the user searches by Name and executes with Enter.
 type PaletteAction struct {
-	Key   string // keyboard shortcut, e.g. "x"
-	Label string // human-readable description, e.g. "cancel droplet"
+	Name        string         // action name shown in the palette list
+	Description string         // short description shown alongside the name
+	Run         func() tea.Cmd // called when the action is selected and executed
 }
 
 // TUIPanel is the interface every cockpit module must implement.
@@ -34,6 +35,10 @@ type TUIPanel interface {
 	// to decide whether to intercept Esc for return-to-sidebar navigation or
 	// forward it to the panel so the overlay can be dismissed first.
 	OverlayActive() bool
+	// SelectedDroplet returns the droplet currently in context for this panel
+	// (the list-cursor item in the Droplets view, or the open detail droplet).
+	// Returns nil when no droplet is selected.
+	SelectedDroplet() *cistern.Droplet
 }
 
 // Compile-time interface checks.
@@ -79,15 +84,56 @@ func (p dropletsPanel) OverlayActive() bool {
 	return p.inner.tab != tabDroplets || p.inner.overlayMode != overlayNone
 }
 
+// SelectedDroplet returns the droplet currently in context for the panel.
+// In the Detail or Peek tabs it returns the open detail droplet; in the
+// Droplets list it returns the item at the current cursor position.
+func (p dropletsPanel) SelectedDroplet() *cistern.Droplet {
+	switch p.inner.tab {
+	case tabDetail, tabPeek:
+		return p.inner.detailDroplet
+	default:
+		items := p.inner.visibleItems()
+		if p.inner.cursor >= len(items) {
+			return nil
+		}
+		return items[p.inner.cursor]
+	}
+}
+
 func (p dropletsPanel) PaletteActions(droplet *cistern.Droplet) []PaletteAction {
 	if droplet == nil {
 		return nil
 	}
+	id := droplet.ID
 	return []PaletteAction{
-		{Key: "x", Label: "cancel"},
-		{Key: "e", Label: "pool"},
-		{Key: "r", Label: "restart"},
-		{Key: "n", Label: "add note"},
+		{
+			Name:        "cancel",
+			Description: "cancel this droplet",
+			Run: func() tea.Cmd {
+				return func() tea.Msg { return tuiPaletteActionMsg{dropletID: id, action: actionCancel} }
+			},
+		},
+		{
+			Name:        "pool",
+			Description: "move droplet to pool",
+			Run: func() tea.Cmd {
+				return func() tea.Msg { return tuiPaletteActionMsg{dropletID: id, action: actionPool} }
+			},
+		},
+		{
+			Name:        "restart",
+			Description: "restart this droplet",
+			Run: func() tea.Cmd {
+				return func() tea.Msg { return tuiPaletteActionMsg{dropletID: id, action: actionRestart} }
+			},
+		},
+		{
+			Name:        "add note",
+			Description: "add a note to this droplet",
+			Run: func() tea.Cmd {
+				return func() tea.Msg { return tuiPaletteActionMsg{dropletID: id, action: actionAddNote} }
+			},
+		},
 	}
 }
 
@@ -148,8 +194,8 @@ func (p placeholderPanel) Title() string { return p.title }
 
 func (p placeholderPanel) KeyHelp() string { return "" }
 
-func (p placeholderPanel) OverlayActive() bool { return false }
-
+func (p placeholderPanel) OverlayActive() bool                              { return false }
+func (p placeholderPanel) SelectedDroplet() *cistern.Droplet                { return nil }
 func (p placeholderPanel) PaletteActions(_ *cistern.Droplet) []PaletteAction { return nil }
 
 // ── cockpitModel ─────────────────────────────────────────────────────────────
@@ -162,11 +208,18 @@ const cockpitSidebarWidth = 20
 // delegates content rendering and event handling to the active TUIPanel.
 type cockpitModel struct {
 	panels            []TUIPanel
-	cursor            int    // sidebar highlight position (0-based)
-	panelFocused      bool   // true = active panel receives key events; false = sidebar mode
+	cursor            int  // sidebar highlight position (0-based)
+	panelFocused      bool // true = active panel receives key events; false = sidebar mode
 	width             int
 	height            int
 	initializedPanels []bool // tracks which panels have had Init() called
+
+	// Command palette state.
+	paletteActive   bool            // true when the command palette overlay is open
+	paletteQuery    string          // current filter string typed by the user
+	paletteCursor   int             // index of the highlighted action in paletteFiltered
+	paletteAll      []PaletteAction // all actions from the active panel (unfiltered)
+	paletteFiltered []PaletteAction // actions filtered by paletteQuery
 }
 
 // newCockpitModel builds the root cockpit model with all registered panels.
@@ -261,6 +314,15 @@ func (m cockpitModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if s == "ctrl+c" {
 			return m, tea.Quit
 		}
+		// When the palette is active, all key events are handled by the palette.
+		if m.paletteActive {
+			return m.updatePalette(msg)
+		}
+		// ':' opens the command palette from any focus mode, unless the panel has
+		// an active overlay (e.g. note input in progress).
+		if s == ":" && !(m.panelFocused && m.cursor < len(m.panels) && m.panels[m.cursor].OverlayActive()) {
+			return m.openPalette(), nil
+		}
 		// Number keys switch panels from any mode — sidebar or panel — unless a
 		// panel overlay is currently consuming keyboard input (e.g. typing a note).
 		if len(s) == 1 && s[0] >= '1' && s[0] <= '9' {
@@ -343,10 +405,16 @@ func (m cockpitModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // View renders the full cockpit: sidebar on the left, active panel on the right,
-// separated by a vertical │ column.
+// separated by a vertical │ column. When the command palette is open the panel
+// area is replaced by the palette overlay.
 func (m cockpitModel) View() string {
 	sidebar := m.viewSidebar()
-	panel := m.viewActivePanel()
+	var panel string
+	if m.paletteActive {
+		panel = m.viewPalette()
+	} else {
+		panel = m.viewActivePanel()
+	}
 	return joinSideBySide(sidebar, panel, cockpitSidebarWidth)
 }
 
@@ -424,6 +492,112 @@ func joinSideBySide(sidebar, panel string, sidebarW int) string {
 		sb.WriteString(sl)
 		sb.WriteString("│")
 		sb.WriteString(pl)
+	}
+	return sb.String()
+}
+
+// filterPaletteActions returns the subset of actions whose Name contains query
+// as a case-insensitive substring. Returns all actions when query is empty.
+func filterPaletteActions(all []PaletteAction, query string) []PaletteAction {
+	if query == "" {
+		return all
+	}
+	q := strings.ToLower(query)
+	out := make([]PaletteAction, 0, len(all))
+	for _, a := range all {
+		if strings.Contains(strings.ToLower(a.Name), q) {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// openPalette collects actions from the active panel and opens the command
+// palette with a cleared query and cursor reset to 0.
+func (m cockpitModel) openPalette() cockpitModel {
+	if m.cursor < len(m.panels) {
+		selected := m.panels[m.cursor].SelectedDroplet()
+		m.paletteAll = m.panels[m.cursor].PaletteActions(selected)
+	} else {
+		m.paletteAll = nil
+	}
+	m.paletteActive = true
+	m.paletteQuery = ""
+	m.paletteCursor = 0
+	m.paletteFiltered = m.paletteAll
+	return m
+}
+
+// updatePalette handles key events while the command palette is open.
+//
+//   - esc          → dismiss palette
+//   - enter        → execute selected action, dismiss palette, focus panel
+//   - up / k       → move cursor up
+//   - down / j     → move cursor down
+//   - backspace    → remove last character from filter query
+//   - other runes  → append to filter query and re-filter; cursor resets to 0
+func (m cockpitModel) updatePalette(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	s := msg.String()
+	switch s {
+	case "esc":
+		m.paletteActive = false
+	case "enter":
+		if len(m.paletteFiltered) > 0 && m.paletteCursor < len(m.paletteFiltered) {
+			action := m.paletteFiltered[m.paletteCursor]
+			m.paletteActive = false
+			m.panelFocused = true
+			return m, action.Run()
+		}
+	case "up", "k":
+		if m.paletteCursor > 0 {
+			m.paletteCursor--
+		}
+	case "down", "j":
+		if m.paletteCursor < len(m.paletteFiltered)-1 {
+			m.paletteCursor++
+		}
+	case "backspace":
+		runes := []rune(m.paletteQuery)
+		if len(runes) > 0 {
+			m.paletteQuery = string(runes[:len(runes)-1])
+			m.paletteFiltered = filterPaletteActions(m.paletteAll, m.paletteQuery)
+			if m.paletteCursor >= len(m.paletteFiltered) && len(m.paletteFiltered) > 0 {
+				m.paletteCursor = len(m.paletteFiltered) - 1
+			} else if len(m.paletteFiltered) == 0 {
+				m.paletteCursor = 0
+			}
+		}
+	default:
+		if msg.Type == tea.KeyRunes {
+			m.paletteQuery += s
+			m.paletteFiltered = filterPaletteActions(m.paletteAll, m.paletteQuery)
+			m.paletteCursor = 0
+		}
+	}
+	return m, nil
+}
+
+// viewPalette renders the command palette in the panel content area.
+// It shows a filter input line, a divider, and the filtered action list with
+// the cursor position highlighted.
+func (m cockpitModel) viewPalette() string {
+	var sb strings.Builder
+	sb.WriteString(tuiStyleHeader.Render("> "+m.paletteQuery+"▌") + "\n")
+	sb.WriteString(strings.Repeat("─", 30) + "\n")
+	if len(m.paletteFiltered) == 0 {
+		sb.WriteString(tuiStyleDim.Render("  (no matching actions)") + "\n")
+		return sb.String()
+	}
+	for i, a := range m.paletteFiltered {
+		desc := ""
+		if a.Description != "" {
+			desc = "  " + tuiStyleDim.Render(a.Description)
+		}
+		if i == m.paletteCursor {
+			sb.WriteString(tuiStyleGreen.Render("▶ "+a.Name) + desc + "\n")
+		} else {
+			sb.WriteString("  " + a.Name + desc + "\n")
+		}
 	}
 	return sb.String()
 }

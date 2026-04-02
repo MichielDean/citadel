@@ -1897,3 +1897,143 @@ func TestTabApp_Peek_NotFlowing_ViewShowsNoSession(t *testing.T) {
 		t.Errorf("View() should contain 'session not active' for no-session placeholder, got: %q", view)
 	}
 }
+
+// ── tuiPaletteActionMsg ───────────────────────────────────────────────────────
+
+// TestTabApp_PaletteActionMsg_Cancel_OpensDetailAndConfirmOverlay verifies that
+// a tuiPaletteActionMsg with actionCancel switches to the Detail tab and opens
+// the confirm overlay.
+//
+// Given: a tabAppModel with one droplet in CisternItems
+// When:  tuiPaletteActionMsg{dropletID: "ci-aaa", action: actionCancel} arrives
+// Then:  tab=tabDetail, overlayMode=overlayConfirm, overlayAction=actionCancel
+func TestTabApp_PaletteActionMsg_Cancel_OpensDetailAndConfirmOverlay(t *testing.T) {
+	m := newTabAppModel("", "")
+	m.data = &DashboardData{
+		CisternItems: []*cistern.Droplet{
+			{ID: "ci-aaa", Title: "Test", Status: "in_progress"},
+		},
+	}
+
+	updated, _ := m.Update(tuiPaletteActionMsg{dropletID: "ci-aaa", action: actionCancel})
+	um := updated.(tabAppModel)
+
+	if um.tab != tabDetail {
+		t.Errorf("tab = %d, want tabDetail (%d)", um.tab, tabDetail)
+	}
+	if um.overlayMode != overlayConfirm {
+		t.Errorf("overlayMode = %d, want overlayConfirm (%d)", um.overlayMode, overlayConfirm)
+	}
+	if um.overlayAction != actionCancel {
+		t.Errorf("overlayAction = %q, want %q", um.overlayAction, actionCancel)
+	}
+}
+
+// TestTabApp_PaletteActionMsg_Pool_OpensDetailAndConfirmOverlay verifies that
+// a pool palette action opens the Detail tab with a confirm overlay.
+//
+// Given: a tabAppModel with one droplet
+// When:  tuiPaletteActionMsg{dropletID: "ci-aaa", action: actionPool} arrives
+// Then:  tab=tabDetail, overlayMode=overlayConfirm, overlayAction=actionPool
+func TestTabApp_PaletteActionMsg_Pool_OpensDetailAndConfirmOverlay(t *testing.T) {
+	m := newTabAppModel("", "")
+	m.data = &DashboardData{
+		CisternItems: []*cistern.Droplet{
+			{ID: "ci-aaa", Title: "Test", Status: "in_progress"},
+		},
+	}
+
+	updated, _ := m.Update(tuiPaletteActionMsg{dropletID: "ci-aaa", action: actionPool})
+	um := updated.(tabAppModel)
+
+	if um.tab != tabDetail {
+		t.Errorf("tab = %d, want tabDetail (%d)", um.tab, tabDetail)
+	}
+	if um.overlayMode != overlayConfirm {
+		t.Errorf("overlayMode = %d, want overlayConfirm (%d)", um.overlayMode, overlayConfirm)
+	}
+	if um.overlayAction != actionPool {
+		t.Errorf("overlayAction = %q, want %q", um.overlayAction, actionPool)
+	}
+}
+
+// TestTabApp_PaletteActionMsg_Restart_OpensDetailAndTextOverlay verifies that
+// a restart palette action opens the Detail tab with a text-entry overlay.
+//
+// Given: a tabAppModel with one droplet
+// When:  tuiPaletteActionMsg{dropletID: "ci-aaa", action: actionRestart} arrives
+// Then:  tab=tabDetail, overlayMode=overlayText, overlayAction=actionRestart
+func TestTabApp_PaletteActionMsg_Restart_OpensDetailAndTextOverlay(t *testing.T) {
+	m := newTabAppModel("", "")
+	m.data = &DashboardData{
+		CisternItems: []*cistern.Droplet{
+			{ID: "ci-aaa", Title: "Test", Status: "in_progress"},
+		},
+	}
+
+	updated, _ := m.Update(tuiPaletteActionMsg{dropletID: "ci-aaa", action: actionRestart})
+	um := updated.(tabAppModel)
+
+	if um.tab != tabDetail {
+		t.Errorf("tab = %d, want tabDetail (%d)", um.tab, tabDetail)
+	}
+	if um.overlayMode != overlayText {
+		t.Errorf("overlayMode = %d, want overlayText (%d)", um.overlayMode, overlayText)
+	}
+	if um.overlayAction != actionRestart {
+		t.Errorf("overlayAction = %q, want %q", um.overlayAction, actionRestart)
+	}
+}
+
+// TestTabApp_PaletteActionMsg_AddNote_OpensDetailAndTextOverlay verifies that
+// an add-note palette action opens the Detail tab with a text-entry overlay.
+//
+// Given: a tabAppModel with one droplet
+// When:  tuiPaletteActionMsg{dropletID: "ci-aaa", action: actionAddNote} arrives
+// Then:  tab=tabDetail, overlayMode=overlayText, overlayAction=actionAddNote
+func TestTabApp_PaletteActionMsg_AddNote_OpensDetailAndTextOverlay(t *testing.T) {
+	m := newTabAppModel("", "")
+	m.data = &DashboardData{
+		CisternItems: []*cistern.Droplet{
+			{ID: "ci-aaa", Title: "Test", Status: "in_progress"},
+		},
+	}
+
+	updated, _ := m.Update(tuiPaletteActionMsg{dropletID: "ci-aaa", action: actionAddNote})
+	um := updated.(tabAppModel)
+
+	if um.tab != tabDetail {
+		t.Errorf("tab = %d, want tabDetail (%d)", um.tab, tabDetail)
+	}
+	if um.overlayMode != overlayText {
+		t.Errorf("overlayMode = %d, want overlayText (%d)", um.overlayMode, overlayText)
+	}
+	if um.overlayAction != actionAddNote {
+		t.Errorf("overlayAction = %q, want %q", um.overlayAction, actionAddNote)
+	}
+}
+
+// TestTabApp_PaletteActionMsg_UnknownDroplet_IsNoOp verifies that a
+// tuiPaletteActionMsg for a droplet not present in any data list is a no-op.
+//
+// Given: a tabAppModel whose data does not contain "ci-zzz"
+// When:  tuiPaletteActionMsg{dropletID: "ci-zzz", action: actionCancel} arrives
+// Then:  tab remains tabDroplets, overlayMode remains overlayNone
+func TestTabApp_PaletteActionMsg_UnknownDroplet_IsNoOp(t *testing.T) {
+	m := newTabAppModel("", "")
+	m.data = &DashboardData{
+		CisternItems: []*cistern.Droplet{
+			{ID: "ci-aaa", Status: "open"},
+		},
+	}
+
+	updated, _ := m.Update(tuiPaletteActionMsg{dropletID: "ci-zzz", action: actionCancel})
+	um := updated.(tabAppModel)
+
+	if um.tab != tabDroplets {
+		t.Errorf("tab = %d, want tabDroplets (%d)", um.tab, tabDroplets)
+	}
+	if um.overlayMode != overlayNone {
+		t.Errorf("overlayMode = %d, want overlayNone (%d)", um.overlayMode, overlayNone)
+	}
+}
