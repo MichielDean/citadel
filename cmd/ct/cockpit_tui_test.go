@@ -1371,6 +1371,47 @@ func TestCockpit_Colon_OpensPalette_WhenPanelFocused(t *testing.T) {
 	}
 }
 
+// TestCockpit_Colon_AppendsToFilter_WhenPaletteAlreadyOpen verifies that typing
+// ':' while the palette is already open appends to the filter query rather than
+// resetting the palette (regression: paletteActive check must precede ':' check).
+//
+// Given: paletteActive=true, paletteQuery="fo"
+// When:  ':' is pressed
+// Then:  paletteActive=true and paletteQuery contains ':'
+func TestCockpit_Colon_AppendsToFilter_WhenPaletteAlreadyOpen(t *testing.T) {
+	m := newPaletteTestCockpit([]PaletteAction{{Name: "fo:ward"}}, nil)
+	m.paletteActive = true
+	m.paletteQuery = "fo"
+	m.paletteAll = []PaletteAction{{Name: "fo:ward"}}
+	m.paletteFiltered = []PaletteAction{{Name: "fo:ward"}}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
+	um := updated.(cockpitModel)
+	if !um.paletteActive {
+		t.Error("paletteActive = false, want true — ':' while palette open should filter, not close")
+	}
+	if um.paletteQuery != "fo:" {
+		t.Errorf("paletteQuery = %q, want %q — ':' should append to filter", um.paletteQuery, "fo:")
+	}
+}
+
+// TestCockpit_Colon_DoesNotOpenPalette_WhenOverlayActive verifies that ':' is
+// ignored when the focused panel has an active overlay (e.g. note input).
+// Regression: ':' must carry the same OverlayActive guard as 'esc'.
+//
+// Given: panelFocused=true, panels[0].OverlayActive()=true
+// When:  ':' is pressed
+// Then:  paletteActive remains false
+func TestCockpit_Colon_DoesNotOpenPalette_WhenOverlayActive(t *testing.T) {
+	m := newCockpitModel("", "")
+	m.panelFocused = true
+	m.panels[0] = overlayActivePanel{placeholderPanel{title: "Test"}}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
+	um := updated.(cockpitModel)
+	if um.paletteActive {
+		t.Error("paletteActive = true, want false — ':' should not open palette while overlay is active")
+	}
+}
+
 // TestCockpit_Palette_StartsWithEmptyQuery verifies that opening the palette
 // resets the filter query to empty.
 //
