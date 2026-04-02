@@ -305,7 +305,7 @@ ct tui                           # Launch interactive cockpit (requires active t
 The cockpit provides a two-pane interface: persistent left sidebar for module navigation, and a right pane showing the active module's content.
 
 **Cockpit Layout**
-- **Left sidebar**: Lists all available modules (Droplets, Dashboard, Status, Inspect, Audit) with keyboard shortcuts (1–9)
+- **Left sidebar**: Lists all available modules (Droplets, Flow, Status, Aqueducts, Inspect, Audit) with keyboard shortcuts (1–9)
   - Cursor highlight indicates focus: `▶` = panel focused (green), `▷` = sidebar focused (yellow)
   - Currently, Droplets and Status modules are fully implemented; others ship as placeholders
 - **Right pane**: Displays the active module's content

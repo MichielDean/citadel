@@ -3,6 +3,7 @@ package main
 import (
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -43,11 +44,11 @@ func TestCockpit_NewModel_DropletsPreSelected(t *testing.T) {
 //
 // Given: a new cockpitModel
 // When:  panels are inspected
-// Then:  five panels are registered
+// Then:  six panels are registered
 func TestCockpit_NewModel_HasFivePanels(t *testing.T) {
 	m := newCockpitModel("", "")
-	if len(m.panels) != 5 {
-		t.Errorf("len(panels) = %d, want 5", len(m.panels))
+	if len(m.panels) != 6 {
+		t.Errorf("len(panels) = %d, want 6", len(m.panels))
 	}
 }
 
@@ -767,6 +768,38 @@ func TestDropletsPanel_OverlayActive_ReturnsTrue_WhenOverlayText(t *testing.T) {
 	}
 }
 
+// TestDropletsPanel_OverlayActive_ReturnsTrue_WhenTabDetail verifies that
+// dropletsPanel reports an active overlay when the inner model is in tabDetail.
+// This ensures Esc is forwarded to the panel so the user can navigate back to
+// the droplets list from the detail view.
+//
+// Given: a dropletsPanel whose inner tab is tabDetail
+// When:  OverlayActive() is called
+// Then:  true is returned
+func TestDropletsPanel_OverlayActive_ReturnsTrue_WhenTabDetail(t *testing.T) {
+	p := newDropletsPanel("", "")
+	p.inner.tab = tabDetail
+	if !p.OverlayActive() {
+		t.Error("OverlayActive() = false, want true when tab is tabDetail")
+	}
+}
+
+// TestDropletsPanel_OverlayActive_ReturnsTrue_WhenTabPeek verifies that
+// dropletsPanel reports an active overlay when the inner model is in tabPeek.
+// This ensures Esc is forwarded to the panel so the user can close the peek
+// session rather than being returned to the sidebar.
+//
+// Given: a dropletsPanel whose inner tab is tabPeek
+// When:  OverlayActive() is called
+// Then:  true is returned
+func TestDropletsPanel_OverlayActive_ReturnsTrue_WhenTabPeek(t *testing.T) {
+	p := newDropletsPanel("", "")
+	p.inner.tab = tabPeek
+	if !p.OverlayActive() {
+		t.Error("OverlayActive() = false, want true when tab is tabPeek")
+	}
+}
+
 // ── esc return-to-sidebar ─────────────────────────────────────────────────────
 
 // TestCockpit_Esc_ReturnsToCockpit_WhenNoOverlayActive verifies that pressing Esc
@@ -988,6 +1021,247 @@ func TestCockpit_UppercaseQ_Quits(t *testing.T) {
 	}
 }
 
+// ── dashboardPanel (Flow) ────────────────────────────────────────────────────
+
+// TestFlowPanel_Title_ReturnsFlow verifies that the dashboard/flow panel
+// identifies itself as "Flow" in the cockpit sidebar.
+//
+// Given: a dashboardPanel
+// When:  Title() is called
+// Then:  "Flow" is returned
+func TestFlowPanel_Title_ReturnsFlow(t *testing.T) {
+	p := newDashboardPanel("", "")
+	if got := p.Title(); got != "Flow" {
+		t.Errorf("Title() = %q, want %q", got, "Flow")
+	}
+}
+
+// TestFlowPanel_KeyHelp_ReturnsNavigationHint verifies that the dashboard/flow
+// panel returns the expected navigation hint string.
+//
+// Given: a dashboardPanel
+// When:  KeyHelp() is called
+// Then:  the returned string matches the expected navigation hint exactly
+func TestFlowPanel_KeyHelp_ReturnsNavigationHint(t *testing.T) {
+	p := newDashboardPanel("", "")
+	got := p.KeyHelp()
+	if got == "" {
+		t.Error("KeyHelp() returned empty string, want navigation hint")
+	}
+	want := "↑↓/jk scroll  p peek  r refresh"
+	if got != want {
+		t.Errorf("KeyHelp() = %q, want %q", got, want)
+	}
+}
+
+// TestFlowPanel_PaletteActions_WithNilDroplet_ReturnsNil verifies that the flow
+// panel has no palette actions when no droplet is in context.
+//
+// Given: a dashboardPanel, droplet = nil
+// When:  PaletteActions(nil) is called
+// Then:  nil is returned
+func TestFlowPanel_PaletteActions_WithNilDroplet_ReturnsNil(t *testing.T) {
+	p := newDashboardPanel("", "")
+	if got := p.PaletteActions(nil); got != nil {
+		t.Errorf("PaletteActions(nil) = %v, want nil", got)
+	}
+}
+
+// TestFlowPanel_PaletteActions_WithDroplet_ReturnsNil verifies that the flow
+// panel has no palette actions even when a droplet is provided, because the flow
+// view is a read-only dashboard that does not offer per-droplet operations.
+//
+// Given: a dashboardPanel with a non-nil droplet
+// When:  PaletteActions(droplet) is called
+// Then:  nil is returned
+func TestFlowPanel_PaletteActions_WithDroplet_ReturnsNil(t *testing.T) {
+	p := newDashboardPanel("", "")
+	if got := p.PaletteActions(&cistern.Droplet{ID: "ci-aaa"}); got != nil {
+		t.Errorf("PaletteActions(droplet) = %v, want nil", got)
+	}
+}
+
+// TestFlowPanel_OverlayActive_ReturnsFalse_WhenNoOverlay verifies that a freshly
+// constructed dashboardPanel reports no active overlay.
+//
+// Given: a dashboardPanel with no peek or picker active
+// When:  OverlayActive() is called
+// Then:  false is returned
+func TestFlowPanel_OverlayActive_ReturnsFalse_WhenNoOverlay(t *testing.T) {
+	p := newDashboardPanel("", "")
+	if p.OverlayActive() {
+		t.Error("OverlayActive() = true, want false when no overlay is active")
+	}
+}
+
+// TestFlowPanel_OverlayActive_ReturnsTrue_WhenPeekActive verifies that the panel
+// reports an active overlay when the inline peek pane is open.
+//
+// Given: a dashboardPanel with inner.peekActive = true
+// When:  OverlayActive() is called
+// Then:  true is returned
+func TestFlowPanel_OverlayActive_ReturnsTrue_WhenPeekActive(t *testing.T) {
+	p := newDashboardPanel("", "")
+	p.inner.peekActive = true
+	if !p.OverlayActive() {
+		t.Error("OverlayActive() = false, want true when peekActive is set")
+	}
+}
+
+// TestFlowPanel_OverlayActive_ReturnsTrue_WhenPeekSelectMode verifies that the
+// panel reports an active overlay when the aqueduct picker is open.
+//
+// Given: a dashboardPanel with inner.peekSelectMode = true
+// When:  OverlayActive() is called
+// Then:  true is returned
+func TestFlowPanel_OverlayActive_ReturnsTrue_WhenPeekSelectMode(t *testing.T) {
+	p := newDashboardPanel("", "")
+	p.inner.peekSelectMode = true
+	if !p.OverlayActive() {
+		t.Error("OverlayActive() = false, want true when peekSelectMode is set")
+	}
+}
+
+// TestCockpit_Panel2_IsFlowPanel verifies that cockpit panel index 1 (key: 2) is
+// the live-flow dashboard, satisfying the acceptance criterion that pressing 2
+// from the cockpit navigates to the Flow panel.
+//
+// Given: a new cockpitModel
+// When:  panels[1] is inspected
+// Then:  its Title() is "Flow"
+func TestCockpit_Panel2_IsFlowPanel(t *testing.T) {
+	m := newCockpitModel("", "")
+	if len(m.panels) < 2 {
+		t.Fatalf("expected at least 2 panels, got %d", len(m.panels))
+	}
+	if got := m.panels[1].Title(); got != "Flow" {
+		t.Errorf("panels[1].Title() = %q, want %q", got, "Flow")
+	}
+}
+
+// ── lazy panel initialization ────────────────────────────────────────────────
+
+// TestCockpit_Init_OnlyPanel0_IsPreInitialized verifies that newCockpitModel
+// marks only the active (first) panel as initialized. Inactive panels must
+// remain uninitialized to prevent their tick chains from firing into the wrong
+// model while the cockpit is showing a different panel.
+//
+// Given: a new cockpitModel
+// When:  initializedPanels is inspected
+// Then:  initializedPanels[0]=true, all others false
+func TestCockpit_Init_OnlyPanel0_IsPreInitialized(t *testing.T) {
+	m := newCockpitModel("", "")
+	if !m.initializedPanels[0] {
+		t.Error("initializedPanels[0] = false, want true (active panel must be pre-initialized)")
+	}
+	for i := 1; i < len(m.initializedPanels); i++ {
+		if m.initializedPanels[i] {
+			t.Errorf("initializedPanels[%d] = true, want false (inactive panel must not be pre-initialized)", i)
+		}
+	}
+}
+
+// TestCockpit_NumberKey_LazyInitializesPanel_OnFirstActivation verifies that
+// pressing a number key to navigate to an uninitialized panel marks it
+// initialized and returns its Init cmd so the tick/animation chains start.
+//
+// Given: cursor=0, panels[1] not yet initialized
+// When:  '2' is pressed
+// Then:  initializedPanels[1]=true and returned cmd is non-nil
+func TestCockpit_NumberKey_LazyInitializesPanel_OnFirstActivation(t *testing.T) {
+	m := newCockpitModel("", "")
+	if m.initializedPanels[1] {
+		t.Fatal("precondition: panels[1] must not be initialized before test")
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	um := updated.(cockpitModel)
+
+	if !um.initializedPanels[1] {
+		t.Error("initializedPanels[1] = false after navigating to panel 2, want true")
+	}
+	if cmd == nil {
+		t.Error("cmd = nil, want non-nil (panel Init must be called on first activation)")
+	}
+}
+
+// TestCockpit_NumberKey_NoReinit_WhenPanelAlreadyInitialized verifies that
+// navigating to an already-initialized panel does not call Init again.
+//
+// Given: cursor=3, panels[0] pre-initialized
+// When:  '1' is pressed
+// Then:  returned cmd is nil (no re-init)
+func TestCockpit_NumberKey_NoReinit_WhenPanelAlreadyInitialized(t *testing.T) {
+	m := newCockpitModel("", "")
+	m.cursor = 3
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+
+	if cmd != nil {
+		t.Error("cmd != nil, want nil (already-initialized panel must not be re-initialized)")
+	}
+}
+
+// TestCockpit_TabKey_LazyInitializesPanel_WhenCursorOnUninitializedPanel
+// verifies that pressing tab/enter to focus a panel that was reached via cursor
+// navigation (j/k) but never yet initialized triggers its Init.
+//
+// Given: cursor moved to panel 1 via 'j' (not yet initialized), panelFocused=false
+// When:  Tab is pressed
+// Then:  initializedPanels[1]=true and returned cmd is non-nil
+func TestCockpit_TabKey_LazyInitializesPanel_WhenCursorOnUninitializedPanel(t *testing.T) {
+	m := newCockpitModel("", "")
+	m.panelFocused = false  // Enter sidebar mode
+
+	// Move cursor to panel[1] without focusing (j key — does not trigger init).
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	m = updated.(cockpitModel)
+	if m.initializedPanels[1] {
+		t.Fatal("precondition: panels[1] must not be initialized after cursor-only move")
+	}
+
+	// Now press tab to focus the panel.
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	um := updated.(cockpitModel)
+
+	if !um.initializedPanels[1] {
+		t.Error("initializedPanels[1] = false after tab-focusing panel 2, want true")
+	}
+	if cmd == nil {
+		t.Error("cmd = nil, want non-nil (panel Init must be called on first activation via tab)")
+	}
+}
+
+// TestCockpit_EnterKey_LazyInitializesPanel_WhenCursorOnUninitializedPanel
+// verifies that pressing enter to focus a panel that was reached via cursor
+// navigation (j/k) but never yet initialized triggers its Init.
+//
+// Given: cursor moved to panel 1 via 'j' (not yet initialized), panelFocused=false
+// When:  Enter is pressed
+// Then:  initializedPanels[1]=true and returned cmd is non-nil
+func TestCockpit_EnterKey_LazyInitializesPanel_WhenCursorOnUninitializedPanel(t *testing.T) {
+	m := newCockpitModel("", "")
+	m.panelFocused = false  // Enter sidebar mode
+
+	// Move cursor to panel[1] without focusing (j key — does not trigger init).
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	m = updated.(cockpitModel)
+	if m.initializedPanels[1] {
+		t.Fatal("precondition: panels[1] must not be initialized after cursor-only move")
+	}
+
+	// Now press enter to focus the panel.
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	um := updated.(cockpitModel)
+
+	if !um.initializedPanels[1] {
+		t.Error("initializedPanels[1] = false after enter-focusing panel 2, want true")
+	}
+	if cmd == nil {
+		t.Error("cmd = nil, want non-nil (panel Init must be called on first activation via enter)")
+	}
+}
+
 // ── panelWidth floor ──────────────────────────────────────────────────────────
 
 // TestCockpit_PanelWidth_Floor_ClampedToMinimum verifies that panelWidth() never
@@ -1004,5 +1278,36 @@ func TestCockpit_PanelWidth_Floor_ClampedToMinimum(t *testing.T) {
 	got := um.panelWidth()
 	if got != 20 {
 		t.Errorf("panelWidth() = %d, want 20 (floor) for terminal width 5", got)
+	}
+}
+
+// ── animation tick routing (navigation-away race) ────────────────────────────
+
+// TestCockpit_AnimMsg_RoutedToInitializedFlowPanel_WhenFlowPanelNotActive
+// verifies that a tuiAnimMsg is broadcast to all initialized panels, not only
+// the currently active one. This prevents the navigation-away race where:
+//  1. User activates panel 2 (dashboardPanel) — lazy init fires, starts tuiAnimTick chain.
+//  2. User navigates back to panel 1 within animInterval (150ms).
+//  3. The in-flight tuiAnimMsg arrives while cursor=0.
+//  4. Without the fix it lands on dropletsPanel which drops it, permanently
+//     freezing the Flow panel animation at frame=0.
+//
+// Given: cursor=0, panels[1] (dashboardPanel) initializedPanels[1]=true
+// When:  tuiAnimMsg is received
+// Then:  panels[1] (dashboardPanel) inner.frame advances (tick was routed to it)
+func TestCockpit_AnimMsg_RoutedToInitializedFlowPanel_WhenFlowPanelNotActive(t *testing.T) {
+	m := newCockpitModel("", "")
+	// Simulate: user activated panel 2 (dashboardPanel initialized), then navigated back.
+	m.initializedPanels[1] = true
+	m.cursor = 0 // dropletsPanel is active
+
+	frameBefore := m.panels[1].(dashboardPanel).inner.frame
+
+	updated, _ := m.Update(tuiAnimMsg(time.Time{}))
+	um := updated.(cockpitModel)
+
+	frameAfter := um.panels[1].(dashboardPanel).inner.frame
+	if frameAfter == frameBefore {
+		t.Error("dashboardPanel.inner.frame did not advance — animation tick was not routed to initialized inactive panel")
 	}
 }
