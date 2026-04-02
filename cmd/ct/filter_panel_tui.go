@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -328,7 +327,7 @@ func (p filterPanel) View() string {
 func (p filterPanel) Title() string { return "Filter" }
 
 func (p filterPanel) KeyHelp() string {
-	return fmt.Sprintf("enter submit  ctrl+d submit  n new session  ↑↓ scroll  esc sidebar")
+	return "enter submit  ctrl+d submit  n new session  ↑↓ scroll  esc sidebar"
 }
 
 func (p filterPanel) OverlayActive() bool { return false }
