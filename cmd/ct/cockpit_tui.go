@@ -46,6 +46,7 @@ var (
 	_ TUIPanel = dropletsPanel{}
 	_ TUIPanel = placeholderPanel{}
 	_ TUIPanel = dashboardPanel{}
+	_ TUIPanel = logPanel{}
 	_ TUIPanel = reposSkillsPanel{}
 )
 
@@ -233,7 +234,7 @@ func newCockpitModel(cfgPath, dbPath string) cockpitModel {
 		placeholderPanel{title: "Aqueducts"},
 		newDoctorPanel(),
 		placeholderPanel{title: "Inspect"},
-		placeholderPanel{title: "Audit"},
+		newLogPanel(defaultLogReader, nil),
 		newReposSkillsPanel(cfgPath, dbPath),
 	}
 	// Only panel[0] is initialized in Init(). All others are lazily initialized
@@ -392,6 +393,18 @@ func (m cockpitModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, cmd
 			}
 			return m, nil
+	}
+
+	// logTickMsg and logContentMsg always route to panels[5] (logPanel)
+	// so the tail refresh loop continues when the user is on another panel.
+	switch msg.(type) {
+	case logTickMsg, logContentMsg:
+		if len(m.panels) > 5 {
+			updated, cmd := m.panels[5].Update(msg)
+			m.panels[5] = updated.(TUIPanel)
+			return m, cmd
+		}
+		return m, nil
 	}
 
 	// Forward all other non-key messages and panel-focused key messages to the active panel.
