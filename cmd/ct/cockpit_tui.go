@@ -140,11 +140,7 @@ func newCockpitModel(cfgPath, dbPath string) cockpitModel {
 
 // panelWidth returns the usable column width for the right-pane panel content.
 func (m cockpitModel) panelWidth() int {
-	w := m.width - cockpitSidebarWidth - 1 // 1 col for the │ separator
-	if w < 20 {
-		w = 20
-	}
-	return w
+	return max(m.width-cockpitSidebarWidth-1, 20) // 1 col for the │ separator
 }
 
 func (m cockpitModel) Init() tea.Cmd {
@@ -243,9 +239,10 @@ func (m cockpitModel) View() string {
 // The cursor position is highlighted; colour indicates whether sidebar or panel
 // is currently focused.
 func (m cockpitModel) viewSidebar() string {
+	divider := strings.Repeat("─", cockpitSidebarWidth) + "\n"
 	var sb strings.Builder
 	sb.WriteString(tuiStyleHeader.Render("  CISTERN") + "\n")
-	sb.WriteString(strings.Repeat("─", cockpitSidebarWidth) + "\n")
+	sb.WriteString(divider)
 	for i, p := range m.panels {
 		num := fmt.Sprintf("%d", i+1)
 		name := p.Title()
@@ -258,7 +255,7 @@ func (m cockpitModel) viewSidebar() string {
 			sb.WriteString(fmt.Sprintf("  %s  %s", num, name) + "\n")
 		}
 	}
-	sb.WriteString(strings.Repeat("─", cockpitSidebarWidth) + "\n")
+	sb.WriteString(divider)
 	hint := "  tab→panel"
 	if m.panelFocused {
 		hint = "  tab→sidebar"
