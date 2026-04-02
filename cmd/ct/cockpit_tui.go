@@ -132,10 +132,13 @@ type cockpitModel struct {
 // newCockpitModel builds the root cockpit model with all registered panels.
 // The Droplets panel is the only fully-implemented module; the rest ship as
 // placeholders ready for future implementation.
+// The cockpit starts with panelFocused=true so that ct tui lands the user
+// directly in the Droplets list — identical UX to the pre-cockpit tui.
 func newCockpitModel(cfgPath, dbPath string) cockpitModel {
 	m := cockpitModel{
-		width:  100,
-		height: 24,
+		width:        100,
+		height:       24,
+		panelFocused: true,
 	}
 	inner := newTabAppModel(cfgPath, dbPath)
 	inner.width = m.panelWidth()
@@ -166,10 +169,10 @@ func (m cockpitModel) Init() tea.Cmd {
 //
 // Global intercepts (handled regardless of focus mode):
 //   - ctrl+c           → quit
+//   - 1-9              → jump to panel[n-1] and activate it (skipped when overlay active)
 //
 // Sidebar mode (!panelFocused):
 //   - tab / enter      → activate panel focus
-//   - 1-9              → jump to panel[n-1] and activate it
 //   - q / Q            → quit
 //   - up / k           → move cursor up
 //   - down / j         → move cursor down
@@ -196,9 +199,11 @@ func (m cockpitModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if s == "ctrl+c" {
 			return m, tea.Quit
 		}
-		// Sidebar mode: all sidebar key handling consolidated here.
-		if !m.panelFocused {
-			if len(s) == 1 && s[0] >= '1' && s[0] <= '9' {
+		// Number keys switch panels from any mode — sidebar or panel — unless a
+		// panel overlay is currently consuming keyboard input (e.g. typing a note).
+		if len(s) == 1 && s[0] >= '1' && s[0] <= '9' {
+			overlayActive := m.cursor < len(m.panels) && m.panels[m.cursor].OverlayActive()
+			if !overlayActive {
 				idx := int(s[0] - '1')
 				if idx < len(m.panels) {
 					m.cursor = idx
@@ -206,6 +211,11 @@ func (m cockpitModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			}
+			// overlay active: fall through to panel forwarding so the digit
+			// reaches the text input field.
+		}
+		// Sidebar mode: tab/enter/q/Q/up/down/j/k.
+		if !m.panelFocused {
 			switch s {
 			case "tab", "enter":
 				m.panelFocused = true
@@ -297,12 +307,21 @@ func (m cockpitModel) viewActivePanel() string {
 	return m.panels[m.cursor].View()
 }
 
+// trimTrailingEmpty removes trailing empty strings from a slice produced by
+// strings.Split on a newline-terminated string.
+func trimTrailingEmpty(lines []string) []string {
+	for len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	return lines
+}
+
 // joinSideBySide combines sidebar and panel content side by side, padding each
 // sidebar line to sidebarW visual columns (using lipgloss.Width for ANSI-aware
 // measurement) and inserting a │ separator between the two panes.
 func joinSideBySide(sidebar, panel string, sidebarW int) string {
-	sideLines := strings.Split(sidebar, "\n")
-	panelLines := strings.Split(panel, "\n")
+	sideLines := trimTrailingEmpty(strings.Split(sidebar, "\n"))
+	panelLines := trimTrailingEmpty(strings.Split(panel, "\n"))
 
 	n := max(len(sideLines), len(panelLines))
 

@@ -296,7 +296,7 @@ The flow dashboard displays a live view of the aqueduct system with sections:
 
 **Refresh rate** — Dashboard polls every 2 seconds when droplets are flowing. During idle periods (no active flow and state unchanged), polling backs off to 5 seconds to reduce CPU usage.
 
-### Droplet Browser (`ct tui`)
+### Cockpit (`ct tui`)
 
 ```bash
 ct tui                           # Launch interactive cockpit (requires active tmux session)

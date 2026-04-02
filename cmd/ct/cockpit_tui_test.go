@@ -24,16 +24,17 @@ func TestCockpit_NewModel_CursorStartsAtZero(t *testing.T) {
 	}
 }
 
-// TestCockpit_NewModel_SidebarFocusedInitially verifies that the cockpit starts
-// in sidebar navigation mode (panelFocused = false).
+// TestCockpit_NewModel_DropletsPreSelected verifies that the cockpit starts with
+// the Droplets panel already focused, so ct tui lands the user in the droplets
+// list without requiring an extra keypress (identical UX to the pre-cockpit tui).
 //
 // Given: a new cockpitModel
 // When:  no messages have been processed
-// Then:  panelFocused = false
-func TestCockpit_NewModel_SidebarFocusedInitially(t *testing.T) {
+// Then:  panelFocused = true (Droplets panel is pre-selected)
+func TestCockpit_NewModel_DropletsPreSelected(t *testing.T) {
 	m := newCockpitModel("", "")
-	if m.panelFocused {
-		t.Error("panelFocused = true, want false (sidebar should have initial focus)")
+	if !m.panelFocused {
+		t.Error("panelFocused = false, want true (Droplets panel should be pre-selected)")
 	}
 }
 
@@ -61,6 +62,7 @@ func TestCockpit_NewModel_HasFivePanels(t *testing.T) {
 func TestCockpit_Sidebar_Down_MovesToNextPanel(t *testing.T) {
 	m := newCockpitModel("", "")
 	m.cursor = 0
+	m.panelFocused = false
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
 	um := updated.(cockpitModel)
@@ -79,6 +81,7 @@ func TestCockpit_Sidebar_Down_MovesToNextPanel(t *testing.T) {
 func TestCockpit_Sidebar_DownArrow_MovesToNextPanel(t *testing.T) {
 	m := newCockpitModel("", "")
 	m.cursor = 0
+	m.panelFocused = false
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	um := updated.(cockpitModel)
@@ -98,6 +101,7 @@ func TestCockpit_Sidebar_Down_AtLastPanel_Stays(t *testing.T) {
 	m := newCockpitModel("", "")
 	last := len(m.panels) - 1
 	m.cursor = last
+	m.panelFocused = false
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
 	um := updated.(cockpitModel)
@@ -116,6 +120,7 @@ func TestCockpit_Sidebar_Down_AtLastPanel_Stays(t *testing.T) {
 func TestCockpit_Sidebar_Up_MovesToPreviousPanel(t *testing.T) {
 	m := newCockpitModel("", "")
 	m.cursor = 1
+	m.panelFocused = false
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
 	um := updated.(cockpitModel)
@@ -134,6 +139,7 @@ func TestCockpit_Sidebar_Up_MovesToPreviousPanel(t *testing.T) {
 func TestCockpit_Sidebar_Up_AtFirstPanel_Stays(t *testing.T) {
 	m := newCockpitModel("", "")
 	m.cursor = 0
+	m.panelFocused = false
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
 	um := updated.(cockpitModel)
@@ -151,6 +157,7 @@ func TestCockpit_Sidebar_Up_AtFirstPanel_Stays(t *testing.T) {
 // Then:  panelFocused = true
 func TestCockpit_Sidebar_Enter_ActivatesPanelFocus(t *testing.T) {
 	m := newCockpitModel("", "")
+	m.panelFocused = false
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	um := updated.(cockpitModel)
@@ -169,6 +176,7 @@ func TestCockpit_Sidebar_Enter_ActivatesPanelFocus(t *testing.T) {
 func TestCockpit_Sidebar_Enter_CursorUnchanged(t *testing.T) {
 	m := newCockpitModel("", "")
 	m.cursor = 2
+	m.panelFocused = false
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	um := updated.(cockpitModel)
@@ -189,6 +197,7 @@ func TestCockpit_Sidebar_Enter_CursorUnchanged(t *testing.T) {
 func TestCockpit_NumberKey_JumpsToPanel(t *testing.T) {
 	m := newCockpitModel("", "")
 	m.cursor = 0
+	m.panelFocused = false
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	um := updated.(cockpitModel)
@@ -221,12 +230,13 @@ func TestCockpit_NumberKey_1_ActivatesFirstPanel(t *testing.T) {
 // TestCockpit_NumberKey_OutOfRange_NoChange verifies that pressing '9' when fewer
 // than 9 panels exist does not change cursor or focus.
 //
-// Given: cockpit with 5 panels, cursor=0, panelFocused=false
+// Given: cockpit with 5 panels, cursor=0, panelFocused=false (sidebar mode)
 // When:  '9' is pressed
 // Then:  cursor=0, panelFocused=false (unchanged)
 func TestCockpit_NumberKey_OutOfRange_NoChange(t *testing.T) {
 	m := newCockpitModel("", "")
 	m.cursor = 0
+	m.panelFocused = false
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'9'}})
 	um := updated.(cockpitModel)
@@ -239,26 +249,70 @@ func TestCockpit_NumberKey_OutOfRange_NoChange(t *testing.T) {
 	}
 }
 
-// TestCockpit_NumberKey_ForwardedToPanel_WhenPanelFocused verifies that digit keys
-// are forwarded to the active panel when panelFocused=true, not intercepted by
-// the cockpit for panel switching.
+// TestCockpit_NumberKey_FromPanelMode_JumpsToPanel verifies that pressing a digit
+// key while a panel is focused switches to the corresponding panel, enabling
+// "press 1 from any module to return to Droplets" navigation.
 //
-// Given: panelFocused=true, cursor=0
+// Given: panelFocused=true, cursor=0, no overlay active
 // When:  '2' is pressed
-// Then:  cursor remains 0 and panelFocused remains true (digit was not intercepted)
-func TestCockpit_NumberKey_ForwardedToPanel_WhenPanelFocused(t *testing.T) {
+// Then:  cursor=1, panelFocused=true
+func TestCockpit_NumberKey_FromPanelMode_JumpsToPanel(t *testing.T) {
 	m := newCockpitModel("", "")
 	m.cursor = 0
 	m.panelFocused = true
+	m.panels[0] = placeholderPanel{title: "Test"} // OverlayActive() == false
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	um := updated.(cockpitModel)
+
+	if um.cursor != 1 {
+		t.Errorf("cursor = %d, want 1 (digit key should jump to panel from panel mode)", um.cursor)
+	}
+	if !um.panelFocused {
+		t.Error("panelFocused = false, want true after panel-mode number key jump")
+	}
+}
+
+// TestCockpit_Key1_FromPanelMode_ReturnsToDroplets verifies the acceptance criterion:
+// pressing '1' from any module returns the user to the Droplets panel.
+//
+// Given: panelFocused=true, cursor=2 (some other panel), no overlay active
+// When:  '1' is pressed
+// Then:  cursor=0 (Droplets), panelFocused=true
+func TestCockpit_Key1_FromPanelMode_ReturnsToDroplets(t *testing.T) {
+	m := newCockpitModel("", "")
+	m.cursor = 2
+	m.panelFocused = true
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	um := updated.(cockpitModel)
+
+	if um.cursor != 0 {
+		t.Errorf("cursor = %d, want 0 (pressing 1 from any module should return to Droplets)", um.cursor)
+	}
+	if !um.panelFocused {
+		t.Error("panelFocused = false, want true")
+	}
+}
+
+// TestCockpit_NumberKey_ForwardedToPanel_WhenOverlayActive verifies that digit keys
+// are forwarded to the active panel when an overlay is open, so text overlays can
+// receive digit input without triggering panel switching.
+//
+// Given: panelFocused=true, cursor=0, overlay is active
+// When:  '2' is pressed
+// Then:  cursor remains 0 (digit was forwarded to panel, not intercepted)
+func TestCockpit_NumberKey_ForwardedToPanel_WhenOverlayActive(t *testing.T) {
+	m := newCockpitModel("", "")
+	m.cursor = 0
+	m.panelFocused = true
+	m.panels[0] = overlayActivePanel{placeholderPanel{title: "Test"}} // OverlayActive() == true
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	um := updated.(cockpitModel)
 
 	if um.cursor != 0 {
-		t.Errorf("cursor = %d, want 0 (digit should not switch panels when panel focused)", um.cursor)
-	}
-	if !um.panelFocused {
-		t.Error("panelFocused = false, want true")
+		t.Errorf("cursor = %d, want 0 (digit must not switch panels when overlay is active)", um.cursor)
 	}
 }
 
@@ -272,6 +326,7 @@ func TestCockpit_NumberKey_ForwardedToPanel_WhenPanelFocused(t *testing.T) {
 // Then:  panelFocused=true
 func TestCockpit_Tab_EnablesPanelFocus(t *testing.T) {
 	m := newCockpitModel("", "")
+	m.panelFocused = false
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	um := updated.(cockpitModel)
@@ -310,6 +365,7 @@ func TestCockpit_Tab_ForwardedToPanel_WhenPanelFocused(t *testing.T) {
 // Then:  returned command is tea.Quit
 func TestCockpit_Q_Quits(t *testing.T) {
 	m := newCockpitModel("", "")
+	m.panelFocused = false
 
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
 
@@ -606,6 +662,20 @@ func TestJoinSideBySide_JoinsWithSeparator(t *testing.T) {
 	}
 }
 
+// TestJoinSideBySide_NoSpuriousTrailingLine verifies that joinSideBySide does not
+// emit a spurious extra separator line when both inputs are newline-terminated.
+//
+// Given: sidebar = "A\n", panel = "1\n", sidebarW = 3
+// When:  joinSideBySide is called
+// Then:  the output contains exactly 1 line (no spurious trailing "   │" row)
+func TestJoinSideBySide_NoSpuriousTrailingLine(t *testing.T) {
+	result := joinSideBySide("A\n", "1\n", 3)
+	lines := strings.Split(result, "\n")
+	if len(lines) != 1 {
+		t.Errorf("got %d lines, want 1: %q", len(lines), lines)
+	}
+}
+
 // ── OverlayActive ─────────────────────────────────────────────────────────────
 
 // overlayActivePanel is a test-only TUIPanel stub that always reports an overlay
@@ -615,6 +685,33 @@ type overlayActivePanel struct {
 }
 
 func (p overlayActivePanel) OverlayActive() bool { return true }
+
+// Update overrides placeholderPanel.Update to preserve the overlayActivePanel
+// type after forwarding — without this, any Update call demotes the receiver
+// back to placeholderPanel, silently breaking OverlayActive().
+func (p overlayActivePanel) Update(_ tea.Msg) (tea.Model, tea.Cmd) { return p, nil }
+
+// TestOverlayActivePanel_Update_PreservesType verifies that Update returns an
+// overlayActivePanel, not a placeholderPanel — preventing type demotion when
+// cockpit forwards messages to a panel with an active overlay.
+//
+// Given: an overlayActivePanel installed as the active cockpit panel
+// When:  a key message is forwarded to it via cockpit.Update
+// Then:  the panel at cursor is still an overlayActivePanel
+func TestOverlayActivePanel_Update_PreservesType(t *testing.T) {
+	m := newCockpitModel("", "")
+	m.cursor = 0
+	m.panelFocused = true
+	m.panels[0] = overlayActivePanel{placeholderPanel{title: "Test"}} // OverlayActive() == true
+
+	// Send a key that falls through to panel forwarding (overlay active blocks number-key intercept).
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	um := updated.(cockpitModel)
+
+	if _, ok := um.panels[0].(overlayActivePanel); !ok {
+		t.Errorf("panels[0] type = %T, want overlayActivePanel (type was demoted after Update)", um.panels[0])
+	}
+}
 
 // TestPlaceholderPanel_OverlayActive_ReturnsFalse verifies that the placeholder
 // panel always reports no active overlay.
@@ -722,6 +819,7 @@ func TestCockpit_Esc_ForwardedToPanel_WhenOverlayActive(t *testing.T) {
 // Then:  output contains "tab→panel"
 func TestCockpit_View_Hint_ContainsTabToPanel_WhenSidebarFocused(t *testing.T) {
 	m := newCockpitModel("", "")
+	m.panelFocused = false
 
 	if !strings.Contains(m.View(), "tab→panel") {
 		t.Error("View() does not contain 'tab→panel' hint when sidebar is focused")
@@ -754,6 +852,7 @@ func TestCockpit_View_Hint_ContainsEscToSidebar_WhenPanelFocused(t *testing.T) {
 func TestCockpit_Sidebar_UpArrow_MovesToPreviousPanel(t *testing.T) {
 	m := newCockpitModel("", "")
 	m.cursor = 1
+	m.panelFocused = false
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
 	um := updated.(cockpitModel)
@@ -877,6 +976,7 @@ func TestJoinSideBySide_UnequalHeights_PadsLongerSidebar(t *testing.T) {
 // Then:  returned command is tea.Quit
 func TestCockpit_UppercaseQ_Quits(t *testing.T) {
 	m := newCockpitModel("", "")
+	m.panelFocused = false
 
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'Q'}})
 
