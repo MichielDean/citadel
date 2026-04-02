@@ -26,16 +26,16 @@ const (
 
 // Action constants identify the pending Detail-panel action.
 const (
-	actionCancel       = "cancel"
-	actionPool         = "pool"
-	actionRestart      = "restart"
-	actionAddNote      = "addnote"
-	actionSetStep      = "setstep"
-	actionPass         = "pass"
-	actionRecirculate  = "recirculate"
-	actionClose        = "close"
-	actionReopen       = "reopen"
-	actionApprove      = "approve"
+	actionCancel      = "cancel"
+	actionPool        = "pool"
+	actionRestart     = "restart"
+	actionAddNote     = "addnote"
+	actionSetStep     = "setstep"
+	actionPass        = "pass"
+	actionRecirculate = "recirculate"
+	actionClose       = "close"
+	actionReopen      = "reopen"
+	actionApprove     = "approve"
 )
 
 // tuiDetailDataMsg carries notes fetched for the Detail panel.

@@ -2041,11 +2041,11 @@ func TestTabApp_ViewDetail_Footer_NewActions(t *testing.T) {
 		overlayMode int
 		wantPrompt  string
 	}{
-		{actionPass,        overlayConfirm, "pass this droplet?"},
-		{actionClose,       overlayConfirm, "close this droplet?"},
-		{actionReopen,      overlayConfirm, "reopen this droplet?"},
-		{actionApprove,     overlayConfirm, "approve this droplet?"},
-		{actionRecirculate, overlayText,    "recirculate to step"},
+		{actionPass, overlayConfirm, "pass this droplet?"},
+		{actionClose, overlayConfirm, "close this droplet?"},
+		{actionReopen, overlayConfirm, "reopen this droplet?"},
+		{actionApprove, overlayConfirm, "approve this droplet?"},
+		{actionRecirculate, overlayText, "recirculate to step"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.action, func(t *testing.T) {
