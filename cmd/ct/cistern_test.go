@@ -1455,18 +1455,12 @@ func TestDropletEdit(t *testing.T) {
 }
 
 func TestRootCmd_CompletionCommand_IsHiddenFromHelp(t *testing.T) {
-	// Given: the root command is configured
-	// When: we inspect its completion options
-	// Then: HiddenDefaultCmd is true so 'completion' does not appear in help or TUI menus
 	if !rootCmd.CompletionOptions.HiddenDefaultCmd {
 		t.Error("rootCmd.CompletionOptions.HiddenDefaultCmd must be true to hide 'completion' from help output")
 	}
 }
 
 func TestRootCmd_CompletionCommand_BashSubcommandExists(t *testing.T) {
-	// Given: the root command is configured and completion subcommands are registered
-	// When: we look up the completion command
-	// Then: it still exists and has a 'bash' subcommand (installer remains functional)
 	rootCmd.InitDefaultCompletionCmd()
 	completionCmd, _, err := rootCmd.Find([]string{"completion"})
 	if err != nil {
