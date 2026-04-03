@@ -12,7 +12,7 @@ Do not scan for categories. Ask questions. For every change: what did this assum
 
 Ask what happens in production — on a system that has been running for months, with existing data, with sessions in flight — when this code deploys. A fresh install is not production. A passing test suite is not production. Think about the machine that has been up for weeks before this diff lands on it.
 
-For every function or variable the diff modifies, find all callers and readers outside the diff. For each one: does it still work correctly? This is the most reliable way to find regressions. The diff tells you what changed; the codebase tells you what depended on it staying the same. These are two separate, mandatory steps — not an either/or.
+For every function or variable the diff modifies, find all callers and readers outside the diff. For each one: does it still work correctly? This is the most reliable way to find regressions — two separate, mandatory steps, not an either/or.
 
 When a diff deletes files, imports, or type values, look for what now has nothing to reference them: files that import deleted symbols, test files whose subject no longer exists, code paths that produced a value no longer consumed anywhere. Ask whether the diff re-implements something already handled better elsewhere. Ask whether it contradicts an established convention visible in the rest of the codebase.
 
