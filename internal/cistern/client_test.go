@@ -478,6 +478,38 @@ func TestAssign_NotFound(t *testing.T) {
 	}
 }
 
+// TestAssign_SetsStageDispatchedAt verifies that Assign with a non-empty worker
+// records StageDispatchedAt, and that Assign with an empty worker does not clear it
+// (the field is preserved as-is when resetting to open).
+func TestAssign_SetsStageDispatchedAt(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Task", "", 1, 2)
+	c.GetReady("myrepo")
+
+	before := time.Now()
+	if err := c.Assign(item.ID, "alice", "implement"); err != nil {
+		t.Fatal(err)
+	}
+	after := time.Now()
+
+	got, _ := c.Get(item.ID)
+	if got.StageDispatchedAt.IsZero() {
+		t.Error("StageDispatchedAt must be set when worker is assigned, got zero")
+	}
+	if got.StageDispatchedAt.Before(before) || got.StageDispatchedAt.After(after) {
+		t.Errorf("StageDispatchedAt = %v, want between %v and %v", got.StageDispatchedAt, before, after)
+	}
+
+	// Resetting to open (empty worker) must not clear StageDispatchedAt.
+	if err := c.Assign(item.ID, "", "review"); err != nil {
+		t.Fatal(err)
+	}
+	reset, _ := c.Get(item.ID)
+	if reset.StageDispatchedAt.IsZero() {
+		t.Error("StageDispatchedAt must not be cleared when resetting to open")
+	}
+}
+
 func TestAdd_WithComplexity(t *testing.T) {
 	c := testClient(t)
 	item, err := c.Add("myrepo", "Trivial fix", "", 2, 1)
