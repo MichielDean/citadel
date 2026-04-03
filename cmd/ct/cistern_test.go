@@ -1483,7 +1483,10 @@ func TestDropletHeartbeat(t *testing.T) {
 	}
 
 	// Verify last_heartbeat_at is written to DB.
-	c2, _ := cistern.New(db, "")
+	c2, err := cistern.New(db, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer c2.Close()
 	got, err := c2.Get(item.ID)
 	if err != nil {

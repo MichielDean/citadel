@@ -212,9 +212,11 @@ func (m *mockClient) FileDroplet(repo, title, description string, priority, comp
 func (m *mockClient) Heartbeat(id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if item, ok := m.items[id]; ok {
-		item.LastHeartbeatAt = time.Now()
+	item, ok := m.items[id]
+	if !ok {
+		return fmt.Errorf("droplet not found: %s", id)
 	}
+	item.LastHeartbeatAt = time.Now()
 	return nil
 }
 
