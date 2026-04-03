@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 
@@ -577,33 +576,126 @@ func (s *Session) isAlive() bool {
 	return err == nil
 }
 
-// tmuxDisplayMessage queries tmux for the current command running in the first
-// pane of the named session. It is a variable so tests can substitute a fake
-// implementation without requiring tmux to be installed on the test machine.
-var tmuxDisplayMessage = func(sessionID string) (string, error) {
-	out, err := exec.Command("tmux", "display-message", "-p", "-t", sessionID, "#{pane_current_command}").Output()
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(out)), nil
-}
-
-// isAgentAlive reports whether the agent process is still running inside the
-// tmux session. It queries pane_current_command and compares it against
-// preset.ProcessNames. A session can be alive (tmux exists) while the agent
-// has exited — isAgentAlive detects this zombie state.
-//
-// Returns true when ProcessNames is empty: no detection is configured so the
-// function conservatively assumes the agent is alive.
-func (s *Session) isAgentAlive() bool {
-	if len(s.Preset.ProcessNames) == 0 {
-		return true // no process names configured — cannot detect zombie
-	}
-	current, err := tmuxDisplayMessage(s.ID)
+// sessionIsAgentAliveFn queries the tmux pane PID for the session and walks
+// /proc to find a live claude descendant. Injectable for testing without a
+// real tmux server or process tree.
+var sessionIsAgentAliveFn = func(sessionID string) bool {
+	out, err := exec.Command("tmux", "display-message", "-p", "-t", sessionID, "#{pane_pid}").Output()
 	if err != nil {
 		return false
 	}
-	return slices.Contains(s.Preset.ProcessNames, current)
+	return claudeAliveUnderPIDIn(strings.TrimSpace(string(out)), "/proc")
+}
+
+// isAgentAlive reports whether a live claude process is running inside the
+// tmux session. It obtains the pane root PID via tmux and walks the /proc
+// process tree to find a claude descendant, making it robust against any
+// wrapper (bash, sh, tee, etc.) that sits between the pane and the agent.
+// A session can be alive (tmux exists) while the agent has exited —
+// isAgentAlive detects this zombie state.
+func (s *Session) isAgentAlive() bool {
+	return sessionIsAgentAliveFn(s.ID)
+}
+
+// claudeAliveUnderPIDIn returns true when any descendant of panePIDStr (read
+// from procRoot) has a cmdline whose argv[0] base name is "claude" or starts
+// with "claude-". procRoot is the proc filesystem root; tests may pass a fake
+// directory.
+func claudeAliveUnderPIDIn(panePIDStr, procRoot string) bool {
+	if panePIDStr == "" {
+		return false
+	}
+
+	procDir, err := os.Open(procRoot)
+	if err != nil {
+		return false
+	}
+	defer procDir.Close()
+
+	entries, err := procDir.Readdirnames(-1)
+	if err != nil {
+		return false
+	}
+
+	type procInfo struct {
+		ppid    string
+		cmdline string
+	}
+	infos := make(map[string]procInfo, len(entries))
+
+	for _, entry := range entries {
+		if !isProcPIDEntry(entry) {
+			continue
+		}
+		statusData, err := os.ReadFile(filepath.Join(procRoot, entry, "status"))
+		if err != nil {
+			continue
+		}
+		ppid := parsePPid(string(statusData))
+		cmdlineData, _ := os.ReadFile(filepath.Join(procRoot, entry, "cmdline"))
+		infos[entry] = procInfo{ppid: ppid, cmdline: string(cmdlineData)}
+	}
+
+	// Build parent → children map.
+	children := make(map[string][]string, len(infos))
+	for pid, info := range infos {
+		if info.ppid != "" {
+			children[info.ppid] = append(children[info.ppid], pid)
+		}
+	}
+
+	// BFS from panePIDStr; return true on the first claude descendant found.
+	queue := []string{panePIDStr}
+	for len(queue) > 0 {
+		pid := queue[0]
+		queue = queue[1:]
+		if info, ok := infos[pid]; ok && isClaudeCmdline(info.cmdline) {
+			return true
+		}
+		queue = append(queue, children[pid]...)
+	}
+	return false
+}
+
+// isProcPIDEntry reports whether s is a valid Linux /proc PID directory name
+// (a non-empty string of decimal digits).
+func isProcPIDEntry(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// parsePPid extracts the PPid value from a /proc/<pid>/status file.
+func parsePPid(status string) string {
+	for _, line := range strings.Split(status, "\n") {
+		if strings.HasPrefix(line, "PPid:") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				return fields[1]
+			}
+		}
+	}
+	return ""
+}
+
+// isClaudeCmdline returns true when the null-separated cmdline identifies a
+// claude process — the base name of argv[0] is "claude" or starts with "claude-".
+func isClaudeCmdline(cmdline string) bool {
+	if cmdline == "" {
+		return false
+	}
+	argv0 := strings.SplitN(cmdline, "\x00", 2)[0]
+	if argv0 == "" {
+		return false
+	}
+	base := filepath.Base(argv0)
+	return base == "claude" || strings.HasPrefix(base, "claude-")
 }
 
 // claudePathFn resolves the path to the claude executable. It is a variable so

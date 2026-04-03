@@ -2,7 +2,6 @@ package cataractae
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -665,73 +664,126 @@ func TestBuildPrompt_AddDirProvider_SkillsNotInjectedInPrompt(t *testing.T) {
 	}
 }
 
-// TestIsAgentAlive_ProcessNameMatches_ReturnsTrue verifies that isAgentAlive
-// returns true when the pane's current command matches one of the preset's
-// ProcessNames.
-func TestIsAgentAlive_ProcessNameMatches_ReturnsTrue(t *testing.T) {
-	orig := tmuxDisplayMessage
-	tmuxDisplayMessage = func(id string) (string, error) { return "claude", nil }
-	t.Cleanup(func() { tmuxDisplayMessage = orig })
+// --- isAgentAlive / claudeAliveUnderPIDIn unit tests ---
 
-	s := &Session{
-		ID:     "test-session",
-		Preset: provider.ProviderPreset{ProcessNames: []string{"claude", "node"}},
+// writeFakeProcEntry creates a minimal /proc/<pid> directory under procRoot
+// with a status file containing the given ppid and a cmdline file with
+// null-separated args.
+func writeFakeProcEntry(t *testing.T, procRoot, pid, ppid string, argv ...string) {
+	t.Helper()
+	dir := filepath.Join(procRoot, pid)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
 	}
+	status := fmt.Sprintf("Name:\tsh\nPPid:\t%s\nUid:\t1000\n", ppid)
+	if err := os.WriteFile(filepath.Join(dir, "status"), []byte(status), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cmdline := strings.Join(argv, "\x00") + "\x00"
+	if err := os.WriteFile(filepath.Join(dir, "cmdline"), []byte(cmdline), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestIsAgentAlive_ClaudeAlive_ReturnsTrue verifies that isAgentAlive returns
+// true when sessionIsAgentAliveFn reports a live claude process.
+func TestIsAgentAlive_ClaudeAlive_ReturnsTrue(t *testing.T) {
+	orig := sessionIsAgentAliveFn
+	sessionIsAgentAliveFn = func(id string) bool { return true }
+	t.Cleanup(func() { sessionIsAgentAliveFn = orig })
+
+	s := &Session{ID: "test-session"}
 	if !s.isAgentAlive() {
-		t.Error("isAgentAlive() = false, want true when pane_current_command is in ProcessNames")
+		t.Error("isAgentAlive() = false, want true when sessionIsAgentAliveFn returns true")
 	}
 }
 
-// TestIsAgentAlive_ProcessNameNotMatched_ReturnsFalse verifies that isAgentAlive
-// returns false when the pane's current command is not in ProcessNames — this is
-// a zombie session (tmux alive, agent dead).
-func TestIsAgentAlive_ProcessNameNotMatched_ReturnsFalse(t *testing.T) {
-	orig := tmuxDisplayMessage
-	tmuxDisplayMessage = func(id string) (string, error) { return "bash", nil }
-	t.Cleanup(func() { tmuxDisplayMessage = orig })
+// TestIsAgentAlive_NoClaudeProcess_ReturnsFalse verifies that isAgentAlive
+// returns false when sessionIsAgentAliveFn reports no live claude process —
+// the session is a zombie (tmux alive, agent exited).
+func TestIsAgentAlive_NoClaudeProcess_ReturnsFalse(t *testing.T) {
+	orig := sessionIsAgentAliveFn
+	sessionIsAgentAliveFn = func(id string) bool { return false }
+	t.Cleanup(func() { sessionIsAgentAliveFn = orig })
 
-	s := &Session{
-		ID:     "test-session",
-		Preset: provider.ProviderPreset{ProcessNames: []string{"claude", "node"}},
-	}
+	s := &Session{ID: "test-session"}
 	if s.isAgentAlive() {
-		t.Error("isAgentAlive() = true, want false when pane_current_command is not in ProcessNames")
+		t.Error("isAgentAlive() = true, want false when sessionIsAgentAliveFn returns false")
 	}
 }
 
-// TestIsAgentAlive_EmptyProcessNames_ReturnsTrue verifies that isAgentAlive
-// returns true when no ProcessNames are configured — the preset has no way to
-// detect zombie sessions so it conservatively assumes the agent is alive.
-func TestIsAgentAlive_EmptyProcessNames_ReturnsTrue(t *testing.T) {
-	orig := tmuxDisplayMessage
-	tmuxDisplayMessage = func(id string) (string, error) { return "bash", nil }
-	t.Cleanup(func() { tmuxDisplayMessage = orig })
-
-	s := &Session{
-		ID:     "test-session",
-		Preset: provider.ProviderPreset{},
+// TestIsAgentAlive_PassesSessionIDToFn verifies that isAgentAlive forwards the
+// session ID to sessionIsAgentAliveFn.
+func TestIsAgentAlive_PassesSessionIDToFn(t *testing.T) {
+	var capturedID string
+	orig := sessionIsAgentAliveFn
+	sessionIsAgentAliveFn = func(id string) bool {
+		capturedID = id
+		return true
 	}
-	if !s.isAgentAlive() {
-		t.Error("isAgentAlive() = false, want true when ProcessNames is empty (no detection configured)")
+	t.Cleanup(func() { sessionIsAgentAliveFn = orig })
+
+	s := &Session{ID: "myrepo-alice"}
+	s.isAgentAlive()
+	if capturedID != "myrepo-alice" {
+		t.Errorf("sessionIsAgentAliveFn called with id = %q, want %q", capturedID, "myrepo-alice")
 	}
 }
 
-// TestIsAgentAlive_TmuxError_ReturnsFalse verifies that isAgentAlive returns
-// false when the tmux display-message call fails — treat an unqueryable session
-// as a dead agent.
-func TestIsAgentAlive_TmuxError_ReturnsFalse(t *testing.T) {
-	orig := tmuxDisplayMessage
-	tmuxDisplayMessage = func(id string) (string, error) {
-		return "", errors.New("tmux: can't find session: test-session")
+// TestClaudeAliveUnderPIDIn_EmptyPID_ReturnsFalse ensures the empty PID guard fires.
+func TestClaudeAliveUnderPIDIn_EmptyPID_ReturnsFalse(t *testing.T) {
+	if claudeAliveUnderPIDIn("", t.TempDir()) {
+		t.Error("expected false for empty panePIDStr")
 	}
-	t.Cleanup(func() { tmuxDisplayMessage = orig })
+}
 
-	s := &Session{
-		ID:     "test-session",
-		Preset: provider.ProviderPreset{ProcessNames: []string{"claude"}},
+// TestClaudeAliveUnderPIDIn_NoClaudeProcess_ReturnsFalse verifies that a
+// process tree with no claude process returns false.
+func TestClaudeAliveUnderPIDIn_NoClaudeProcess_ReturnsFalse(t *testing.T) {
+	proc := t.TempDir()
+	writeFakeProcEntry(t, proc, "100", "1", "/bin/bash", "-c", "sleep 60")
+	writeFakeProcEntry(t, proc, "101", "100", "sleep", "60")
+	if claudeAliveUnderPIDIn("100", proc) {
+		t.Error("expected false when no claude process in tree")
 	}
-	if s.isAgentAlive() {
-		t.Error("isAgentAlive() = true, want false when tmux command errors")
+}
+
+// TestClaudeAliveUnderPIDIn_DirectClaudeChild_ReturnsTrue verifies that a
+// direct claude child of the pane PID is detected.
+func TestClaudeAliveUnderPIDIn_DirectClaudeChild_ReturnsTrue(t *testing.T) {
+	proc := t.TempDir()
+	writeFakeProcEntry(t, proc, "100", "1", "/bin/bash")
+	writeFakeProcEntry(t, proc, "101", "100", "/usr/local/bin/claude", "--dangerously-skip-permissions")
+	if !claudeAliveUnderPIDIn("100", proc) {
+		t.Error("expected true when claude is a direct child of pane PID")
+	}
+}
+
+// TestClaudeAliveUnderPIDIn_DeepDescendant_ReturnsTrue verifies that a claude
+// process nested several layers deep is still detected (bash → sh → tee → claude).
+func TestClaudeAliveUnderPIDIn_DeepDescendant_ReturnsTrue(t *testing.T) {
+	proc := t.TempDir()
+	writeFakeProcEntry(t, proc, "100", "1", "/bin/bash")
+	writeFakeProcEntry(t, proc, "101", "100", "/bin/sh", "-c", "claude")
+	writeFakeProcEntry(t, proc, "102", "101", "tee", "/tmp/out.log")
+	writeFakeProcEntry(t, proc, "103", "102", "claude", "--dangerously-skip-permissions")
+	if !claudeAliveUnderPIDIn("100", proc) {
+		t.Error("expected true when claude is a deep descendant of pane PID")
+	}
+}
+
+// TestClaudeAliveUnderPIDIn_UnrelatedClaudeProcess_ReturnsFalse verifies that
+// a claude process that is NOT a descendant of the pane PID is not reported.
+func TestClaudeAliveUnderPIDIn_UnrelatedClaudeProcess_ReturnsFalse(t *testing.T) {
+	proc := t.TempDir()
+	// pane tree: 100 → 101 (sleep)
+	writeFakeProcEntry(t, proc, "100", "1", "/bin/bash")
+	writeFakeProcEntry(t, proc, "101", "100", "sleep", "60")
+	// unrelated claude under a different root
+	writeFakeProcEntry(t, proc, "200", "1", "/bin/bash")
+	writeFakeProcEntry(t, proc, "201", "200", "claude", "--dangerously-skip-permissions")
+	if claudeAliveUnderPIDIn("100", proc) {
+		t.Error("expected false when claude belongs to a different process tree")
 	}
 }
 
@@ -900,26 +952,6 @@ func containsEnvPair(args []string, key, val string) bool {
 	return false
 }
 
-// TestIsAgentAlive_PassesSessionIDToDisplayMessage verifies that isAgentAlive
-// forwards the session ID to tmuxDisplayMessage.
-func TestIsAgentAlive_PassesSessionIDToDisplayMessage(t *testing.T) {
-	var capturedID string
-	orig := tmuxDisplayMessage
-	tmuxDisplayMessage = func(id string) (string, error) {
-		capturedID = id
-		return "claude", nil
-	}
-	t.Cleanup(func() { tmuxDisplayMessage = orig })
-
-	s := &Session{
-		ID:     "myrepo-alice",
-		Preset: provider.ProviderPreset{ProcessNames: []string{"claude"}},
-	}
-	s.isAgentAlive()
-	if capturedID != "myrepo-alice" {
-		t.Errorf("tmuxDisplayMessage called with id = %q, want %q", capturedID, "myrepo-alice")
-	}
-}
 
 // TestResolveIdentityDir_CisternDirWithInstrFile verifies that when the cistern
 // directory exists and contains the instrFile, resolveIdentityDir returns the cistern path.
@@ -1765,9 +1797,8 @@ func TestSpawn_AlreadyRunning_SkipsRespawn(t *testing.T) {
 	const sessionID = "spawn-guard-running-test"
 
 	// Start a long-running tmux session manually to simulate an active agent.
-	// 'sleep 60' keeps the session alive; its process name is 'sleep' which is
-	// not in ProcessNames, so isAgentAlive() returns true (conservative fallback
-	// when ProcessNames is empty).
+	// 'sleep 60' keeps the session alive. sessionIsAgentAliveFn is mocked to
+	// return true so the spawn guard treats this session as healthy.
 	spawnArgs := []string{"new-session", "-d", "-s", sessionID, "-c", t.TempDir(), "sleep 60"}
 	if out, err := exec.Command("tmux", spawnArgs...).CombinedOutput(); err != nil {
 		t.Skipf("could not create tmux session: %v: %s", err, out)
@@ -1776,12 +1807,17 @@ func TestSpawn_AlreadyRunning_SkipsRespawn(t *testing.T) {
 		exec.Command("tmux", "kill-session", "-t", sessionID).Run()
 	})
 
+	// Mock sessionIsAgentAliveFn to report the agent as alive without requiring
+	// a real claude process in the session.
+	origAlive := sessionIsAgentAliveFn
+	sessionIsAgentAliveFn = func(id string) bool { return true }
+	t.Cleanup(func() { sessionIsAgentAliveFn = origAlive })
+
 	workDir := t.TempDir()
 	s := &Session{
 		ID:      sessionID,
 		WorkDir: workDir,
-		// No ProcessNames configured → isAgentAlive() returns true (conservative).
-		Preset: provider.ProviderPreset{},
+		Preset:  provider.ProviderPreset{},
 	}
 
 	err := s.Spawn()
@@ -1822,7 +1858,8 @@ func TestSpawn_ZombieSession_KillsAndRespawns(t *testing.T) {
 	const sessionID = "spawn-guard-zombie-test"
 
 	// Create a zombie: start a tmux session running 'bash' (shell prompt only,
-	// no agent). ProcessNames = ["notbash"] so isAgentAlive() returns false.
+	// no agent). The proc-based isAgentAlive() walks /proc from the pane PID and
+	// finds no claude descendant, so it returns false — zombie detected.
 	spawnArgs := []string{"new-session", "-d", "-s", sessionID, "-c", t.TempDir(), "bash"}
 	if out, err := exec.Command("tmux", spawnArgs...).CombinedOutput(); err != nil {
 		t.Skipf("could not create tmux session: %v: %s", err, out)
@@ -1835,11 +1872,10 @@ func TestSpawn_ZombieSession_KillsAndRespawns(t *testing.T) {
 	s := &Session{
 		ID:      sessionID,
 		WorkDir: workDir,
-		// ProcessNames that don't match 'bash' → isAgentAlive() returns false.
+		// No claude process in the session → isAgentAlive() returns false.
 		Preset: provider.ProviderPreset{
-			Name:         "test",
-			Command:      "true",
-			ProcessNames: []string{"notbash", "notnode"},
+			Name:    "test",
+			Command: "true",
 		},
 	}
 

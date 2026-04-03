@@ -49,8 +49,6 @@ type ProviderPreset struct {
 	Args []string `json:"args,omitempty"`
 	// EnvPassthrough lists environment variable names to forward into the agent process.
 	EnvPassthrough []string `json:"env_passthrough,omitempty"`
-	// ProcessNames lists known OS process names for this agent (used for detection).
-	ProcessNames []string `json:"process_names,omitempty"`
 	// ModelFlag is the CLI flag used to select the model (e.g. "--model").
 	ModelFlag string `json:"model_flag,omitempty"`
 	// AddDirFlag is the CLI flag used to add a working directory (e.g. "--add-dir").
@@ -103,7 +101,6 @@ var builtins = []ProviderPreset{
 		Name:             "claude",
 		Command:          "claude",
 		Args:             []string{"--dangerously-skip-permissions"},
-		ProcessNames:     []string{"claude", "node"},
 		ModelFlag:        "--model",
 		AddDirFlag:       "--add-dir",
 		PromptFlag:       "-p",
@@ -153,7 +150,6 @@ var builtins = []ProviderPreset{
 func cloneSliceFields(p *ProviderPreset) {
 	p.Args = slices.Clone(p.Args)
 	p.EnvPassthrough = slices.Clone(p.EnvPassthrough)
-	p.ProcessNames = slices.Clone(p.ProcessNames)
 }
 
 // Builtins returns a deep copy of the built-in provider preset slice.
