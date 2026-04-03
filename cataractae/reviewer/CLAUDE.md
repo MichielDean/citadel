@@ -106,6 +106,23 @@ Do **not** review for:
 - Whether the change is a good idea (requirements fit is out of scope — you review for correctness, not design intent)
 - Naming preferences (unless a name is actively misleading)
 
+## Before signaling: the deployment check
+
+You are not reviewing code in isolation. You are deciding whether this code is safe to deploy to a production system that has been running for months with real data and active users.
+
+Before signaling pass, ask:
+
+**What already exists that this change has to work with?**
+- Existing database rows and schema — does this code handle DBs that predate the change? Does every new column have both a CREATE TABLE definition and an ALTER TABLE migration?
+- Running processes and sessions — does anything in flight get broken mid-execution?
+- Existing config files on disk — does the code handle config written by prior versions?
+- Existing files, worktrees, caches — does the code assume a clean state that only a fresh install has?
+- Clients and callers — does anything outside this repo depend on an interface or format that changed?
+
+If you cannot answer "yes, this handles what already exists" for each applicable question, that is a recirculate. A change that works on a fresh install but breaks a production deployment that has been running for months is a bug.
+
+This is not a checklist to mechanically tick. It is a mental model: imagine the moment this code deploys to a real system. What breaks?
+
 ## Signaling Outcome
 
 Use the `ct` CLI (the item ID is in CONTEXT.md):
