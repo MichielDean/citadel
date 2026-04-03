@@ -255,6 +255,45 @@ journalctl --user -u cistern-castellarius --since "1h ago" | grep <id>  # Check 
 **Recovery action:**
 No action is needed — the droplet will be re-dispatched automatically. If it keeps hitting the same limit, file a bug to increase resources or optimize the agent implementation.
 
+### Droplet Pooled With "Spawn-Cycle Limit" Note
+
+If you see a droplet note like: `"spawn-cycle limit: 5 spawns in window with no outcome recorded"`, the Castellarius detected a droplet that spawned multiple times in succession without signaling an outcome. This is an automatic circuit breaker for zombie loops.
+
+**What this means:**
+- The droplet was dispatched and spawned successfully 5 times within a 10-minute window
+- Each time, the agent session was killed (by timeout, OOM, or other failure) before calling `ct droplet pass/recirculate/pool`
+- This pattern indicates a regression where the agent keeps respawning but cannot make progress
+- The Castellarius automatically pooled the droplet to prevent runaway token burn
+
+**Expected behavior:**
+1. The spawn-cycle limit note is added to the droplet history
+2. The droplet is moved to `pooled` status
+3. The agent session is killed to stop token consumption
+4. The aqueduct pool slot is released
+5. The droplet remains pooled until manually restarted or advanced
+
+**Diagnosis:**
+If this happens repeatedly for a specific cataractae:
+```bash
+ct droplet show <id>              # View the spawn-cycle note and last outcome
+ct droplet peek <id> --raw        # Check the agent session log for errors
+journalctl --user -u cistern-castellarius --since "1h ago" | grep "spawn-cycle"  # Check scheduler logs
+```
+
+**Root cause investigation:**
+- Check if the agent is crashing: `ct droplet peek <id> --raw` — look for stack traces or exit messages
+- Verify the aqueduct config is correct: `ct aqueduct show` — wrong cataractae or missing skill?
+- Check if there's a resource limit being hit: memory, disk, timeout
+- Look for regressions in the aqueduct (recent code changes that broke that stage)
+
+**Recovery action:**
+Once you've fixed the root cause (fixed the agent code, restored a missing skill, increased timeouts):
+```bash
+ct droplet restart <id>        # Resets the spawn-cycle counter and re-dispatches
+```
+
+If the issue persists after restart, the droplet will be pooled again. Investigate the agent logs before attempting another restart.
+
 ### Droplet Reset With "Orphan Recovery" Note
 
 If you see a droplet note like: `"[scheduler:recovery] reset orphaned in_progress droplet to open — no assignee, no active session"`, the Castellarius detected and recovered a droplet that was stuck with no active worker session.

@@ -18,6 +18,30 @@ Added five non-negotiable system safety invariants to the constitutional layer (
 **Files modified:**
 - `internal/cataractae/session.go` — added "System safety invariants" section to baseCataractaePrompt
 
+### Scheduler: add spawn-cycle rate limiter to detect and pool zombie loops (ci-ip8r9)
+
+Added an automatic circuit breaker that detects and pools droplets caught in spawn loops (successful spawns with no outcome). This prevents the token-burn regression where a droplet respawns indefinitely because the agent is killed before signaling completion.
+
+**Problem solved:**
+- Prior zombie loops occurred when agents spawned successfully but were killed before calling `ct droplet pass/recirculate/pool`
+- The dispatch-loop detector only tracked *failed* spawns, so successful spawns cleared the counter
+- A single regression (e.g., tee wrapper issue) could cause indefinite respawning until API quota was exhausted
+- The prior token-burn incident consumed the weekly Claude budget in 3 days
+
+**Solution:**
+- New `dispatchLoopTracker.spawnCycles` map tracks timestamps of successful spawns per droplet
+- If a droplet spawns ≥5 times within a 10-minute window with no outcome recorded, it is automatically pooled
+- Spawn-cycle counter is reset when an outcome is observed (normal fast pipelines are unaffected)
+- Counter persists across dispatch-loop resets so zombie loops are detected regardless of spawn success/failure mix
+
+**Operator experience:**
+- When a spawn-cycle limit is reached, the droplet receives a note like: `"spawn-cycle limit: 5 spawns in window with no outcome recorded"`
+- The droplet is moved to `pooled` status and the agent session is killed to stop token consumption
+- Operators can investigate the underlying cause and restart once fixed
+- See `openclaw/cistern/references/troubleshooting.md#droplet-pooled-with-spawn-cycle-limit-note` for diagnosis steps
+
+**Impact**: Eliminates the token-burn regression class entirely. Even if a future bug causes repeated respawns, the limiter will fire within 10 minutes and protect infrastructure costs.
+
 ### Aqueduct: restore Opus for reviewer and security-review stages (ci-gi4mq)
 
 Restored the Opus model for reviewer and security-review cataractae, which require adversarial multi-hop reasoning across the full codebase to catch complex violations. Additionally upgraded the delivery stage from Haiku to Sonnet to handle edge cases like merge conflicts and rebase failures.
