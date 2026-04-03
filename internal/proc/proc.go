@@ -81,11 +81,8 @@ func IsProcPIDEntry(s string) bool {
 // ParsePPid extracts the PPid value from a /proc/<pid>/status file.
 func ParsePPid(status string) string {
 	for _, line := range strings.Split(status, "\n") {
-		if strings.HasPrefix(line, "PPid:") {
-			fields := strings.Fields(line)
-			if len(fields) >= 2 {
-				return fields[1]
-			}
+		if after, ok := strings.CutPrefix(line, "PPid:"); ok {
+			return strings.TrimSpace(after)
 		}
 	}
 	return ""
