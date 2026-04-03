@@ -1191,23 +1191,26 @@ func (s *Castellarius) dispatchRepo(ctx context.Context, repo aqueduct.RepoConfi
 			// Spawn-cycle rate limit: if this droplet has been spawned N times within
 			// the window with no outcome recorded, pool it. This is a circuit breaker
 			// for zombie loops (spawn → zombie-kill → reset-to-open → respawn → repeat).
-			if s.dispatchLoop.recentSpawnCount(req.Item.ID) >= spawnCycleThreshold && req.Item.Outcome == "" {
-				note := fmt.Sprintf("spawn-cycle limit: %d spawns in window with no outcome recorded", spawnCycleThreshold)
+			if spawnCount := s.dispatchLoop.recentSpawnCount(req.Item.ID); spawnCount >= spawnCycleThreshold && req.Item.Outcome == "" {
+				note := fmt.Sprintf("spawn-cycle limit: %d spawns in window with no outcome recorded", spawnCount)
 				s.logger.Warn("spawn-cycle limit reached — pooling droplet",
 					"droplet", req.Item.ID,
-					"spawns", spawnCycleThreshold,
+					"spawns", spawnCount,
 					"window", spawnCycleWindow.String(),
 				)
 				s.addNote(client, req.Item.ID, "scheduler", note)
-				if err := client.Pool(req.Item.ID, note); err != nil {
-					s.logger.Error("spawn-cycle limit: pool failed", "droplet", req.Item.ID, "error", err)
+				poolErr := client.Pool(req.Item.ID, note)
+				if poolErr != nil {
+					s.logger.Error("spawn-cycle limit: pool failed", "droplet", req.Item.ID, "error", poolErr)
 				}
 				sessionID := req.RepoConfig.Name + "-" + w.Name
 				if err := s.killSessionFn(sessionID); err != nil {
 					s.logger.Warn("spawn-cycle limit: kill session failed",
 						"droplet", req.Item.ID, "session", sessionID, "error", err)
 				}
-				s.dispatchLoop.reset(req.Item.ID)
+				if poolErr == nil {
+					s.dispatchLoop.reset(req.Item.ID)
+				}
 				pool.Release(w)
 				return
 			}

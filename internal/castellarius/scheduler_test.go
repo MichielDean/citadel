@@ -49,6 +49,7 @@ type mockClient struct {
 	getReadyErr         error             // if set, GetReady returns this error once then clears
 	listErr             error             // if set, List returns this error
 	listIssuesErr       error             // if set, ListIssues returns this error
+	poolErr             error             // if set, Pool returns this error
 	assignErr           error             // if set, Assign returns this error
 	cancelled           map[string]string // id → cancel reason
 	filed               []filedDroplet    // FileDroplet calls
@@ -171,6 +172,9 @@ func (m *mockClient) GetNotes(id string) ([]cistern.CataractaeNote, error) {
 func (m *mockClient) Pool(id, reason string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.poolErr != nil {
+		return m.poolErr
+	}
 	m.pooled[id] = reason
 	return nil
 }
@@ -4125,5 +4129,41 @@ func TestSpawnCycleLimiter_KillsSessionBeforeRelease(t *testing.T) {
 	// Droplet must also be pooled.
 	if _, pooled := client.pooled["sc-kill-1"]; !pooled {
 		t.Error("expected droplet to be pooled after spawn-cycle limit")
+	}
+}
+
+// TestSpawnCycleLimiter_PoolFailure_PreservesCounter verifies that when
+// client.Pool() returns an error the spawn-cycle counter is NOT reset, so the
+// circuit breaker continues to fire on every subsequent spawn rather than
+// requiring the full threshold to accumulate again.
+//
+// Given: a droplet at (spawnCycleThreshold-1) prior spawn cycles and Pool() set to fail
+// When: the dispatcher successfully spawns the agent one more time (hitting threshold)
+// Then: the spawn-cycle counter is preserved (not reset)
+func TestSpawnCycleLimiter_PoolFailure_PreservesCounter(t *testing.T) {
+	client := newMockClient()
+	droplet := &cistern.Droplet{ID: "sc-poolfail-1", Status: "open", CurrentCataractae: "implement"}
+	client.readyItems = []*cistern.Droplet{droplet}
+	client.items["sc-poolfail-1"] = droplet
+	client.poolErr = errors.New("db unavailable")
+
+	runner := newMockRunner(nil)
+	sched := testScheduler(client, runner)
+
+	// Pre-populate spawn cycles: one shy of threshold so the next spawn triggers the check.
+	for range spawnCycleThreshold - 1 {
+		sched.dispatchLoop.recordSuccess("sc-poolfail-1")
+	}
+
+	sched.Tick(context.Background())
+	if !runner.waitCalls(1, 2*time.Second) {
+		t.Fatal("timed out waiting for spawn")
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	// Pool() failed, so the counter must NOT have been reset.
+	n := sched.dispatchLoop.recentSpawnCount("sc-poolfail-1")
+	if n == 0 {
+		t.Error("spawn-cycle counter must not be reset when Pool() fails")
 	}
 }
