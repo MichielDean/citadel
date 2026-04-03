@@ -99,7 +99,7 @@ cataractae:
   - name: docs
     type: agent
     identity: docs_writer
-    model: sonnet
+    model: haiku         # mechanical copy-editing task — read diff, update .md files, no deep reasoning needed
     context: full_codebase
     skills:
       - name: cistern-droplet-state
