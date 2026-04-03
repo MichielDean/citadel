@@ -184,22 +184,25 @@ When a droplet has been inactive for a prolonged period (default: 45 minutes), t
 
 **Stall note format:**
 ```
-[scheduler:stall] elapsed=2h30m note_signal=2026-01-15T10:30:45Z worktree_signal=2026-01-15T10:30:45Z session_signal=absent
+[scheduler:stall] elapsed=2h30m heartbeat=2026-01-15T10:30:45Z
+```
+or, if no heartbeat has been emitted:
+```
+[scheduler:stall] elapsed=2h30m heartbeat=none
 ```
 
 **Fields explained:**
 - `elapsed` — How long the droplet has been inactive (rounded to nearest minute; e.g., `2h30m`, `45m`)
-- `note_signal` — Most recent timestamp when a note was written for this droplet (RFC3339 format)
-- `worktree_signal` — Most recent timestamp of activity in the droplet's worktree (files modified, etc.)
-- `session_signal` — Whether the Claude agent session is `present` (running/logs updating) or `absent` (no activity)
+- `heartbeat` — The RFC3339 timestamp of the agent's most recent `ct droplet heartbeat <id>` call, or `none` if no heartbeat has ever been emitted (pre-feature agents or agents that exited before their first heartbeat)
 
-**Rate-limiting:** To prevent log spam from long-stalled droplets, the scheduler writes at most one stall note per hour for the same droplet. If a droplet remains stalled beyond the first detection, no new note is written until 60 minutes have passed since the last note (or until the droplet shows signs of recovery).
+**Rate-limiting:** To prevent log spam from long-stalled droplets, the scheduler writes at most one stall note per hour for the same droplet. If a droplet remains stalled beyond the first detection, no new note is written until 60 minutes have passed since the last note (or until the heartbeat advances, which resets the window).
 
 **What to do when you see stall notes:**
-1. Check if the agent session is still active: `ct droplet peek <id>` (shows live session output)
-2. Identify the root cause by checking the time differences between the signals — large gaps suggest the specific component that's stuck (no notes, no worktree changes, no session activity)
-3. If the droplet can proceed, restart it: `ct droplet restart <id>`
-4. If it's a known limitation or awaiting external resources, pool it: `ct droplet pool <id> --notes "..."`
+1. Check the `heartbeat` field: if it shows `none`, the agent never emitted a heartbeat — it likely died before starting work. Check zombie detection logs and consider restarting: `ct droplet restart <id>`
+2. If `heartbeat` shows a timestamp, the agent was alive at that point. Check if the agent session is still running: `ct droplet peek <id>` (shows live session output)
+3. A stall note does **not** trigger an automatic respawn — the agent may simply be slow (e.g., waiting on an LLM response). Monitor before acting.
+4. If the droplet can proceed, restart it: `ct droplet restart <id>`
+5. If it's a known limitation or awaiting external resources, pool it: `ct droplet pool <id> --notes "..."`
 
 ### Droplet Repeatedly Failing with "backing off" Messages
 
