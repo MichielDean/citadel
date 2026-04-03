@@ -366,12 +366,12 @@ func (c *Client) GetReadyForAqueduct(repo, aqueductName string) (*Droplet, error
 
 	var droplet Droplet
 	var assignee, currentCataracta, outcome, assignedAqueduct, lastReviewedCommit, externalRef sql.NullString
-	var stageDispatchedAt2 sql.NullTime
+	var sda sql.NullTime
 	now := time.Now().UTC()
 	err = row.Scan(
 		&droplet.ID, &droplet.Repo, &droplet.Title, &droplet.Description,
 		&droplet.Priority, &droplet.Complexity, &droplet.Status, &assignee, &currentCataracta, &outcome, &assignedAqueduct, &lastReviewedCommit, &externalRef,
-		&droplet.CreatedAt, &droplet.UpdatedAt, &stageDispatchedAt2,
+		&droplet.CreatedAt, &droplet.UpdatedAt, &sda,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -385,8 +385,8 @@ func (c *Client) GetReadyForAqueduct(repo, aqueductName string) (*Droplet, error
 	droplet.AssignedAqueduct = assignedAqueduct.String
 	droplet.LastReviewedCommit = lastReviewedCommit.String
 	droplet.ExternalRef = externalRef.String
-	if stageDispatchedAt2.Valid {
-		droplet.StageDispatchedAt = stageDispatchedAt2.Time
+	if sda.Valid {
+		droplet.StageDispatchedAt = sda.Time
 	}
 
 	if _, err := tx.Exec(
@@ -823,11 +823,11 @@ func (c *Client) Search(query, status string, priority int) ([]*Droplet, error) 
 	for rows.Next() {
 		var droplet Droplet
 		var assignee, currentCataracta, outcome, assignedAqueduct, lastReviewedCommit, externalRef sql.NullString
-		var sda2 sql.NullTime
+		var sda sql.NullTime
 		if err := rows.Scan(
 			&droplet.ID, &droplet.Repo, &droplet.Title, &droplet.Description,
 			&droplet.Priority, &droplet.Complexity, &droplet.Status, &assignee, &currentCataracta, &outcome, &assignedAqueduct, &lastReviewedCommit, &externalRef,
-			&droplet.CreatedAt, &droplet.UpdatedAt, &sda2,
+			&droplet.CreatedAt, &droplet.UpdatedAt, &sda,
 		); err != nil {
 			return nil, fmt.Errorf("cistern: scan droplet: %w", err)
 		}
@@ -837,8 +837,8 @@ func (c *Client) Search(query, status string, priority int) ([]*Droplet, error) 
 		droplet.AssignedAqueduct = assignedAqueduct.String
 		droplet.LastReviewedCommit = lastReviewedCommit.String
 		droplet.ExternalRef = externalRef.String
-		if sda2.Valid {
-			droplet.StageDispatchedAt = sda2.Time
+		if sda.Valid {
+			droplet.StageDispatchedAt = sda.Time
 		}
 		droplets = append(droplets, &droplet)
 	}
