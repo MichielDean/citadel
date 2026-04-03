@@ -17,20 +17,27 @@ const (
 	dispatchLoopWindow    = 2 * time.Minute
 	dispatchLoopThreshold = 5
 	dispatchMaxSelfFix    = 3
+
+	spawnCycleWindow    = 10 * time.Minute
+	spawnCycleThreshold = 5
 )
 
 // dispatchLoopTracker tracks dispatch failures per droplet to detect and recover
 // from tight dispatch loops where a droplet repeatedly fails without spawning an agent.
+// It also tracks successful spawn cycles to detect zombie loops where spawns succeed
+// but agents never signal an outcome.
 type dispatchLoopTracker struct {
-	mu       sync.Mutex
-	failures map[string][]time.Time // dropletID → recent failure timestamps
-	fixes    map[string]int         // dropletID → number of self-fix attempts
+	mu          sync.Mutex
+	failures    map[string][]time.Time // dropletID → recent failure timestamps
+	fixes       map[string]int         // dropletID → number of self-fix attempts
+	spawnCycles map[string][]time.Time // dropletID → successful spawn timestamps
 }
 
 func newDispatchLoopTracker() *dispatchLoopTracker {
 	return &dispatchLoopTracker{
-		failures: make(map[string][]time.Time),
-		fixes:    make(map[string]int),
+		failures:    make(map[string][]time.Time),
+		fixes:       make(map[string]int),
+		spawnCycles: make(map[string][]time.Time),
 	}
 }
 
@@ -41,12 +48,51 @@ func (t *dispatchLoopTracker) recordFailure(dropletID string) {
 	t.failures[dropletID] = append(t.failures[dropletID], time.Now())
 }
 
-// reset clears all tracking state for a droplet. Called on successful agent spawn.
+// recordSuccess records a successful agent spawn for the given droplet.
+// It resets the dispatch-failure and self-fix counters (so the dispatch-loop
+// detector starts fresh) and appends a timestamp to the spawn-cycle window.
+func (t *dispatchLoopTracker) recordSuccess(dropletID string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.failures, dropletID)
+	delete(t.fixes, dropletID)
+	t.spawnCycles[dropletID] = append(t.spawnCycles[dropletID], time.Now())
+}
+
+// recentSpawnCount returns the number of successful spawns recorded within
+// spawnCycleWindow. Old timestamps are pruned in place to prevent unbounded growth.
+func (t *dispatchLoopTracker) recentSpawnCount(dropletID string) int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	cutoff := time.Now().Add(-spawnCycleWindow)
+	all := t.spawnCycles[dropletID]
+	n := 0
+	for _, ts := range all {
+		if ts.After(cutoff) {
+			all[n] = ts
+			n++
+		}
+	}
+	t.spawnCycles[dropletID] = all[:n]
+	return n
+}
+
+// resetSpawnCycles clears the spawn-cycle history for a droplet.
+// Called when an agent records an outcome so fast-cycling pipelines are not penalised.
+func (t *dispatchLoopTracker) resetSpawnCycles(dropletID string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.spawnCycles, dropletID)
+}
+
+// reset clears all tracking state for a droplet, including spawn cycles.
+// Called at terminal recovery paths (e.g. after pooling via dispatch-loop recovery).
 func (t *dispatchLoopTracker) reset(dropletID string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	delete(t.failures, dropletID)
 	delete(t.fixes, dropletID)
+	delete(t.spawnCycles, dropletID)
 }
 
 // resetFailures clears failure history while preserving the fix count.

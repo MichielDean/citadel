@@ -577,3 +577,127 @@ func TestRecoverDispatchLoop_AddNoteError_PoolingPath_LogsWarn(t *testing.T) {
 		t.Errorf("expected WARN log when AddNote fails during pooling; log: %q", buf.String())
 	}
 }
+
+// --- spawn-cycle tracker tests ---
+
+func TestSpawnCycleTracker_RecordSuccess_RecordsTimestamp(t *testing.T) {
+	tracker := newDispatchLoopTracker()
+
+	if n := tracker.recentSpawnCount("drop1"); n != 0 {
+		t.Fatalf("expected 0, got %d", n)
+	}
+	tracker.recordSuccess("drop1")
+	if n := tracker.recentSpawnCount("drop1"); n != 1 {
+		t.Fatalf("expected 1 after recordSuccess, got %d", n)
+	}
+}
+
+func TestSpawnCycleTracker_BelowThreshold_CountsCorrectly(t *testing.T) {
+	tracker := newDispatchLoopTracker()
+
+	for range spawnCycleThreshold - 1 {
+		tracker.recordSuccess("drop1")
+	}
+	if n := tracker.recentSpawnCount("drop1"); n != spawnCycleThreshold-1 {
+		t.Fatalf("expected %d, got %d", spawnCycleThreshold-1, n)
+	}
+}
+
+func TestSpawnCycleTracker_AtThreshold_CountsCorrectly(t *testing.T) {
+	tracker := newDispatchLoopTracker()
+
+	for range spawnCycleThreshold {
+		tracker.recordSuccess("drop1")
+	}
+	if n := tracker.recentSpawnCount("drop1"); n != spawnCycleThreshold {
+		t.Fatalf("expected %d, got %d", spawnCycleThreshold, n)
+	}
+}
+
+func TestSpawnCycleTracker_StaleSpawnsIgnored(t *testing.T) {
+	tracker := newDispatchLoopTracker()
+
+	// Inject a stale spawn by directly writing to the map.
+	tracker.mu.Lock()
+	tracker.spawnCycles["drop1"] = []time.Time{
+		time.Now().Add(-(spawnCycleWindow + time.Minute)),
+	}
+	tracker.mu.Unlock()
+
+	if n := tracker.recentSpawnCount("drop1"); n != 0 {
+		t.Fatalf("expected 0 (stale spawn outside window), got %d", n)
+	}
+}
+
+func TestSpawnCycleTracker_ResetSpawnCycles_ClearsCount(t *testing.T) {
+	tracker := newDispatchLoopTracker()
+
+	for range spawnCycleThreshold {
+		tracker.recordSuccess("drop1")
+	}
+	if n := tracker.recentSpawnCount("drop1"); n != spawnCycleThreshold {
+		t.Fatalf("precondition: expected %d, got %d", spawnCycleThreshold, n)
+	}
+
+	tracker.resetSpawnCycles("drop1")
+
+	if n := tracker.recentSpawnCount("drop1"); n != 0 {
+		t.Fatalf("expected 0 after resetSpawnCycles, got %d", n)
+	}
+}
+
+func TestSpawnCycleTracker_RecordSuccess_ResetsFailures(t *testing.T) {
+	tracker := newDispatchLoopTracker()
+
+	for range 3 {
+		tracker.recordFailure("drop1")
+	}
+	tracker.incrementFix("drop1")
+
+	tracker.recordSuccess("drop1")
+
+	if n := tracker.recentFailureCount("drop1"); n != 0 {
+		t.Fatalf("expected 0 failures after recordSuccess, got %d", n)
+	}
+	// Fix count reset too — incrementFix should return 1.
+	if n := tracker.incrementFix("drop1"); n != 1 {
+		t.Fatalf("expected fix count 1 after recordSuccess, got %d", n)
+	}
+}
+
+func TestSpawnCycleTracker_Reset_ClearsSpawnCycles(t *testing.T) {
+	tracker := newDispatchLoopTracker()
+
+	for range 3 {
+		tracker.recordSuccess("drop1")
+	}
+	tracker.reset("drop1")
+
+	if n := tracker.recentSpawnCount("drop1"); n != 0 {
+		t.Fatalf("expected 0 spawn cycles after full reset, got %d", n)
+	}
+}
+
+func TestSpawnCycleTracker_IndependentDroplets(t *testing.T) {
+	tracker := newDispatchLoopTracker()
+
+	for range spawnCycleThreshold {
+		tracker.recordSuccess("drop1")
+	}
+	tracker.recordSuccess("drop2")
+
+	if n := tracker.recentSpawnCount("drop1"); n != spawnCycleThreshold {
+		t.Fatalf("drop1: expected %d, got %d", spawnCycleThreshold, n)
+	}
+	if n := tracker.recentSpawnCount("drop2"); n != 1 {
+		t.Fatalf("drop2: expected 1, got %d", n)
+	}
+
+	tracker.resetSpawnCycles("drop1")
+	if n := tracker.recentSpawnCount("drop1"); n != 0 {
+		t.Fatalf("drop1: expected 0 after reset, got %d", n)
+	}
+	if n := tracker.recentSpawnCount("drop2"); n != 1 {
+		t.Fatalf("drop2: should be unaffected by drop1 resetSpawnCycles, got %d", n)
+	}
+}

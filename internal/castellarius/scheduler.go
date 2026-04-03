@@ -784,6 +784,10 @@ func (s *Castellarius) observeRepo(_ context.Context, repo aqueduct.RepoConfig) 
 			continue // still running
 		}
 
+		// Outcome recorded — reset the spawn-cycle counter so normal fast pipelines
+		// that cycle through cataractae quickly are never penalised by the limiter.
+		s.dispatchLoop.resetSpawnCycles(item.ID)
+
 		step := currentCataracta(item, wf)
 		assignee := item.Assignee
 
@@ -1180,8 +1184,36 @@ func (s *Castellarius) dispatchRepo(ctx context.Context, repo aqueduct.RepoConfi
 				pool.Release(w)
 				return
 			}
-			// Successful spawn — reset the dispatch-loop counter.
-			s.dispatchLoop.reset(req.Item.ID)
+			// Successful spawn — record the spawn cycle and reset the dispatch-loop
+			// failure counter. The spawn-cycle count is NOT reset here; it persists
+			// until an outcome is observed so zombie loops are detected across resets.
+			s.dispatchLoop.recordSuccess(req.Item.ID)
+			// Spawn-cycle rate limit: if this droplet has been spawned N times within
+			// the window with no outcome recorded, pool it. This is a circuit breaker
+			// for zombie loops (spawn → zombie-kill → reset-to-open → respawn → repeat).
+			if spawnCount := s.dispatchLoop.recentSpawnCount(req.Item.ID); spawnCount >= spawnCycleThreshold && req.Item.Outcome == "" {
+				note := fmt.Sprintf("spawn-cycle limit: %d spawns in window with no outcome recorded", spawnCount)
+				s.logger.Warn("spawn-cycle limit reached — pooling droplet",
+					"droplet", req.Item.ID,
+					"spawns", spawnCount,
+					"window", spawnCycleWindow.String(),
+				)
+				s.addNote(client, req.Item.ID, "scheduler", note)
+				poolErr := client.Pool(req.Item.ID, note)
+				if poolErr != nil {
+					s.logger.Error("spawn-cycle limit: pool failed", "droplet", req.Item.ID, "error", poolErr)
+				}
+				sessionID := req.RepoConfig.Name + "-" + w.Name
+				if err := s.killSessionFn(sessionID); err != nil {
+					s.logger.Warn("spawn-cycle limit: kill session failed",
+						"droplet", req.Item.ID, "session", sessionID, "error", err)
+				}
+				if poolErr == nil {
+					s.dispatchLoop.reset(req.Item.ID)
+				}
+				pool.Release(w)
+				return
+			}
 			// On success: worker stays busy; observe phase releases it when the
 			// outcome is written to the DB.
 		}()

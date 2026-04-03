@@ -49,6 +49,7 @@ type mockClient struct {
 	getReadyErr         error             // if set, GetReady returns this error once then clears
 	listErr             error             // if set, List returns this error
 	listIssuesErr       error             // if set, ListIssues returns this error
+	poolErr             error             // if set, Pool returns this error
 	assignErr           error             // if set, Assign returns this error
 	cancelled           map[string]string // id → cancel reason
 	filed               []filedDroplet    // FileDroplet calls
@@ -171,6 +172,9 @@ func (m *mockClient) GetNotes(id string) ([]cistern.CataractaeNote, error) {
 func (m *mockClient) Pool(id, reason string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.poolErr != nil {
+		return m.poolErr
+	}
 	m.pooled[id] = reason
 	return nil
 }
@@ -3959,5 +3963,207 @@ func TestDispatch_SetsAssignedAqueduct(t *testing.T) {
 	}
 	if item.AssignedAqueduct == "" {
 		t.Error("AssignedAqueduct is empty after dispatch — SetAssignedAqueduct was not called")
+	}
+}
+
+// --- spawn-cycle rate limiter scheduler tests ---
+
+// TestSpawnCycleLimiter_PoolsAfterNSpawnsWithNoOutcome verifies that a droplet
+// is automatically pooled when it reaches the spawn-cycle threshold with no
+// recorded outcome. Simulates a zombie loop: agent spawns successfully but is
+// killed before writing an outcome, so the counter accumulates.
+//
+// Given: a droplet with (spawnCycleThreshold-1) prior spawn cycles recorded
+// When: the dispatcher successfully spawns the agent one more time (hitting threshold)
+// Then: the droplet is pooled with a "spawn-cycle limit" note
+func TestSpawnCycleLimiter_PoolsAfterNSpawnsWithNoOutcome(t *testing.T) {
+	client := newMockClient()
+	droplet := &cistern.Droplet{ID: "sc-pool-1", Status: "open", CurrentCataractae: "implement"}
+	client.readyItems = []*cistern.Droplet{droplet}
+	client.items["sc-pool-1"] = droplet
+
+	// Runner succeeds but writes no outcome — simulates a zombie session.
+	runner := newMockRunner(nil)
+	sched := testScheduler(client, runner)
+
+	// Pre-populate spawn cycles: one shy of the threshold, so the next spawn triggers it.
+	for range spawnCycleThreshold - 1 {
+		sched.dispatchLoop.recordSuccess("sc-pool-1")
+	}
+
+	sched.Tick(context.Background())
+	if !runner.waitCalls(1, 2*time.Second) {
+		t.Fatal("timed out waiting for spawn")
+	}
+	// Allow the goroutine's post-spawn code (pool check) to complete.
+	time.Sleep(50 * time.Millisecond)
+
+	client.mu.Lock()
+	defer client.mu.Unlock()
+
+	reason, pooled := client.pooled["sc-pool-1"]
+	if !pooled {
+		t.Fatal("expected droplet to be pooled after spawn-cycle limit")
+	}
+	if !strings.Contains(reason, "spawn-cycle limit") {
+		t.Errorf("pool reason must contain 'spawn-cycle limit'; got: %q", reason)
+	}
+	if !strings.Contains(reason, fmt.Sprintf("%d", spawnCycleThreshold)) {
+		t.Errorf("pool reason must contain spawn count %d; got: %q", spawnCycleThreshold, reason)
+	}
+}
+
+// TestSpawnCycleLimiter_DoesNotPoolBelowThreshold verifies that a droplet is
+// NOT pooled when the spawn count is below the threshold.
+//
+// Given: a droplet with (spawnCycleThreshold-2) prior spawn cycles recorded
+// When: the dispatcher successfully spawns the agent (count = threshold-1)
+// Then: the droplet is not pooled
+func TestSpawnCycleLimiter_DoesNotPoolBelowThreshold(t *testing.T) {
+	client := newMockClient()
+	droplet := &cistern.Droplet{ID: "sc-nopool-1", Status: "open", CurrentCataractae: "implement"}
+	client.readyItems = []*cistern.Droplet{droplet}
+	client.items["sc-nopool-1"] = droplet
+
+	runner := newMockRunner(nil)
+	sched := testScheduler(client, runner)
+
+	// One shy of one-shy-of-threshold: next spawn lands at threshold-1.
+	for range spawnCycleThreshold - 2 {
+		sched.dispatchLoop.recordSuccess("sc-nopool-1")
+	}
+
+	sched.Tick(context.Background())
+	if !runner.waitCalls(1, 2*time.Second) {
+		t.Fatal("timed out waiting for spawn")
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	client.mu.Lock()
+	defer client.mu.Unlock()
+
+	if _, pooled := client.pooled["sc-nopool-1"]; pooled {
+		t.Error("expected droplet NOT to be pooled below the spawn-cycle threshold")
+	}
+}
+
+// TestSpawnCycleLimiter_OutcomeResetsCounter verifies that when an agent signals
+// an outcome, the spawn-cycle counter is reset. This ensures that a normal fast
+// pipeline (spawn → outcome → spawn → outcome → ...) is never penalised by the
+// limiter even after many cycles.
+//
+// Given: a droplet with (spawnCycleThreshold-1) spawn cycles in the tracker
+// When: observeRepo processes an outcome for that droplet
+// Then: the spawn-cycle counter is reset to 0
+func TestSpawnCycleLimiter_OutcomeResetsCounter(t *testing.T) {
+	client := newMockClient()
+	droplet := &cistern.Droplet{
+		ID:                "sc-reset-1",
+		Status:            "in_progress",
+		CurrentCataractae: "implement",
+		Outcome:           "pass",
+	}
+	client.items["sc-reset-1"] = droplet
+
+	runner := newMockRunner(client)
+	sched := testScheduler(client, runner)
+
+	// Simulate near-threshold spawn history.
+	for range spawnCycleThreshold - 1 {
+		sched.dispatchLoop.recordSuccess("sc-reset-1")
+	}
+	if n := sched.dispatchLoop.recentSpawnCount("sc-reset-1"); n != spawnCycleThreshold-1 {
+		t.Fatalf("precondition: expected %d spawn cycles, got %d", spawnCycleThreshold-1, n)
+	}
+
+	// observeRepo processes the outcome — this must call resetSpawnCycles.
+	sched.Tick(context.Background())
+	time.Sleep(50 * time.Millisecond)
+
+	if n := sched.dispatchLoop.recentSpawnCount("sc-reset-1"); n != 0 {
+		t.Errorf("expected spawn-cycle counter reset to 0 after outcome; got %d", n)
+	}
+}
+
+// TestSpawnCycleLimiter_KillsSessionBeforeRelease verifies that when the
+// spawn-cycle limit is reached the agent's tmux session is killed before the
+// worker pool slot is released, so the N-th agent cannot keep running and burn
+// tokens after the circuit breaker fires.
+//
+// Given: a droplet at (spawnCycleThreshold-1) prior spawn cycles
+// When: the dispatcher successfully spawns the agent one more time (hitting threshold)
+// Then: killSessionFn is called with "test-repo-<worker>" before pool.Release
+func TestSpawnCycleLimiter_KillsSessionBeforeRelease(t *testing.T) {
+	client := newMockClient()
+	droplet := &cistern.Droplet{ID: "sc-kill-1", Status: "open", CurrentCataractae: "implement"}
+	client.readyItems = []*cistern.Droplet{droplet}
+	client.items["sc-kill-1"] = droplet
+
+	runner := newMockRunner(nil)
+	sched := testScheduler(client, runner)
+
+	var killedSessions []string
+	sched.killSessionFn = func(sessionID string) error {
+		killedSessions = append(killedSessions, sessionID)
+		return nil
+	}
+
+	// Pre-populate spawn cycles: one shy of threshold so the next spawn triggers it.
+	for range spawnCycleThreshold - 1 {
+		sched.dispatchLoop.recordSuccess("sc-kill-1")
+	}
+
+	sched.Tick(context.Background())
+	if !runner.waitCalls(1, 2*time.Second) {
+		t.Fatal("timed out waiting for spawn")
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	if len(killedSessions) != 1 {
+		t.Fatalf("expected killSessionFn to be called once; got %d calls: %v", len(killedSessions), killedSessions)
+	}
+	// Session name is "<repo>-<worker>"; worker is "alpha" (first available in testConfig).
+	if killedSessions[0] != "test-repo-alpha" {
+		t.Errorf("killed session = %q, want %q", killedSessions[0], "test-repo-alpha")
+	}
+	// Droplet must also be pooled.
+	if _, pooled := client.pooled["sc-kill-1"]; !pooled {
+		t.Error("expected droplet to be pooled after spawn-cycle limit")
+	}
+}
+
+// TestSpawnCycleLimiter_PoolFailure_PreservesCounter verifies that when
+// client.Pool() returns an error the spawn-cycle counter is NOT reset, so the
+// circuit breaker continues to fire on every subsequent spawn rather than
+// requiring the full threshold to accumulate again.
+//
+// Given: a droplet at (spawnCycleThreshold-1) prior spawn cycles and Pool() set to fail
+// When: the dispatcher successfully spawns the agent one more time (hitting threshold)
+// Then: the spawn-cycle counter is preserved (not reset)
+func TestSpawnCycleLimiter_PoolFailure_PreservesCounter(t *testing.T) {
+	client := newMockClient()
+	droplet := &cistern.Droplet{ID: "sc-poolfail-1", Status: "open", CurrentCataractae: "implement"}
+	client.readyItems = []*cistern.Droplet{droplet}
+	client.items["sc-poolfail-1"] = droplet
+	client.poolErr = errors.New("db unavailable")
+
+	runner := newMockRunner(nil)
+	sched := testScheduler(client, runner)
+
+	// Pre-populate spawn cycles: one shy of threshold so the next spawn triggers the check.
+	for range spawnCycleThreshold - 1 {
+		sched.dispatchLoop.recordSuccess("sc-poolfail-1")
+	}
+
+	sched.Tick(context.Background())
+	if !runner.waitCalls(1, 2*time.Second) {
+		t.Fatal("timed out waiting for spawn")
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	// Pool() failed, so the counter must NOT have been reset.
+	n := sched.dispatchLoop.recentSpawnCount("sc-poolfail-1")
+	if n == 0 {
+		t.Error("spawn-cycle counter must not be reset when Pool() fails")
 	}
 }
