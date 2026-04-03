@@ -1417,16 +1417,28 @@ func (s *Castellarius) heartbeatRepo(ctx context.Context, repo aqueduct.RepoConf
 		// the droplet to open for re-dispatch. This runs on every heartbeat
 		// tick (~30s) — no threshold, no waiting.
 		//
-		// Minimum age guard: skip sessions dispatched recently.
-		// At stage transitions the previous claude exits naturally and the pane
-		// briefly shows "bash" before the next spawn starts claude. A short guard
-		// causes false-positive zombie detection during this window.
-		// Use 4× heartbeatInterval so the guard scales with the heartbeat rate:
-		// production (30s heartbeat) → 2min guard; tests (1s heartbeat) → 4s guard.
+		// State-machine invariant: a droplet is a zombie if and only if
+		//   (1) it is assigned to a worker,
+		//   (2) the worker's tmux session is dead,
+		//   (3) the stage has been running long enough to be real (age guard), AND
+		//   (4) no outcome has been recorded (Outcome == "" — checked above).
+		// Condition (4) is already enforced: the loop skips items whose Outcome
+		// is non-empty. Conditions (1–3) are enforced below.
+		//
+		// Age guard: use StageDispatchedAt (set only when a worker is assigned)
+		// rather than UpdatedAt (bumped by notes, outcome signals, and other
+		// changes). This ensures the guard always reflects actual dispatch time,
+		// not incidental updates. Falls back to UpdatedAt for droplets dispatched
+		// before this field was introduced.
+		// Scale: production (30s heartbeat) → 2min guard; tests (1s heartbeat) → 4s guard.
 		zombieGuard := 4 * s.heartbeatInterval
 		if item.Assignee != "" {
 			sessionID := repo.Name + "-" + item.Assignee
-			if time.Since(item.UpdatedAt) < zombieGuard {
+			dispatchedAt := item.StageDispatchedAt
+			if dispatchedAt.IsZero() {
+				dispatchedAt = item.UpdatedAt
+			}
+			if time.Since(dispatchedAt) < zombieGuard {
 				continue
 			}
 			if !isTmuxAlive(sessionID) {
@@ -1458,7 +1470,7 @@ func (s *Castellarius) heartbeatRepo(ctx context.Context, repo aqueduct.RepoConf
 					"droplet", item.ID,
 					"assignee", item.Assignee,
 					"cataractae", step.Name,
-					"session_age", time.Since(item.UpdatedAt).Round(time.Second).String(),
+					"session_age", time.Since(dispatchedAt).Round(time.Second).String(),
 				)
 				if err := client.Assign(item.ID, "", step.Name); err != nil {
 					s.logger.Error("heartbeat: zombie reset failed",
