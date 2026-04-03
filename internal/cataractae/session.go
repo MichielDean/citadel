@@ -6,11 +6,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 
 	"github.com/MichielDean/cistern/internal/aqueduct"
+	"github.com/MichielDean/cistern/internal/proc"
 	"github.com/MichielDean/cistern/internal/provider"
 )
 
@@ -577,33 +577,25 @@ func (s *Session) isAlive() bool {
 	return err == nil
 }
 
-// tmuxDisplayMessage queries tmux for the current command running in the first
-// pane of the named session. It is a variable so tests can substitute a fake
-// implementation without requiring tmux to be installed on the test machine.
-var tmuxDisplayMessage = func(sessionID string) (string, error) {
-	out, err := exec.Command("tmux", "display-message", "-p", "-t", sessionID, "#{pane_current_command}").Output()
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(out)), nil
-}
-
-// isAgentAlive reports whether the agent process is still running inside the
-// tmux session. It queries pane_current_command and compares it against
-// preset.ProcessNames. A session can be alive (tmux exists) while the agent
-// has exited — isAgentAlive detects this zombie state.
-//
-// Returns true when ProcessNames is empty: no detection is configured so the
-// function conservatively assumes the agent is alive.
-func (s *Session) isAgentAlive() bool {
-	if len(s.Preset.ProcessNames) == 0 {
-		return true // no process names configured — cannot detect zombie
-	}
-	current, err := tmuxDisplayMessage(s.ID)
+// sessionIsAgentAliveFn queries the tmux pane PID for the session and walks
+// /proc to find a live claude descendant. Injectable for testing without a
+// real tmux server or process tree.
+var sessionIsAgentAliveFn = func(sessionID string) bool {
+	out, err := exec.Command("tmux", "display-message", "-p", "-t", sessionID, "#{pane_pid}").Output()
 	if err != nil {
 		return false
 	}
-	return slices.Contains(s.Preset.ProcessNames, current)
+	return proc.ClaudeAliveUnderPIDIn(strings.TrimSpace(string(out)), "/proc")
+}
+
+// isAgentAlive reports whether a live claude process is running inside the
+// tmux session. It obtains the pane root PID via tmux and walks the /proc
+// process tree to find a claude descendant, making it robust against any
+// wrapper (bash, sh, tee, etc.) that sits between the pane and the agent.
+// A session can be alive (tmux exists) while the agent has exited —
+// isAgentAlive detects this zombie state.
+func (s *Session) isAgentAlive() bool {
+	return sessionIsAgentAliveFn(s.ID)
 }
 
 // claudePathFn resolves the path to the claude executable. It is a variable so

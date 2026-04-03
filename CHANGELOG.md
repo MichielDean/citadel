@@ -71,6 +71,30 @@ Deleted the `ct audit run` command. The audit agent provided little practical va
 
 **Impact**: Teams requiring security reviews should use the dedicated security-review cataractae in the standard aqueduct pipeline, which provides context-aware, human-auditable security analysis with full codebase access.
 
+### Session liveness: replace ProcessNames string match with PID-based detection (ci-6lzup)
+
+Replaced fragile process name matching with PID-based liveness detection for agent session monitoring. The old `ProcessNames` field in `ProviderPreset` is now removed entirely.
+
+**Background**: `isAgentAlive()` previously queried `tmux pane_current_command` and checked it against a preset's `ProcessNames` list (typically `["claude", "node"]`). This broke when the agent was wrapped in a shell or exec — the pane showed "bash" instead of "claude", causing healthy sessions to appear dead. The tee wrapper bug demonstrated this: a simple shell wrapper silently broke zombie detection.
+
+**Changed behavior:**
+- `ProviderPreset.ProcessNames` field **removed** — no longer configurable or used
+- `isAgentAlive()` now uses a PID-based proc walk starting from the tmux pane PID
+- Detects agent processes regardless of shell wrappers, exec substitutions, or future binary name changes
+- Correctly identifies both live agents (returns true) and exited agents (returns false)
+
+**For custom provider authors:**
+- If you previously set `ProcessNames` in a custom preset, you can safely remove that field
+- Agent detection now works transparently without configuration — no action needed
+- Zombie detection correctly handles wrapped agents (e.g., `bash -c "claude ..."`)
+
+**Implementation details:**
+- New `internal/proc` package provides `ClaudeAliveUnderPIDIn()` for portable proc walking across castellarius and cataractae
+- `isAgentAlive()` calls `tmux display-message -p #{pane_pid}` to get pane root PID, then searches `/proc/<pid>/cmdline` for a process named "claude" or "claude-*"
+- Breadth-first search finds the agent regardless of nesting depth
+
+**Impact**: Sessions wrapped in any shell or exec framework now report correct liveness. Zombie detection is robust against future agent binary renames or packaging changes.
+
 ### TUI cockpit: command palette overlay with per-panel action registry (ci-gg7gp)
 
 Added a searchable command palette overlay to the Cistern cockpit (`ct tui`). Press `:` at any time while in a cockpit panel to open a searchable list of all actions available for the currently selected droplet.
