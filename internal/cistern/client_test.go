@@ -1659,6 +1659,171 @@ func TestExternalRef_RoundTrips_ThroughSearch(t *testing.T) {
 	}
 }
 
+// --- Heartbeat round-trip tests ---
+
+// TestHeartbeat_RoundTrips_ThroughGet verifies that Get returns the
+// last_heartbeat_at written by Heartbeat(). A column scan order bug would
+// leave LastHeartbeatAt zero and this test would fail.
+func TestHeartbeat_RoundTrips_ThroughGet(t *testing.T) {
+	c := testClient(t)
+	item, err := c.Add("myrepo", "Task", "", 1, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	before := time.Now().UTC().Add(-time.Second)
+	if err := c.Heartbeat(item.ID); err != nil {
+		t.Fatal(err)
+	}
+	after := time.Now().UTC().Add(time.Second)
+
+	// When: Get is called.
+	got, err := c.Get(item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Then: LastHeartbeatAt is populated.
+	if got.LastHeartbeatAt.IsZero() {
+		t.Fatal("Get: LastHeartbeatAt is zero after Heartbeat()")
+	}
+	if got.LastHeartbeatAt.Before(before) || got.LastHeartbeatAt.After(after) {
+		t.Errorf("Get: LastHeartbeatAt = %v, want between %v and %v", got.LastHeartbeatAt, before, after)
+	}
+}
+
+// TestHeartbeat_RoundTrips_ThroughList verifies that List returns the
+// last_heartbeat_at written by Heartbeat().
+func TestHeartbeat_RoundTrips_ThroughList(t *testing.T) {
+	c := testClient(t)
+	item, err := c.Add("myrepo", "Task", "", 1, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	before := time.Now().UTC().Add(-time.Second)
+	if err := c.Heartbeat(item.ID); err != nil {
+		t.Fatal(err)
+	}
+	after := time.Now().UTC().Add(time.Second)
+
+	// When: List is called.
+	items, err := c.List("myrepo", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("List returned %d items, want 1", len(items))
+	}
+
+	// Then: LastHeartbeatAt is populated.
+	if items[0].LastHeartbeatAt.IsZero() {
+		t.Fatal("List: LastHeartbeatAt is zero after Heartbeat()")
+	}
+	if items[0].LastHeartbeatAt.Before(before) || items[0].LastHeartbeatAt.After(after) {
+		t.Errorf("List: LastHeartbeatAt = %v, want between %v and %v", items[0].LastHeartbeatAt, before, after)
+	}
+}
+
+// TestHeartbeat_RoundTrips_ThroughSearch verifies that Search returns the
+// last_heartbeat_at written by Heartbeat().
+func TestHeartbeat_RoundTrips_ThroughSearch(t *testing.T) {
+	c := testClient(t)
+	item, err := c.Add("myrepo", "Heartbeat task", "", 1, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	before := time.Now().UTC().Add(-time.Second)
+	if err := c.Heartbeat(item.ID); err != nil {
+		t.Fatal(err)
+	}
+	after := time.Now().UTC().Add(time.Second)
+
+	// When: Search is called.
+	results, err := c.Search("Heartbeat task", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("Search returned %d items, want 1", len(results))
+	}
+
+	// Then: LastHeartbeatAt is populated.
+	if results[0].LastHeartbeatAt.IsZero() {
+		t.Fatal("Search: LastHeartbeatAt is zero after Heartbeat()")
+	}
+	if results[0].LastHeartbeatAt.Before(before) || results[0].LastHeartbeatAt.After(after) {
+		t.Errorf("Search: LastHeartbeatAt = %v, want between %v and %v", results[0].LastHeartbeatAt, before, after)
+	}
+}
+
+// TestHeartbeat_RoundTrips_ThroughGetReady verifies that GetReady returns the
+// last_heartbeat_at written by Heartbeat().
+func TestHeartbeat_RoundTrips_ThroughGetReady(t *testing.T) {
+	c := testClient(t)
+	item, err := c.Add("myrepo", "Task", "", 1, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	before := time.Now().UTC().Add(-time.Second)
+	if err := c.Heartbeat(item.ID); err != nil {
+		t.Fatal(err)
+	}
+	after := time.Now().UTC().Add(time.Second)
+
+	// When: GetReady is called.
+	got, err := c.GetReady("myrepo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil {
+		t.Fatal("GetReady returned nil")
+	}
+
+	// Then: LastHeartbeatAt is populated.
+	if got.LastHeartbeatAt.IsZero() {
+		t.Fatal("GetReady: LastHeartbeatAt is zero after Heartbeat()")
+	}
+	if got.LastHeartbeatAt.Before(before) || got.LastHeartbeatAt.After(after) {
+		t.Errorf("GetReady: LastHeartbeatAt = %v, want between %v and %v", got.LastHeartbeatAt, before, after)
+	}
+}
+
+// TestHeartbeat_RoundTrips_ThroughGetReadyForAqueduct verifies that
+// GetReadyForAqueduct returns the last_heartbeat_at written by Heartbeat().
+func TestHeartbeat_RoundTrips_ThroughGetReadyForAqueduct(t *testing.T) {
+	c := testClient(t)
+	item, err := c.Add("myrepo", "Task", "", 1, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	before := time.Now().UTC().Add(-time.Second)
+	if err := c.Heartbeat(item.ID); err != nil {
+		t.Fatal(err)
+	}
+	after := time.Now().UTC().Add(time.Second)
+
+	// When: GetReadyForAqueduct is called.
+	got, err := c.GetReadyForAqueduct("myrepo", "feature")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil {
+		t.Fatal("GetReadyForAqueduct returned nil")
+	}
+
+	// Then: LastHeartbeatAt is populated.
+	if got.LastHeartbeatAt.IsZero() {
+		t.Fatal("GetReadyForAqueduct: LastHeartbeatAt is zero after Heartbeat()")
+	}
+	if got.LastHeartbeatAt.Before(before) || got.LastHeartbeatAt.After(after) {
+		t.Errorf("GetReadyForAqueduct: LastHeartbeatAt = %v, want between %v and %v", got.LastHeartbeatAt, before, after)
+	}
+}
+
 // TestSetExternalRef_ReturnsError_WhenDropletNotFound verifies that SetExternalRef
 // returns an error when the given ID does not exist in the database.
 func TestSetExternalRef_ReturnsError_WhenDropletNotFound(t *testing.T) {

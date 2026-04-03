@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/MichielDean/cistern/internal/cistern"
 )
@@ -1452,6 +1453,48 @@ func TestDropletEdit(t *testing.T) {
 			t.Errorf("unexpected error: %v", err)
 		}
 	})
+}
+
+func TestDropletHeartbeat(t *testing.T) {
+	dir := t.TempDir()
+	db := filepath.Join(dir, "test.db")
+	t.Setenv("CT_DB", db)
+
+	c, err := cistern.New(db, "ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, err := c.Add("repo", "Feature", "", 1, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Close()
+
+	before := time.Now().Add(-time.Second)
+	out := captureStdout(t, func() {
+		if err := dropletHeartbeatCmd.RunE(dropletHeartbeatCmd, []string{item.ID}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+	after := time.Now().Add(time.Second)
+
+	if !strings.Contains(out, "heartbeat recorded") {
+		t.Errorf("expected 'heartbeat recorded' in output, got: %q", out)
+	}
+
+	// Verify last_heartbeat_at is written to DB.
+	c2, _ := cistern.New(db, "")
+	defer c2.Close()
+	got, err := c2.Get(item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.LastHeartbeatAt.IsZero() {
+		t.Fatal("LastHeartbeatAt is zero after heartbeat command")
+	}
+	if got.LastHeartbeatAt.Before(before) || got.LastHeartbeatAt.After(after) {
+		t.Errorf("LastHeartbeatAt = %v, want between %v and %v", got.LastHeartbeatAt, before, after)
+	}
 }
 
 func TestRootCmd_CompletionCommand_IsHiddenFromHelp(t *testing.T) {

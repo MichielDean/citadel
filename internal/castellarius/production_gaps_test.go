@@ -9,7 +9,9 @@ package castellarius
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"errors"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -327,4 +329,144 @@ func (r *funcRunner) Spawn(ctx context.Context, req CataractaeRequest) error {
 func init() {
 	// Verify mockClient still satisfies the interface after our additions.
 	var _ CisternClient = (*mockClient)(nil)
+}
+
+// --- Heartbeat DB integration tests ---
+//
+// These tests use a real cistern.Client backed by SQLite to catch column scan
+// ordering bugs that mock-client tests cannot detect. If List() has a bug that
+// leaves LastHeartbeatAt always zero, the stall detector falls back to
+// UpdatedAt. Because UpdatedAt is artificially aged in these tests, such a
+// scan bug would cause a false stall in TestHeartbeat_DB_NotStalled and
+// the test would fail.
+
+// TestHeartbeat_DB_NotStalled_WhenRecentHeartbeat uses a real DB to verify
+// that the stall detector skips agents whose last_heartbeat_at is recent, even
+// when updated_at is old. Detects scan ordering bugs in List().
+func TestHeartbeat_DB_NotStalled_WhenRecentHeartbeat(t *testing.T) {
+	origTmux := isTmuxAliveFn
+	isTmuxAliveFn = func(_ string) bool { return true }
+	t.Cleanup(func() { isTmuxAliveFn = origTmux })
+	origAgent := isAgentAliveFn
+	isAgentAliveFn = func(_ string) bool { return true }
+	t.Cleanup(func() { isAgentAliveFn = origAgent })
+
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	c, err := cistern.New(dbPath, "ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { c.Close() })
+
+	item, err := c.Add("test-repo", "DB integration task", "", 1, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.UpdateStatus(item.ID, "in_progress"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Age updated_at so the stall detector fires on the fallback path if
+	// last_heartbeat_at is not scanned correctly (zero value scan bug).
+	rawDB, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	past := time.Now().UTC().Add(-2 * time.Hour)
+	if _, err := rawDB.Exec(`UPDATE droplets SET updated_at = ? WHERE id = ?`, past, item.ID); err != nil {
+		rawDB.Close()
+		t.Fatal(err)
+	}
+	rawDB.Close()
+
+	// Emit a heartbeat — last_heartbeat_at is now current.
+	if err := c.Heartbeat(item.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := testConfig()
+	cfg.StallThresholdMinutes = 1
+	workflows := map[string]*aqueduct.Workflow{"test-repo": testWorkflow()}
+	clients := map[string]CisternClient{"test-repo": c}
+	sched := NewFromParts(cfg, workflows, clients, newMockRunner(nil))
+
+	sched.heartbeatRepo(context.Background(), cfg.Repos[0])
+
+	// Recent heartbeat → no stall note should be written.
+	notes, err := c.GetNotes(item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range notes {
+		if strings.HasPrefix(n.Content, stallNotePrefix) {
+			t.Errorf("DB integration: stall note written for heartbeating agent: %s", n.Content)
+		}
+	}
+}
+
+// TestHeartbeat_DB_Stalled_WhenNoHeartbeat uses a real DB to verify that an
+// agent with no heartbeat and an aged updated_at is detected as stalled and
+// an escalation note with heartbeat=none is written.
+func TestHeartbeat_DB_Stalled_WhenNoHeartbeat(t *testing.T) {
+	origTmux := isTmuxAliveFn
+	isTmuxAliveFn = func(_ string) bool { return true }
+	t.Cleanup(func() { isTmuxAliveFn = origTmux })
+	origAgent := isAgentAliveFn
+	isAgentAliveFn = func(_ string) bool { return true }
+	t.Cleanup(func() { isAgentAliveFn = origAgent })
+
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	c, err := cistern.New(dbPath, "ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { c.Close() })
+
+	item, err := c.Add("test-repo", "DB stall task", "", 1, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.UpdateStatus(item.ID, "in_progress"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Age updated_at — no heartbeat was ever emitted; fallback triggers stall.
+	rawDB, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	past := time.Now().UTC().Add(-2 * time.Hour)
+	if _, err := rawDB.Exec(`UPDATE droplets SET updated_at = ? WHERE id = ?`, past, item.ID); err != nil {
+		rawDB.Close()
+		t.Fatal(err)
+	}
+	rawDB.Close()
+
+	cfg := testConfig()
+	cfg.StallThresholdMinutes = 1
+	workflows := map[string]*aqueduct.Workflow{"test-repo": testWorkflow()}
+	clients := map[string]CisternClient{"test-repo": c}
+	sched := NewFromParts(cfg, workflows, clients, newMockRunner(nil))
+
+	sched.heartbeatRepo(context.Background(), cfg.Repos[0])
+
+	// No heartbeat → stall detected → escalation note written with heartbeat=none.
+	notes, err := c.GetNotes(item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stallNote string
+	for _, n := range notes {
+		if strings.HasPrefix(n.Content, stallNotePrefix) {
+			stallNote = n.Content
+			break
+		}
+	}
+	if stallNote == "" {
+		t.Error("DB integration: expected stall note for no-heartbeat agent, got none")
+		return
+	}
+	if !strings.Contains(stallNote, "heartbeat=none") {
+		t.Errorf("DB integration: stall note missing heartbeat=none; got: %s", stallNote)
+	}
 }
