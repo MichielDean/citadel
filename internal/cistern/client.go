@@ -172,6 +172,8 @@ func New(dbPath, prefix string) (*Client, error) {
 	db.Exec(`ALTER TABLE droplets ADD COLUMN external_ref TEXT DEFAULT NULL`)
 	// Stage dispatch timestamp: set only when a worker is assigned (idempotent).
 	db.Exec(`ALTER TABLE droplets ADD COLUMN stage_dispatched_at DATETIME DEFAULT NULL`)
+	// Agent heartbeat timestamp: updated periodically while a cataractae is active (idempotent).
+	db.Exec(`ALTER TABLE droplets ADD COLUMN last_heartbeat_at DATETIME DEFAULT NULL`)
 	// Vocabulary: cataracta → cataractae (idempotent — errors ignored on already-renamed DBs).
 	db.Exec(`ALTER TABLE cataracta_notes RENAME TO cataractae_notes`)
 	db.Exec(`ALTER TABLE cataractae_notes RENAME COLUMN cataracta_name TO cataractae_name`)

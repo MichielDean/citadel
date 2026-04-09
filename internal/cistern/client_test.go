@@ -2201,6 +2201,70 @@ func TestSetAssignedAqueduct_WhenAlreadySet_DoesNotOverwrite(t *testing.T) {
 	}
 }
 
+// TestNew_LastHeartbeatAtMigration_AddsColumnToExistingDB verifies that when
+// New() is called on a DB that predates the last_heartbeat_at column, the ALTER
+// TABLE migration adds the column so that Heartbeat() and subsequent reads work
+// without error.
+//
+// Given: a DB created without last_heartbeat_at (simulating a pre-migration install)
+// When:  New() is called to open that DB
+// Then:  Heartbeat() succeeds and Get returns a non-zero LastHeartbeatAt
+func TestNew_LastHeartbeatAtMigration_AddsColumnToExistingDB(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "legacy.db")
+
+	// Seed a DB that has stage_dispatched_at but not last_heartbeat_at,
+	// bypassing New() so the migration has not yet run.
+	seedDB, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := seedDB.Exec(`CREATE TABLE IF NOT EXISTS droplets (
+		id TEXT PRIMARY KEY,
+		repo TEXT NOT NULL,
+		title TEXT NOT NULL,
+		description TEXT DEFAULT '',
+		priority INTEGER DEFAULT 2,
+		complexity INTEGER DEFAULT 1,
+		status TEXT DEFAULT 'open',
+		assignee TEXT DEFAULT '',
+		current_cataractae TEXT DEFAULT '',
+		outcome TEXT DEFAULT NULL,
+		assigned_aqueduct TEXT DEFAULT '',
+		last_reviewed_commit TEXT DEFAULT NULL,
+		external_ref TEXT DEFAULT NULL,
+		stage_dispatched_at DATETIME DEFAULT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := seedDB.Exec(`INSERT INTO droplets (id, repo, title) VALUES ('migrate-test', 'myrepo', 'heartbeat migration test')`); err != nil {
+		t.Fatal(err)
+	}
+	seedDB.Close()
+
+	// When: New() is called — the ALTER TABLE migration should add last_heartbeat_at.
+	c, err := New(dbPath, "bf")
+	if err != nil {
+		t.Fatalf("New() on legacy DB: %v", err)
+	}
+	defer c.Close()
+
+	// Then: Heartbeat must succeed (would fail with "no such column" without the migration).
+	if err := c.Heartbeat("migrate-test"); err != nil {
+		t.Fatalf("Heartbeat() after migration: %v", err)
+	}
+
+	// And: Get must return a populated LastHeartbeatAt.
+	got, err := c.Get("migrate-test")
+	if err != nil {
+		t.Fatalf("Get() after migration: %v", err)
+	}
+	if got.LastHeartbeatAt.IsZero() {
+		t.Error("Get: LastHeartbeatAt is zero after migration + Heartbeat(); expected non-zero")
+	}
+}
+
 // TestExternalRef_RoundTrips_ThroughGetReadyForAqueduct verifies that
 // GetReadyForAqueduct — the primary dispatch path used by the castellarius —
 // returns the external_ref stored on the droplet.
