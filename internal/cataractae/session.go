@@ -220,6 +220,14 @@ func writeStageMarker(workDir, identity string) {
 	_ = os.WriteFile(filepath.Join(workDir, ".current-stage"), []byte(identity), 0o644)
 }
 
+// ClearStageMarker removes the .current-stage file from workDir so the next
+// spawn will start a fresh session rather than attempting to --continue a
+// prior session. This is called when a zombie is detected — the prior session
+// is gone and --continue will fail with "No conversation found to continue".
+func ClearStageMarker(workDir string) {
+	_ = os.Remove(filepath.Join(workDir, ".current-stage"))
+}
+
 // isSessionAlive returns true if a tmux session with the given ID is running.
 // Extracted as a package-level function so the quick-exit goroutine can call
 // it without holding a *Session reference.

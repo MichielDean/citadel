@@ -115,7 +115,7 @@ var builtins = []ProviderPreset{
 		Command:          "ollama-claude-wrapper",
 		Args:             []string{},
 		ModelFlag:        "--model",
-		DefaultModel:     "kimi-k2.5:cloud",
+		DefaultModel:     "glm-5.1:cloud",
 		AddDirFlag:       "--add-dir",
 		PromptFlag:       "-p",
 		ContinueFlag:     "--continue",

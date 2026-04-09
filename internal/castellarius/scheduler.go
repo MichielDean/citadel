@@ -1480,6 +1480,16 @@ func (s *Castellarius) heartbeatRepo(ctx context.Context, repo aqueduct.RepoConf
 						pool.Release(w)
 					}
 				}
+				// Clear the .current-stage marker so the next spawn starts
+				// fresh instead of attempting --continue on a dead session.
+				// Without this, a zombie loop occurs: spawn → resume
+				// (--continue) → "No conversation found to continue" → exit
+				// → zombie detected → respawn → resume again → loop.
+				if s.sandboxRoot != "" {
+					worktreePath := filepath.Join(s.sandboxRoot, repo.Name, item.ID)
+					os.Remove(filepath.Join(worktreePath, ".current-stage"))
+				}
+
 				// Append a history note so the zombie event is visible in
 				// `ct droplet show` and the TUI timeline.
 				zombieNote := fmt.Sprintf(
@@ -1523,6 +1533,12 @@ func (s *Castellarius) heartbeatRepo(ctx context.Context, repo aqueduct.RepoConf
 					if w := pool.FindByName(item.Assignee); w != nil {
 						pool.Release(w)
 					}
+				}
+				// Clear the .current-stage marker so the next spawn starts
+				// fresh instead of attempting --continue on a dead session.
+				if s.sandboxRoot != "" {
+					worktreePath := filepath.Join(s.sandboxRoot, repo.Name, item.ID)
+					os.Remove(filepath.Join(worktreePath, ".current-stage"))
 				}
 				zombieNote := fmt.Sprintf(
 					"Session zombie detected: tmux alive but claude process dead. Session killed. Re-dispatching. [%s]",
