@@ -150,8 +150,15 @@ func (s *Session) spawn() error {
 	// Session output log: prepare the log directory so pipe-pane can write to it
 	// after the session is created. The log path is also read by the heartbeat
 	// for quick-exit diagnostics.
+	//
+	// Truncate any existing log file so stale errors from prior sessions
+	// (e.g. 429 rate-limit errors from a previous zombie loop) don't pollute
+	// the isRateLimitError check for the current session.
 	sessionLogPath := filepath.Join(home, ".cistern", "session-logs", s.ID+".log")
 	logDirReady := os.MkdirAll(filepath.Dir(sessionLogPath), 0o750) == nil
+	if logDirReady {
+		_ = os.Truncate(sessionLogPath, 0)
+	}
 
 	args = append(args, s.collectEnvArgs()...)
 	args = append(args, agentCmd)
