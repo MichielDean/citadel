@@ -27,10 +27,6 @@ const (
 	// stallNotePrefix is the structured prefix for all scheduler stall notes.
 	// It allows stall notes to be identified and filtered programmatically.
 	stallNotePrefix = "[scheduler:stall]"
-
-	// stallNoteInterval is the minimum time between consecutive stall notes
-	// for the same droplet. Prevents log spam when a droplet stays stalled.
-	stallNoteInterval = 60 * time.Minute
 )
 
 // CisternClient is the interface for interacting with the work cistern.
@@ -46,9 +42,6 @@ type CisternClient interface {
 	List(repo, status string) ([]*cistern.Droplet, error)
 	Purge(olderThan time.Duration, dryRun bool) (int, error)
 	SetCataractae(id, cataractae string) error
-	// GetLastReviewedCommit returns the HEAD commit hash recorded when the last
-	// review diff was generated. Used to detect phantom commits.
-	GetLastReviewedCommit(dropletID string) (string, error)
 	// SetOutcome records the agent outcome on a droplet. Used by stuck-delivery
 	// recovery to write an outcome directly so the observe phase can route it.
 	SetOutcome(id, outcome string) error
@@ -116,40 +109,15 @@ type Castellarius struct {
 	supervised         bool          // true if managed by systemd/supervisord/etc.
 	reloadCh           chan struct{} // signals Tick() to hot-reload workflows from disk
 
-	// Stuck delivery recovery — injectable for testing.
-	findPRFn        func(ctx context.Context, repoName, dropletID, sandboxDir string) (prURL, state, mergeStateStatus string, err error)
-	killSessionFn   func(sessionID string) error
-	rebaseAndPushFn func(ctx context.Context, sandboxDir string) error
-	ghMergeFn       func(ctx context.Context, sandboxDir, prURL string, autoMerge bool) error
-
 	// drainTimeout is the maximum duration to wait for in-flight sessions to
 	// signal an outcome after SIGTERM. Defaults to 5 minutes.
 	drainTimeout time.Duration
-
-	// Dispatch-loop detection — tracks per-droplet failure counts to detect and
-	// recover from tight loops where no agent session ever starts.
-	dispatchLoop *dispatchLoopTracker
-
-	// lastStallNoted tracks the wall-clock time at which the most recent stall
-	// note was written for each droplet (keyed by droplet ID). Used to rate-limit
-	// stall notes to at most one per stallNoteInterval. Cleared when any progress
-	// signal advances past the recorded write time (agent resumed → next stall
-	// gets a fresh note immediately).
-	lastStallNoted map[string]time.Time
 
 	// droughtRunning and droughtStartedAt are written by the drought goroutine
 	// (via OnDroughtStart/OnDroughtEnd callbacks) and read by writeHealthFile on
 	// the main tick goroutine. atomic fields ensure safe concurrent access.
 	droughtRunning   atomic.Bool
 	droughtStartedAt atomic.Pointer[time.Time]
-
-	// architectiExecFn runs the Architecti agent and returns its raw output.
-	// When nil, defaultArchitectiExec is used. Set in tests to inject mock output.
-	architectiExecFn func(ctx context.Context, contextDoc string) ([]byte, error)
-
-	// restartCastellariusFn restarts the Castellarius process. When nil,
-	// defaultRestartCastellarius is used. Set in tests to avoid systemctl calls.
-	restartCastellariusFn func() error
 }
 
 // isSupervisedProcess returns true when the Castellarius is being managed by
@@ -238,12 +206,6 @@ func New(config aqueduct.AqueductConfig, dbPath string, runner CataractaeRunner,
 		startupBinaryMtime:     startupBinaryMtime,
 		supervised:             isSupervisedProcess(),
 		reloadCh:               make(chan struct{}, 1),
-		findPRFn:               defaultFindPR,
-		killSessionFn:          defaultKillSession,
-		rebaseAndPushFn:        defaultRebaseAndPush,
-		ghMergeFn:              defaultGhMerge,
-		dispatchLoop:           newDispatchLoopTracker(),
-		lastStallNoted:         make(map[string]time.Time),
 	}
 	for _, o := range opts {
 		o(s)
@@ -331,12 +293,6 @@ func NewFromParts(
 		pollInterval:           10 * time.Second,
 		heartbeatInterval:      30 * time.Second,
 		drainTimeout:           5 * time.Minute,
-		findPRFn:               defaultFindPR,
-		killSessionFn:          defaultKillSession,
-		rebaseAndPushFn:        defaultRebaseAndPush,
-		ghMergeFn:              defaultGhMerge,
-		dispatchLoop:           newDispatchLoopTracker(),
-		lastStallNoted:         make(map[string]time.Time),
 	}
 	for _, o := range opts {
 		o(s)
@@ -426,34 +382,6 @@ func (s *Castellarius) Run(ctx context.Context) error {
 			}
 		}()
 	}
-
-	// Stuck delivery goroutine — checks every 5 minutes for delivery agents
-	// that have been running past 1.5× their configured timeout. Kills the
-	// stuck session and sets an appropriate outcome so the observe phase can
-	// route the droplet without human intervention.
-	go func() {
-		sdTicker := time.NewTicker(stuckDeliveryCheckInterval)
-		defer sdTicker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-sdTicker.C:
-				func() {
-					defer func() {
-						if r := recover(); r != nil {
-							stack := debug.Stack()
-							s.logger.Error("stuck delivery check: panic recovered",
-								"panic", r,
-								"stack", string(stack),
-							)
-						}
-					}()
-					s.checkStuckDeliveries(ctx)
-				}()
-			}
-		}
-	}()
 
 	// Heartbeat goroutine — runs independently of the main poll loop.
 	// Detects orphaned in-progress droplets (dead sessions with no outcome)
@@ -778,10 +706,6 @@ func (s *Castellarius) observeRepo(_ context.Context, repo aqueduct.RepoConfig) 
 			continue // still running
 		}
 
-		// Outcome recorded — reset the spawn-cycle counter so normal fast pipelines
-		// that cycle through cataractae quickly are never penalised by the limiter.
-		s.dispatchLoop.resetSpawnCycles(item.ID)
-
 		step := currentCataracta(item, wf)
 		assignee := item.Assignee
 
@@ -827,28 +751,6 @@ func (s *Castellarius) observeRepo(_ context.Context, repo aqueduct.RepoConfig) 
 			s.logger.Info("Droplet recirculated", "droplet", item.ID, "cataractae", step.Name)
 		default:
 			s.logger.Info("Droplet pooled at cataractae", "droplet", item.ID, "cataractae", step.Name, "outcome", item.Outcome)
-		}
-
-		// Phantom commit prevention: when implement passes, verify that HEAD has
-		// advanced since the last review. If not, the implementer signed pass without
-		// committing — auto-recirculate with a diagnostic message.
-		if result == ResultPass && step.Name == "implement" {
-			if lastCommit, err := client.GetLastReviewedCommit(item.ID); err == nil && lastCommit != "" {
-				sandboxDir := filepath.Join(s.sandboxRoot, repo.Name, item.ID)
-				if head, err := sandboxHead(sandboxDir); err == nil && head == lastCommit {
-					note := fmt.Sprintf(
-						"Implement pass rejected: HEAD has not advanced since last review (commit: %s). No new commits were found. You must commit your changes before signaling pass.",
-						lastCommit,
-					)
-					s.logger.Warn("Phantom commit detected — recirculating to implement",
-						"droplet", item.ID, "commit", lastCommit)
-					s.addNote(client, item.ID, "scheduler", note)
-					if err := client.Assign(item.ID, "", "implement"); err != nil {
-						s.logger.Error("observe: phantom commit recirculate failed", "droplet", item.ID, "error", err)
-					}
-					continue
-				}
-			}
 		}
 
 		var next string
@@ -983,11 +885,6 @@ func (s *Castellarius) observeRepo(_ context.Context, repo aqueduct.RepoConfig) 
 			if w == nil || w.Status != AqueductFlowing || w.DropletID != item.ID {
 				continue
 			}
-			sessionID := repo.Name + "-" + item.Assignee
-			if err := s.killSessionFn(sessionID); err != nil {
-				s.logger.Warn("observe: kill session failed",
-					"droplet", item.ID, "session", sessionID, "error", err)
-			}
 			pool.Release(w)
 			if s.sandboxRoot != "" {
 				primaryDir := filepath.Join(s.sandboxRoot, repo.Name, "_primary")
@@ -1070,25 +967,6 @@ func (s *Castellarius) dispatchRepo(ctx context.Context, repo aqueduct.RepoConfi
 
 		w := worker // capture for goroutine
 		go func() {
-			// Dispatch-loop detection: if this droplet has been failing repeatedly
-			// without ever spawning an agent, attempt ordered recovery before retrying.
-			failCount := s.dispatchLoop.recentFailureCount(req.Item.ID)
-			if failCount >= dispatchLoopThreshold {
-				s.logger.Warn("dispatch-loop threshold reached — triggering recovery",
-					"droplet", req.Item.ID,
-					"failures", failCount,
-					"threshold", dispatchLoopThreshold,
-					"window", dispatchLoopWindow.String(),
-				)
-				s.recoverDispatchLoop(client, req.Item, req.RepoConfig)
-				if err2 := client.Assign(req.Item.ID, "", req.Step.Name); err2 != nil {
-					s.logger.Error("dispatch-loop recovery: reset failed",
-						"droplet", req.Item.ID, "error", err2)
-				}
-				pool.Release(w)
-				return
-			}
-
 			// Prepare the per-droplet worktree before spawning the agent.
 			// Castellarius owns worktree lifecycle — agents never call git worktree add.
 			// Skipped when sandboxRoot is unset (test environments without real repos).
@@ -1115,7 +993,6 @@ func (s *Castellarius) dispatchRepo(ctx context.Context, repo aqueduct.RepoConfi
 						"droplet", req.Item.ID,
 						"error", err,
 					)
-					s.dispatchLoop.recordFailure(req.Item.ID)
 					if err2 := client.Assign(req.Item.ID, "", req.Step.Name); err2 != nil {
 						s.logger.Error("reset after worktree failure", "droplet", req.Item.ID, "error", err2)
 					}
@@ -1131,7 +1008,6 @@ func (s *Castellarius) dispatchRepo(ctx context.Context, repo aqueduct.RepoConfi
 				if dirtyErr != nil {
 					s.logger.Error("dirty check: git status failed — recirculating conservatively",
 						"droplet", req.Item.ID, "error", dirtyErr)
-					s.dispatchLoop.recordFailure(req.Item.ID)
 					s.addNote(client, req.Item.ID, "scheduler",
 						fmt.Sprintf("Dispatch blocked: could not check worktree state: %v", dirtyErr))
 					if err2 := client.Assign(req.Item.ID, "", req.Step.Name); err2 != nil {
@@ -1150,7 +1026,6 @@ func (s *Castellarius) dispatchRepo(ctx context.Context, repo aqueduct.RepoConfi
 						"droplet", req.Item.ID,
 						"files", dirtyFiles,
 					)
-					s.dispatchLoop.recordFailure(req.Item.ID)
 					s.addNote(client, req.Item.ID, "scheduler", note)
 					if err2 := client.Assign(req.Item.ID, "", req.Step.Name); err2 != nil {
 						s.logger.Error("reset after dirty check", "droplet", req.Item.ID, "error", err2)
@@ -1169,41 +1044,10 @@ func (s *Castellarius) dispatchRepo(ctx context.Context, repo aqueduct.RepoConfi
 					"cataractae", req.Step.Name,
 					"error", err,
 				)
-				s.dispatchLoop.recordFailure(req.Item.ID)
 				// Reset to open so the item can be re-dispatched to same aqueduct.
 				if err2 := client.Assign(req.Item.ID, "", req.Step.Name); err2 != nil {
 					s.logger.Error("reset after spawn failure",
 						"droplet", req.Item.ID, "error", err2)
-				}
-				pool.Release(w)
-				return
-			}
-			// Successful spawn — record the spawn cycle and reset the dispatch-loop
-			// failure counter. The spawn-cycle count is NOT reset here; it persists
-			// until an outcome is observed so zombie loops are detected across resets.
-			s.dispatchLoop.recordSuccess(req.Item.ID)
-			// Spawn-cycle rate limit: if this droplet has been spawned N times within
-			// the window with no outcome recorded, pool it. This is a circuit breaker
-			// for zombie loops (spawn → zombie-kill → reset-to-open → respawn → repeat).
-			if spawnCount := s.dispatchLoop.recentSpawnCount(req.Item.ID); spawnCount >= spawnCycleThreshold && req.Item.Outcome == "" {
-				note := fmt.Sprintf("spawn-cycle limit: %d spawns in window with no outcome recorded", spawnCount)
-				s.logger.Warn("spawn-cycle limit reached — pooling droplet",
-					"droplet", req.Item.ID,
-					"spawns", spawnCount,
-					"window", spawnCycleWindow.String(),
-				)
-				s.addNote(client, req.Item.ID, "scheduler", note)
-				poolErr := client.Pool(req.Item.ID, note)
-				if poolErr != nil {
-					s.logger.Error("spawn-cycle limit: pool failed", "droplet", req.Item.ID, "error", poolErr)
-				}
-				sessionID := req.RepoConfig.Name + "-" + w.Name
-				if err := s.killSessionFn(sessionID); err != nil {
-					s.logger.Warn("spawn-cycle limit: kill session failed",
-						"droplet", req.Item.ID, "session", sessionID, "error", err)
-				}
-				if poolErr == nil {
-					s.dispatchLoop.reset(req.Item.ID)
 				}
 				pool.Release(w)
 				return
@@ -1420,17 +1264,6 @@ func (s *Castellarius) heartbeatRepo(ctx context.Context, repo aqueduct.RepoConf
 
 	threshold := stallThresholdDuration(s.config)
 
-	// Prune lastStallNoted entries for droplets that are no longer in_progress.
-	activeIDs := make(map[string]struct{}, len(items))
-	for _, it := range items {
-		activeIDs[it.ID] = struct{}{}
-	}
-	for id := range s.lastStallNoted {
-		if _, ok := activeIDs[id]; !ok {
-			delete(s.lastStallNoted, id)
-		}
-	}
-
 	for _, item := range items {
 		// Items with outcomes are handled by the observe phase — skip them.
 		if item.Outcome != "" {
@@ -1515,10 +1348,6 @@ func (s *Castellarius) heartbeatRepo(ctx context.Context, repo aqueduct.RepoConf
 						"repo", repo.Name, "droplet", item.ID)
 					continue
 				}
-				if err := s.killSessionFn(sessionID); err != nil {
-					s.logger.Warn("heartbeat: kill-session failed for agent-dead zombie",
-						"droplet", item.ID, "session", sessionID, "error", err)
-				}
 				if pool := s.pools[repo.Name]; pool != nil {
 					if w := pool.FindByName(item.Assignee); w != nil {
 						pool.Release(w)
@@ -1557,46 +1386,34 @@ func (s *Castellarius) heartbeatRepo(ctx context.Context, repo aqueduct.RepoConf
 			stallSig = item.UpdatedAt
 		}
 
-		// Clear rate-limit entry if the heartbeat has advanced past the last stall
-		// note write time. This resets the window so a new stall immediately gets a
-		// fresh note (agent resumed → heartbeat advanced → re-detect cleanly).
-		if prev, ok := s.lastStallNoted[item.ID]; ok && stallSig.After(prev) {
-			delete(s.lastStallNoted, item.ID)
-		}
-
 		// Not stalled: heartbeat (or UpdatedAt fallback) is within the threshold.
 		if time.Since(stallSig) <= threshold {
 			continue
 		}
 
-		// Stalled. Write an escalation note if the rate limit allows
-		// (at most one per stallNoteInterval). Do NOT auto-respawn: agents that are
+		// Stalled. Write an escalation note. Do NOT auto-respawn: agents that are
 		// emitting heartbeats are alive and working; agents that are not emitting
 		// heartbeats are handled by zombie detection (isTmuxAlive / isAgentAlive).
-		if s.shouldWriteStallNote(client, item.ID) {
-			heartbeatStatus := "none"
-			if !item.LastHeartbeatAt.IsZero() {
-				heartbeatStatus = item.LastHeartbeatAt.UTC().Format(time.RFC3339)
-			}
-			note := fmt.Sprintf(
-				"%s elapsed=%s heartbeat=%s",
-				stallNotePrefix,
-				formatStallDuration(time.Since(stallSig)),
-				heartbeatStatus,
+		heartbeatStatus := "none"
+		if !item.LastHeartbeatAt.IsZero() {
+			heartbeatStatus = item.LastHeartbeatAt.UTC().Format(time.RFC3339)
+		}
+		note := fmt.Sprintf(
+			"%s elapsed=%s heartbeat=%s",
+			stallNotePrefix,
+			formatStallDuration(time.Since(stallSig)),
+			heartbeatStatus,
+		)
+		if err := client.AddNote(item.ID, "scheduler", note); err != nil {
+			s.logger.Warn("heartbeat: AddNote failed", "droplet", item.ID, "error", err)
+		} else {
+			s.logger.Warn("heartbeat: stall detected",
+				"repo", repo.Name,
+				"droplet", item.ID,
+				"cataractae", item.CurrentCataractae,
+				"stall_duration", time.Since(stallSig).Round(time.Second).String(),
+				"threshold", threshold.String(),
 			)
-			if err := client.AddNote(item.ID, "scheduler", note); err != nil {
-				s.logger.Warn("heartbeat: AddNote failed", "droplet", item.ID, "error", err)
-				// Do not arm rate-limit — note was never written; retry next tick.
-			} else {
-				s.logger.Warn("heartbeat: stall detected",
-					"repo", repo.Name,
-					"droplet", item.ID,
-					"cataractae", item.CurrentCataractae,
-					"stall_duration", time.Since(stallSig).Round(time.Second).String(),
-					"threshold", threshold.String(),
-				)
-				s.lastStallNoted[item.ID] = time.Now()
-			}
 		}
 
 		// Orphan recovery: no assignee means no named session exists for this
@@ -1623,8 +1440,6 @@ func (s *Castellarius) heartbeatRepo(ctx context.Context, repo aqueduct.RepoConf
 			if err := client.Assign(item.ID, "", stepName); err != nil {
 				s.logger.Error("heartbeat: orphan recovery reset failed",
 					"repo", repo.Name, "droplet", item.ID, "error", err)
-				// Reset debounce so next tick retries the recovery.
-				s.lastStallNoted[item.ID] = time.Now().Add(-stallNoteInterval)
 			}
 		}
 	}
@@ -1636,41 +1451,6 @@ func stallThresholdDuration(cfg aqueduct.AqueductConfig) time.Duration {
 		return time.Duration(cfg.StallThresholdMinutes) * time.Minute
 	}
 	return 45 * time.Minute
-}
-
-// shouldWriteStallNote returns true when the rate-limit window allows writing
-// a new stall note for dropletID. It first checks the in-memory lastStallNoted
-// cache; on a miss (first detection or process restart) it falls back to the
-// notes DB to avoid duplicate notes across restarts.
-func (s *Castellarius) shouldWriteStallNote(client CisternClient, dropletID string) bool {
-	if noted, ok := s.lastStallNoted[dropletID]; ok {
-		return time.Since(noted) >= stallNoteInterval
-	}
-	// In-memory entry absent: check DB for a recent stall note (handles restarts).
-	if last := lastSchedulerStallNoteTime(client, dropletID); !last.IsZero() && time.Since(last) < stallNoteInterval {
-		s.lastStallNoted[dropletID] = last // populate cache from DB
-		return false
-	}
-	return true
-}
-
-// lastSchedulerStallNoteTime returns the most recent time a stallNotePrefix note
-// was written for dropletID by the scheduler, or the zero time if none exist or
-// the fetch fails.
-func lastSchedulerStallNoteTime(client CisternClient, dropletID string) time.Time {
-	notes, err := client.GetNotes(dropletID)
-	if err != nil || len(notes) == 0 {
-		return time.Time{}
-	}
-	var latest time.Time
-	for _, n := range notes {
-		if n.CataractaeName == "scheduler" && strings.HasPrefix(n.Content, stallNotePrefix) {
-			if n.CreatedAt.After(latest) {
-				latest = n.CreatedAt
-			}
-		}
-	}
-	return latest
 }
 
 // formatStallDuration formats a stall duration as a compact human-readable string

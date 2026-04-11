@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"syscall"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -121,7 +120,7 @@ func (p castellariusPanel) execActionCmd() tea.Cmd {
 				// Fall back: spawn ct castellarius start as a detached process so the TUI
 				// is not blocked (ct castellarius start is a blocking foreground process).
 				c := exec.Command(exe, "castellarius", "start")
-				c.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+				c.SysProcAttr = detachSysProcAttr()
 				if err = c.Start(); err != nil {
 					out = []byte(err.Error())
 				} else {

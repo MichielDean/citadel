@@ -3,22 +3,15 @@ package cataractae
 import (
 	"fmt"
 	"log/slog"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
-	"time"
 
-	"github.com/MichielDean/cistern/internal/oauth"
+	"github.com/MichielDean/cistern/internal/aqueduct"
 	"github.com/MichielDean/cistern/internal/provider"
 )
-
-// quickExitWindow is the duration after a spawn within which, if the session
-// dies, a warning is logged as a possible auth failure or binary-not-found.
-// Exposed as a variable so tests can shorten it without waiting 30 seconds.
-var quickExitWindow = 30 * time.Second
 
 // Session manages an agent execution inside a tmux session.
 type Session struct {
@@ -49,45 +42,36 @@ type Session struct {
 	// Providers with SupportsAddDir=true receive skill files automatically via --add-dir.
 	Skills []string
 
-	// DropletSignaledOutcome, if non-nil, is called by the quick-exit goroutine
-	// before emitting a warning. If it returns true the session has already signaled
-	// an outcome (pass/recirculate/block) and the warning is suppressed —
-	// preventing false positives when a fast agent task completes within the window.
-	DropletSignaledOutcome func() bool
-
-	// done is closed by kill() to cancel the quick-exit goroutine so it does
-	// not emit a spurious warning when the session is intentionally stopped.
-	done     chan struct{}
-	killOnce sync.Once
+	// TemplateCtx holds the step and droplet data used to render CLAUDE.md as a
+	// Go template at spawn time. When the zero value is passed, templates are
+	// rendered with empty data — static content (no markers) passes through unchanged.
+	TemplateCtx aqueduct.TemplateContext
 }
 
 // Spawn creates a new tmux session running the agent and returns immediately.
 // The Castellarius observe loop detects completion via the outcome field in the DB —
-// agents signal their outcome by calling `ct droplet pass/recirculate/block <id>`.
+// agents signal their outcome by calling `ct droplet pass/recirculate/pool <id>`.
+// When the session exits for any reason the heartbeat detects the dead tmux session
+// and resets the droplet for re-dispatch. If a session log file exists at
+// ~/.cistern/session-logs/<id>.log the heartbeat reads and logs the tail for diagnostics.
 func (s *Session) Spawn() error {
 	return s.spawn()
 }
 
-// spawn creates a new tmux session running the agent fresh. Each spawn always
-// starts with a clean context — no session resumption — to prevent stale
-// conversation history from causing confusion and token burns.
+// spawn creates a new tmux session running the agent fresh. With exec prefix,
+// if the session is alive, the agent IS alive — no zombie state is possible.
 func (s *Session) spawn() error {
-	// Kill any stale tmux session with the same name before creating a new one.
-	s.kill()
-
-	// Reset the done channel and killOnce for this spawn so the quick-exit
-	// goroutine below can be cancelled via a fresh kill() call.
-	s.killOnce = sync.Once{}
-	s.done = make(chan struct{})
+	// With exec prefix, if the session is alive the agent is alive.
+	// No zombie detection needed — return nil and let the existing session continue.
+	if isSessionAlive(s.ID) {
+		slog.Default().Info("session: already running — skipping respawn",
+			"session", s.ID)
+		return nil
+	}
 
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("spawn: cannot determine home directory: %w", err)
-	}
-
-	// Pre-spawn: silently refresh Claude OAuth token if expired or near expiry.
-	if err := ensureClaudeOAuthFresh(home); err != nil {
-		return fmt.Errorf("spawn: %w", err)
 	}
 
 	skillsDir := filepath.Join(home, ".cistern", "skills")
@@ -120,11 +104,43 @@ func (s *Session) spawn() error {
 		"context_type", "fresh",
 	)
 
+	// Session output log: prepare the log directory so pipe-pane can write to it
+	// after the session is created. The log path is also read by the heartbeat
+	// for quick-exit diagnostics.
+	sessionLogPath := filepath.Join(home, ".cistern", "session-logs", s.ID+".log")
+	logDirReady := os.MkdirAll(filepath.Dir(sessionLogPath), 0o750) == nil
+
 	args = append(args, s.collectEnvArgs()...)
 	args = append(args, agentCmd)
-	cmd := exec.Command("tmux", args...)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("tmux new-session %s: %w: %s", s.ID, err, out)
+	out, spawnErr := execTmuxNewSession(args)
+	if spawnErr != nil {
+		if !isTmuxServerDeadError(out) {
+			return fmt.Errorf("tmux new-session %s [args: %v]: %w: %s", s.ID, redactArgs(args), spawnErr, out)
+		}
+		// The tmux server is dead — attempt recovery with double-checked locking.
+		// Serialize recovery so concurrent spawns do not interleave: one goroutine
+		// must complete the full kill→retry cycle before another begins.
+		// Double-check after acquiring the lock: if another goroutine already
+		// recovered the server while we were waiting, the retry will succeed and
+		// we skip the kill entirely, preventing destruction of the recovered session.
+		tmuxRecoveryMu.Lock()
+		defer tmuxRecoveryMu.Unlock()
+		if out, spawnErr = execTmuxNewSession(args); spawnErr != nil {
+			if !isTmuxServerDeadError(out) {
+				return fmt.Errorf("tmux new-session %s [args: %v]: %w: %s", s.ID, redactArgs(args), spawnErr, out)
+			}
+			// Server is still dead — kill stale state and retry.
+			slog.Default().Info("session: dead tmux server detected — attempting restart",
+				"session", s.ID)
+			execTmuxKillServer()
+			if out, spawnErr = execTmuxNewSession(args); spawnErr != nil {
+				slog.Default().Error("session: tmux server recovery failed — spawn aborted",
+					"session", s.ID, "error", spawnErr)
+				return fmt.Errorf("tmux new-session %s [args: %v]: server dead, recovery failed: %w: %s", s.ID, redactArgs(args), spawnErr, out)
+			}
+			slog.Default().Info("session: recovered from dead tmux server — retried spawn successfully",
+				"session", s.ID)
+		}
 	}
 
 	// Ensure the session exits when the agent process exits, regardless of the
@@ -135,37 +151,13 @@ func (s *Session) spawn() error {
 		slog.Default().Warn("session: could not set remain-on-exit", "session", s.ID, "error", err)
 	}
 
-	// Quick-exit detection: warn if the session dies within quickExitWindow of
-	// spawning — a possible auth failure, missing binary, or prompt error.
-	// The goroutine can be cancelled via the done channel (closed by kill()) to
-	// avoid false positives on intentional kills and graceful shutdown.
-	spawnedAt := time.Now()
-	sessionID := s.ID
-	done := s.done
-	checkOutcome := s.DropletSignaledOutcome
-	window := quickExitWindow // capture at spawn time to avoid concurrent access with test overrides
-	go func() {
-		select {
-		case <-time.After(window):
-		case <-done:
-			return // session killed intentionally — suppress warning
-		}
-		if isSessionAlive(sessionID) {
-			return
-		}
-		if checkOutcome != nil && checkOutcome() {
-			return // session signaled an outcome — not an auth failure
-		}
-		elapsed := time.Since(spawnedAt).Round(time.Second)
-		slog.Default().Warn("session exited quickly — possible auth failure or binary not found",
-			"session", sessionID,
-			"elapsed", elapsed.String(),
-		)
-	}()
+	// pipe-pane must be called after the session exists.
+	if logDirReady {
+		execTmuxPipePaneCmd(s.ID, sessionLogPath)
+	}
 
 	return nil
 }
-
 
 // isSessionAlive returns true if a tmux session with the given ID is running.
 // Extracted as a package-level function so the quick-exit goroutine can call
@@ -176,29 +168,29 @@ func isSessionAlive(sessionID string) bool {
 
 // collectEnvArgs builds the tmux -e env argument pairs for the session.
 // The preset path forwards EnvPassthrough vars and ExtraEnv static values.
-// The legacy path forwards ANTHROPIC_API_KEY.
 // Platform-level vars (PATH, GH_TOKEN, CT_CATARACTA_NAME, CT_DB) are always
 // forwarded regardless of provider.
 func (s *Session) collectEnvArgs() []string {
 	var args []string
 
-	if s.Preset.Name != "" {
-		// Preset-driven env passthrough: forward each listed var if set.
-		for _, envVar := range s.Preset.EnvPassthrough {
-			if val := os.Getenv(envVar); val != "" {
-				args = append(args, "-e", envVar+"="+val)
-			}
-		}
-		// Extra env: static values injected from preset config overrides.
-		for k, v := range s.Preset.ExtraEnv {
-			args = append(args, "-e", k+"="+v)
-		}
-	} else {
-		// Legacy fallback: forward the claude API key.
-		if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
-			args = append(args, "-e", "ANTHROPIC_API_KEY="+key)
+	// Preset-driven env passthrough: forward each listed var if set.
+	for _, envVar := range s.Preset.EnvPassthrough {
+		if val := os.Getenv(envVar); val != "" {
+			args = append(args, "-e", envVar+"="+val)
 		}
 	}
+	// Extra env: static values injected from preset config overrides.
+	for k, v := range s.Preset.ExtraEnv {
+		args = append(args, "-e", k+"="+v)
+	}
+
+	// Explicitly unset ANTHROPIC_API_KEY in every spawned session. Claude CLI
+	// manages its own OAuth credentials via ~/.claude/.credentials.json — it
+	// does not need this var, and a stale value in the tmux global environment
+	// (from a previous Castellarius process that sourced ~/.cistern/env) would
+	// override Claude's own valid credentials and cause auth failures.
+	// Passing an empty value via -e overrides the tmux global env inheritance.
+	args = append(args, "-e", "ANTHROPIC_API_KEY=")
 
 	// Always-pass: platform-level vars needed regardless of provider.
 	if path := os.Getenv("PATH"); path != "" {
@@ -237,6 +229,58 @@ func (s *Session) buildClaudeCmd(skillsDir string) string {
 // variable so tests can substitute a deterministic resolver without requiring the
 // real agent binaries to be installed on the test machine.
 var resolveCommandFn = resolveCommand
+
+// execTmuxNewSession runs "tmux" with the given args (which begin with "new-session")
+// and returns the combined output and any error. It is a variable so tests can
+// substitute a fake implementation without requiring a real tmux server.
+var execTmuxNewSession = func(args []string) ([]byte, error) {
+	return exec.Command("tmux", args...).CombinedOutput()
+}
+
+// execTmuxKillServer runs "tmux kill-server" to clear any stale tmux server state.
+// Errors are silently ignored because the server may already be gone.
+// It is a variable so tests can substitute a no-op without requiring tmux.
+var execTmuxKillServer = func() {
+	exec.Command("tmux", "kill-server").Run() //nolint:errcheck
+}
+
+// execTmuxPipePaneCmd attaches tmux pipe-pane to the named session, appending all
+// PTY output to logPath. Unlike a tee wrapper around stdout/stderr, pipe-pane
+// hooks into tmux's own PTY capture and works regardless of how the agent writes
+// output — including direct PTY writes that bypass stdout/stderr entirely.
+// Errors are silently ignored: the session is already running and a pipe-pane
+// failure only means the log will be empty, not that the agent is broken.
+// It is a variable so tests can substitute a no-op without requiring tmux.
+var execTmuxPipePaneCmd = func(sessionID, logPath string) {
+	exec.Command("tmux", "pipe-pane", "-o", "-t", sessionID, "cat >> "+shellQuote(logPath)).Run() //nolint:errcheck
+}
+
+// redactArgs returns a copy of args with the value portion of any -e KEY=VALUE
+// pair replaced by [REDACTED], preventing secrets from appearing in error messages.
+// Structural args (session ID, workdir, flags) are preserved for operator diagnostics.
+func redactArgs(args []string) []string {
+	out := make([]string, len(args))
+	copy(out, args)
+	for i := 1; i < len(out); i++ {
+		if args[i-1] == "-e" {
+			if idx := strings.IndexByte(out[i], '='); idx >= 0 {
+				out[i] = out[i][:idx+1] + "[REDACTED]"
+			}
+		}
+	}
+	return out
+}
+
+// isTmuxServerDeadError reports whether the combined output of a failed tmux
+// command indicates that the server is not running or unreachable — as opposed
+// to an auth failure or missing binary, which manifest as quick-exit sessions
+// rather than failed new-session invocations.
+func isTmuxServerDeadError(output []byte) bool {
+	msg := strings.ToLower(string(output))
+	return strings.Contains(msg, "no server running") ||
+		strings.Contains(msg, "failed to connect to server") ||
+		strings.Contains(msg, "error connecting to")
+}
 
 // resolveCommand resolves preset.Command to an absolute path using exec.LookPath,
 // falling back to the raw value if lookup fails. This ensures the agent binary is
@@ -310,13 +354,36 @@ EACH AQUEDUCT FLOWS THE DROPLET THROUGH ITS CATARACTAE.
    requirements, and all revision notes from prior cycles.
 2. Adopt the persona described in your role instructions below.
 3. Complete your work according to that persona.
-4. Signal your outcome before exiting. You MUST call one of:
+4. Every 60 seconds while working, call: ct droplet heartbeat <id>
+   This signals the scheduler that you are alive and making progress. Without
+   heartbeats, the stall detector may flag your session as stuck.
+5. Signal your outcome before exiting. You MUST call one of:
      ct droplet pass <id> --notes "..."
      ct droplet recirculate <id> --notes "..."
-     ct droplet block <id> --notes "..."
+     ct droplet pool <id> --notes "..."
    A cataractae that exits without signaling leaves the droplet stranded.
 
 Your role persona and skill instructions follow.
+
+## System safety invariants — never break these
+
+The Castellarius is a state machine. Its correctness depends on these invariants holding. If your work could affect any of them, you must verify they still hold before signaling pass.
+
+**1. Signaling is the only valid way to advance state.**
+Never manipulate droplet state by any means other than ct droplet pass/recirculate/pool.
+Never exit without signaling — a stranded droplet burns resources indefinitely.
+
+**2. Session spawning must expose the agent process directly to tmux.**
+Do not wrap the agent command in a shell (bash -c, sh -c, pipes, tee) unless you have explicitly verified that pane_current_command and /proc/<pid>/cmdline still correctly identify the agent. Wrappers that change what the process monitor sees will cause every healthy session to be classified as zombie and respawned in a loop.
+
+**3. CONTEXT.md is pipeline state — never commit it.**
+CONTEXT.md is injected at dispatch time and listed in .gitignore. If you see it in a git add or git commit, stop. Committing it causes merge conflicts across concurrent deliveries and corrupts origin/main.
+
+**4. The zombie circuit breaker will pool after 5 spawns with no outcome.**
+If a droplet is being repeatedly respawned with no progress, the system will pool it automatically. If you see this happening in notes, do not attempt to work around it — pool the droplet and explain why in the notes so a human can investigate.
+
+**5. Do not call git add -f or git add --force on any ignored file.**
+The .gitignore exists for a reason. Overriding it for pipeline state files (CONTEXT.md, .current-stage, session logs) corrupts the state machine.
 `
 
 // buildPrompt constructs the full agent prompt: constitutional base + persona + skills.
@@ -332,7 +399,7 @@ func (s *Session) buildPrompt() string {
 			identityDir := s.resolveIdentityDir()
 			preamble := buildContextPreamble(identityDir, s.Preset)
 			if preamble != "" {
-				prompt += "\n## Your Role\n\n" + preamble
+				prompt += "\n## Your Role\n\n" + aqueduct.RenderTemplate(preamble, s.TemplateCtx)
 			} else {
 				// Fallback: point agent to the file location.
 				prompt += "\nRead " + s.resolveIdentityPath() + " for your role instructions. "
@@ -342,7 +409,7 @@ func (s *Session) buildPrompt() string {
 			// filesystem injection (--add-dir). Also embed it in the prompt for reliability.
 			identityPath := s.resolveIdentityPath()
 			if content, err := os.ReadFile(identityPath); err == nil {
-				prompt += "\n## Your Role\n\n" + string(content)
+				prompt += "\n## Your Role\n\n" + aqueduct.RenderTemplate(string(content), s.TemplateCtx)
 			} else {
 				// File missing/unreadable — fall back to pointer so agent can try to find it.
 				prompt += "\nRead " + identityPath + " for your role instructions. "
@@ -421,14 +488,11 @@ func (s *Session) resolveIdentityPath() string {
 	return filepath.Join(s.resolveIdentityDir(), s.Preset.InstrFile())
 }
 
-// kill terminates the tmux session if it exists and cancels the quick-exit goroutine.
+// kill terminates the tmux session. Errors are silently ignored since the
+// session may already be dead. Only called for confirmed zombie sessions;
+// healthy sessions are left running (see spawn guard above).
 func (s *Session) kill() {
-	exec.Command("tmux", "kill-session", "-t", s.ID).Run()
-	s.killOnce.Do(func() {
-		if s.done != nil {
-			close(s.done)
-		}
-	})
+	exec.Command("tmux", "kill-session", "-t", s.ID).Run() //nolint:errcheck
 }
 
 // isAlive checks whether the tmux session still exists.
@@ -437,67 +501,18 @@ func (s *Session) isAlive() bool {
 	return err == nil
 }
 
-// claudePathFn resolves the path to the claude executable. It is a variable so
+// claudePathFn resolves the path to the claude executable.It is a variable so
 // tests can substitute it to inject a known absolute path without modifying the
 // process environment or requiring the binary to exist on the test machine.
 var claudePathFn = claudePath
 
-// oauthTokenURL is the OAuth token endpoint used for pre-spawn token refresh.
-// Replaced in tests with a test server URL.
-var oauthTokenURL = oauth.DefaultTokenURL
-
-// oauthHTTPDo is the HTTP transport used for pre-spawn token refresh.
-// Replaced in tests with a test server client.
-var oauthHTTPDo func(*http.Request) (*http.Response, error) = http.DefaultClient.Do
-
-// ensureClaudeOAuthFreshMu guards ensureClaudeOAuthFresh against concurrent calls
-// from parallel spawn goroutines. This prevents concurrent read-modify-write races
-// on ~/.claude/.credentials.json, env.conf, and os.Setenv.
-var ensureClaudeOAuthFreshMu sync.Mutex
-
-// ensureClaudeOAuthFresh checks whether the Claude OAuth access token is expired
-// or within the 5-minute refresh window and, if so, attempts a silent refresh.
-// On success the new token is written to credentials and injected into the
-// current process environment so collectEnvArgs picks it up.
-// Returns nil when no credentials file is present or no refresh token is available
-// (those cases are skipped silently — other auth methods may be in use).
-// Returns an error if the token needs refreshing but the refresh fails.
-func ensureClaudeOAuthFresh(home string) error {
-	ensureClaudeOAuthFreshMu.Lock()
-	defer ensureClaudeOAuthFreshMu.Unlock()
-
-	creds := oauth.Read(home)
-	if creds == nil || creds.RefreshToken == "" {
-		return nil // no credentials or no refresh token — skip silently
-	}
-	if !oauth.IsExpiredOrNear(creds, 5*time.Minute) {
-		return nil // token is fresh
-	}
-
-	result, err := oauth.Refresh(creds.RefreshToken, oauthTokenURL, oauthHTTPDo)
-	if err != nil {
-		return fmt.Errorf("Claude OAuth token expired and refresh failed — run claude interactively to re-authenticate: %w", err)
-	}
-
-	if err := oauth.WriteAccessToken(home, result.AccessToken, result.ExpiresAt); err != nil {
-		slog.Default().Warn("session: could not write refreshed OAuth token", "error", err)
-	}
-
-	// Update env.conf for persistence across service restarts (best-effort).
-	envConfPath := filepath.Join(home, ".config", "systemd", "user",
-		"cistern-castellarius.service.d", "env.conf")
-	if _, statErr := os.Stat(envConfPath); statErr == nil {
-		if err := oauth.UpdateEnvConf(envConfPath, result.AccessToken); err != nil {
-			slog.Default().Warn("session: could not update env.conf with refreshed token", "error", err)
-		}
-	}
-
-	// Inject into current process so collectEnvArgs picks up the new token.
-	os.Setenv("ANTHROPIC_API_KEY", result.AccessToken) //nolint:errcheck
-
-	slog.Default().Info("session: Claude OAuth token refreshed successfully")
-	return nil
-}
+// tmuxRecoveryMu serializes dead-tmux-server recovery across concurrent spawn
+// goroutines (scheduler.go dispatches spawns in parallel). Without serialization,
+// two goroutines that both detect a dead server can interleave: A recovers and
+// starts a session, then B calls execTmuxKillServer and destroys A's server.
+// Holding this lock during the detect→kill→retry block ensures only one goroutine
+// restarts the tmux server at a time.
+var tmuxRecoveryMu sync.Mutex
 
 // claudePath returns the absolute path to the claude binary.
 func claudePath() string {

@@ -541,118 +541,6 @@ func validateWorkflowSkills(workflows map[string]*aqueduct.Workflow) error {
 		len(missing), noun, strings.Join(missing, "\n  "))
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ct architecti — invoke the Architecti autonomous recovery agent
-// ─────────────────────────────────────────────────────────────────────────────
-
-var architectiCmd = &cobra.Command{
-	Use:   "architecti",
-	Short: "Architecti — invoke the autonomous recovery agent",
-}
-
-var (
-	architectiRunDryRun    bool
-	architectiRunDropletID string
-)
-
-var architectiRunCmd = &cobra.Command{
-	Use:   "run",
-	Short: "Invoke Architecti ad-hoc: build a snapshot, run the agent, and dispatch actions",
-	Long: `Invoke the Architecti agent on demand.
-
-Architecti is the autonomous recovery agent that examines pooled
-droplets and takes corrective action (restart, cancel, file, note). Normally it
-is triggered automatically by the scheduler when droplets exceed the pooling
-threshold.
-
-This command runs the same path manually, allowing operators to invoke it for
-debugging or when immediate intervention is needed.
-
-Use --dry-run to inspect the snapshot and proposed actions without dispatching.
-Use --droplet <id> to provide a specific droplet as trigger context.`,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		cfgPath := resolveConfigPath()
-		cfg, err := aqueduct.ParseAqueductConfig(cfgPath)
-		if err != nil {
-			return fmt.Errorf("loading config: %w", err)
-		}
-
-		// Resolve workflow paths relative to the config file directory.
-		cfgDir := filepath.Dir(cfgPath)
-		for i := range cfg.Repos {
-			if !filepath.IsAbs(cfg.Repos[i].WorkflowPath) {
-				cfg.Repos[i].WorkflowPath = filepath.Join(cfgDir, cfg.Repos[i].WorkflowPath)
-			}
-		}
-
-		dbPath := resolveDBPath()
-
-		// Build a Castellarius with a nil runner — RunArchitectiAdHoc does not
-		// use the runner, so nil is safe here.
-		sched, err := castellarius.New(*cfg, dbPath, nil)
-		if err != nil {
-			return fmt.Errorf("initializing architecti: %w", err)
-		}
-
-		// Resolve trigger droplet.
-		var trigger *cistern.Droplet
-		if architectiRunDropletID != "" {
-			c, cerr := cistern.New(dbPath, "")
-			if cerr != nil {
-				return fmt.Errorf("opening cistern: %w", cerr)
-			}
-			defer c.Close()
-			trigger, err = c.Get(architectiRunDropletID)
-			if err != nil {
-				return fmt.Errorf("droplet %q not found: %w", architectiRunDropletID, err)
-			}
-		} else {
-			trigger = &cistern.Droplet{
-				ID:        "(ad-hoc)",
-				Status:    "none",
-				UpdatedAt: time.Now(),
-			}
-		}
-
-		ctx := context.Background()
-		snapshot, rawOutput, actions, err := sched.RunArchitectiAdHoc(ctx, trigger, castellarius.ArchitectiDefaultMaxFilesPerRun, architectiRunDryRun)
-		if err != nil {
-			return err
-		}
-
-		if architectiRunDryRun {
-			fmt.Println("=== Snapshot ===")
-			fmt.Print(snapshot)
-			fmt.Println()
-			fmt.Println("=== Proposed Actions (dry-run — not dispatched) ===")
-			fmt.Println(string(rawOutput))
-			return nil
-		}
-
-		if len(actions) == 0 {
-			fmt.Println("Architecti completed. No actions taken.")
-			return nil
-		}
-
-		fmt.Printf("Architecti completed. %d action(s) dispatched:\n", len(actions))
-		for _, a := range actions {
-			switch a.Action {
-			case "restart":
-				fmt.Printf("  restart  %-14s → %-14s (reason: %s)\n", a.DropletID, a.Cataractae, a.Reason)
-			case "cancel":
-				fmt.Printf("  cancel   %-14s               (reason: %s)\n", a.DropletID, a.Reason)
-			case "file":
-				fmt.Printf("  file     %-14s %s (reason: %s)\n", a.Repo, a.Title, a.Reason)
-			case "note":
-				fmt.Printf("  note     %-14s               (reason: %s)\n", a.DropletID, a.Reason)
-			default:
-				fmt.Printf("  %-8s %-14s               (reason: %s)\n", a.Action, a.DropletID, a.Reason)
-			}
-		}
-		return nil
-	},
-}
-
 // ct castellarius stop — send SIGTERM to the running Castellarius
 
 var castellariusStopCmd = &cobra.Command{
@@ -698,7 +586,7 @@ var castellariusRestartCmd = &cobra.Command{
 			return fmt.Errorf("restart: cannot find executable: %w", err)
 		}
 		c := exec.Command(exe, "castellarius", "start")
-		c.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		c.SysProcAttr = detachSysProcAttr()
 		if err := c.Start(); err != nil {
 			return fmt.Errorf("restart: cannot start: %w", err)
 		}
@@ -713,14 +601,10 @@ func init() {
 	statusCmd.Flags().BoolVar(&statusWatch, "watch", false, "continuously refresh status every N seconds")
 	statusCmd.Flags().IntVar(&statusInterval, "interval", 5, "refresh interval in seconds (min 1, used with --watch)")
 
-	architectiRunCmd.Flags().BoolVar(&architectiRunDryRun, "dry-run", false, "print snapshot and proposed actions without dispatching")
-	architectiRunCmd.Flags().StringVar(&architectiRunDropletID, "droplet", "", "use a specific droplet as trigger context")
-	architectiCmd.AddCommand(architectiRunCmd)
-
 	castellariusCmd.AddCommand(castellariusStartCmd, castellariusStatusCmd, castellariusStopCmd, castellariusRestartCmd)
 	aqueductCmd.AddCommand(aqueductStatusCmd, aqueductValidateCmd)
 
-	rootCmd.AddCommand(castellariusCmd, aqueductCmd, statusCmd, architectiCmd)
+	rootCmd.AddCommand(castellariusCmd, aqueductCmd, statusCmd)
 }
 
 func resolveConfigPath() string {
