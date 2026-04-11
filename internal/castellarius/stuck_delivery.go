@@ -93,8 +93,8 @@ func (s *Castellarius) checkStuckDeliveriesForRepo(ctx context.Context, repo aqu
 }
 
 // recoverStuckDelivery recovers a single stuck delivery droplet.
-// It looks up the associated PR, kills the stuck agent session, and either
-// signals pass (if the PR was already merged) or escalates for human attention.
+// It looks up the associated PR, kills the stuck agent session, and escalates
+// for human attention. The Castellarius never writes pass — only agents do that.
 func (s *Castellarius) recoverStuckDelivery(ctx context.Context, repo aqueduct.RepoConfig, client CisternClient, item *cistern.Droplet) {
 	sandboxDir := filepath.Join(s.sandboxRoot, repo.Name, item.ID)
 	sessionID := repo.Name + "-" + item.Assignee
@@ -129,21 +129,12 @@ func (s *Castellarius) recoverStuckDelivery(ctx context.Context, repo aqueduct.R
 	s.logger.Info("stuck delivery: PR found",
 		"droplet", item.ID, "prURL", prURL, "state", state)
 
-	switch state {
-	case "MERGED":
-		s.logger.Info("stuck delivery: PR already merged, signaling pass", "droplet", item.ID)
-		s.addDeliveryNote(client, item.ID,
-			fmt.Sprintf("Stuck delivery recovered: PR %s was already merged. Signaling pass.", prURL))
-		s.logSetOutcome(client, item.ID, "pass", "PR already merged")
-
-	default:
-		s.logger.Warn("stuck delivery: escalating",
-			"droplet", item.ID, "prURL", prURL, "state", state)
-		s.addDeliveryNote(client, item.ID,
-			fmt.Sprintf("Stuck delivery: PR %s in state %q. Escalated for human attention.", prURL, state))
-		if escErr := client.Escalate(item.ID, fmt.Sprintf("stuck delivery: PR %s in state %s", prURL, state)); escErr != nil {
-			s.logger.Error("stuck delivery: escalate failed", "droplet", item.ID, "error", escErr)
-		}
+	s.logger.Warn("stuck delivery: escalating",
+		"droplet", item.ID, "prURL", prURL, "state", state)
+	s.addDeliveryNote(client, item.ID,
+		fmt.Sprintf("Stuck delivery: PR %s in state %q. Escalated for human attention.", prURL, state))
+	if escErr := client.Escalate(item.ID, fmt.Sprintf("stuck delivery: PR %s in state %s", prURL, state)); escErr != nil {
+		s.logger.Error("stuck delivery: escalate failed", "droplet", item.ID, "error", escErr)
 	}
 }
 
@@ -151,20 +142,6 @@ func (s *Castellarius) recoverStuckDelivery(ctx context.Context, repo aqueduct.R
 func (s *Castellarius) addDeliveryNote(client CisternClient, dropletID, msg string) {
 	if err := client.AddNote(dropletID, "stuck-delivery", msg); err != nil {
 		s.logger.Warn("stuck delivery: AddNote failed", "droplet", dropletID, "error", err)
-	}
-}
-
-// logSetOutcome calls client.SetOutcome and logs at Error level if it fails.
-// A SetOutcome failure after the session has been killed leaves the droplet
-// stranded — logging ensures operators can detect and manually recover it.
-func (s *Castellarius) logSetOutcome(client CisternClient, id, outcome, context string) {
-	if err := client.SetOutcome(id, outcome); err != nil {
-		s.logger.Error("stuck delivery: SetOutcome failed",
-			"droplet", id,
-			"outcome", outcome,
-			"context", context,
-			"error", err,
-		)
 	}
 }
 

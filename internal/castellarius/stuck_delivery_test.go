@@ -249,7 +249,7 @@ func TestCheckStuckDeliveries_SkipsDeadSession(t *testing.T) {
 
 // --- recoverStuckDelivery routing tests ---
 
-func TestRecoverStuckDelivery_Merged_Pass(t *testing.T) {
+func TestRecoverStuckDelivery_Merged_Escalates(t *testing.T) {
 	item := stuckItem("sd-merged", 2*time.Hour)
 	c := newStuckClient(item)
 	killed := false
@@ -261,8 +261,15 @@ func TestRecoverStuckDelivery_Merged_Pass(t *testing.T) {
 
 	s.recoverStuckDelivery(context.Background(), s.config.Repos[0], c, item)
 
-	if got := outcomeFor(c, item.ID); got != "pass" {
-		t.Errorf("outcome = %q, want %q", got, "pass")
+	// Castellarius never writes pass — only agents do. Even a merged PR escalates
+	// so a human (or the operator) confirms and closes out the droplet.
+	if got := outcomeFor(c, item.ID); got != "" {
+		t.Errorf("expected no outcome set by Castellarius, got %q", got)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.escalated[item.ID] == "" {
+		t.Error("expected item to be escalated even when PR is MERGED")
 	}
 	if !killed {
 		t.Error("expected session to be killed")
@@ -712,7 +719,7 @@ func TestRecoverStuckDelivery_SandboxDirUsesDropletID(t *testing.T) {
 // --- AddNote error logging tests ---
 
 // TestRecoverStuckDelivery_AddNoteError_LogsWarn verifies that when AddNote
-// returns an error, a WARN-level log is emitted and the outcome is still set
+// returns an error, a WARN-level log is emitted and the escalation still proceeds
 // (non-blocking behavior).
 func TestRecoverStuckDelivery_AddNoteError_LogsWarn(t *testing.T) {
 	item := stuckItem("sd-note-err", 2*time.Hour)
@@ -730,9 +737,11 @@ func TestRecoverStuckDelivery_AddNoteError_LogsWarn(t *testing.T) {
 
 	s.recoverStuckDelivery(context.Background(), s.config.Repos[0], c, item)
 
-	// Outcome must still be set — AddNote failure is non-blocking.
-	if got := outcomeFor(c, item.ID); got != "pass" {
-		t.Errorf("outcome = %q, want %q", got, "pass")
+	// Escalation must still happen — AddNote failure is non-blocking.
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.escalated[item.ID] == "" {
+		t.Error("expected escalation despite AddNote failure")
 	}
 
 	// A WARN must have been logged for the AddNote failure.
