@@ -1000,40 +1000,6 @@ func (s *Castellarius) dispatchRepo(ctx context.Context, repo aqueduct.RepoConfi
 					return
 				}
 
-				// Dirty state check: if non-CONTEXT.md files are uncommitted,
-				// recirculate with a diagnostic note rather than spawning into dirty state.
-				// If git status itself fails (transient error, disk full, permissions),
-				// recirculate conservatively rather than letting an unknown dirty state advance.
-				dirtyFiles, dirtyErr := dirtyNonContextFiles(sandboxDir)
-				if dirtyErr != nil {
-					s.logger.Error("dirty check: git status failed — recirculating conservatively",
-						"droplet", req.Item.ID, "error", dirtyErr)
-					s.addNote(client, req.Item.ID, "scheduler",
-						fmt.Sprintf("Dispatch blocked: could not check worktree state: %v", dirtyErr))
-					if err2 := client.Assign(req.Item.ID, "", req.Step.Name); err2 != nil {
-						s.logger.Error("reset after dirty-check error", "droplet", req.Item.ID, "error", err2)
-					}
-					pool.Release(w)
-					return
-				}
-				if len(dirtyFiles) > 0 {
-					note := fmt.Sprintf(
-						"Dispatch blocked: worktree has uncommitted files from a prior session: %s. "+
-							"These must be committed or discarded before proceeding.",
-						strings.Join(dirtyFiles, ", "),
-					)
-					s.logger.Warn("dirty worktree — recirculating",
-						"droplet", req.Item.ID,
-						"files", dirtyFiles,
-					)
-					s.addNote(client, req.Item.ID, "scheduler", note)
-					if err2 := client.Assign(req.Item.ID, "", req.Step.Name); err2 != nil {
-						s.logger.Error("reset after dirty check", "droplet", req.Item.ID, "error", err2)
-					}
-					pool.Release(w)
-					return
-				}
-
 				req.SandboxDir = sandboxDir
 			}
 
@@ -1044,7 +1010,6 @@ func (s *Castellarius) dispatchRepo(ctx context.Context, repo aqueduct.RepoConfi
 					"cataractae", req.Step.Name,
 					"error", err,
 				)
-				// Reset to open so the item can be re-dispatched to same aqueduct.
 				if err2 := client.Assign(req.Item.ID, "", req.Step.Name); err2 != nil {
 					s.logger.Error("reset after spawn failure",
 						"droplet", req.Item.ID, "error", err2)
@@ -1172,11 +1137,13 @@ func (s *Castellarius) handleTerminal(client CisternClient, itemID, terminal, fr
 	}
 }
 
-// recoverInProgress handles items left in_progress after a process restart.
-// Items with a non-null outcome are left as-is — the first observe tick will route them.
-// Items with a null outcome are reset to open so they can be re-dispatched.
-// (Agent sessions that were running will no longer be monitored, but the
-// feature branch preserves their work; the new session picks up incrementally.)
+// recoverInProgress handles items left in_progress after a Castellarius restart.
+//
+// If an outcome is already written, the first observe tick will route it.
+// If the tmux session is still alive, leave the droplet alone — the agent
+// will signal its outcome.
+// Otherwise, reset to open for re-dispatch. The circuit breaker in
+// heartbeatRepo will pool the droplet if it keeps dying.
 func (s *Castellarius) recoverInProgress() {
 	for _, repo := range s.config.Repos {
 		client := s.clients[repo.Name]
@@ -1190,14 +1157,25 @@ func (s *Castellarius) recoverInProgress() {
 
 		for _, item := range items {
 			if item.Outcome != "" {
-				// Outcome already written — leave as in_progress.
-				// The first observe tick will route this item.
 				s.logger.Info("recovery: item has outcome, will be routed on first tick",
 					"repo", repo.Name, "droplet", item.ID, "outcome", item.Outcome)
 				continue
 			}
 
-			// No outcome: reset to open for re-dispatch.
+			if item.Assignee != "" {
+				sessionID := repo.Name + "-" + item.Assignee
+				if isTmuxAlive(sessionID) {
+					s.logger.Info("recovery: session still alive, leaving for agent to signal",
+						"repo", repo.Name, "droplet", item.ID, "session", sessionID)
+					continue
+				}
+				if pool := s.pools[repo.Name]; pool != nil {
+					if w := pool.FindByName(item.Assignee); w != nil {
+						pool.Release(w)
+					}
+				}
+			}
+
 			cataractaeName := item.CurrentCataractae
 			if cataractaeName == "" {
 				step := currentCataracta(item, wf)
@@ -1265,30 +1243,13 @@ func (s *Castellarius) heartbeatRepo(ctx context.Context, repo aqueduct.RepoConf
 	threshold := stallThresholdDuration(s.config)
 
 	for _, item := range items {
-		// Items with outcomes are handled by the observe phase — skip them.
 		if item.Outcome != "" {
 			continue
 		}
 
-		// Fast liveness check: if the tmux session is dead, or the session is
-		// alive but the claude process has exited, record a zombie note and reset
-		// the droplet to open for re-dispatch. This runs on every heartbeat
-		// tick (~30s) — no threshold, no waiting.
-		//
-		// State-machine invariant: a droplet is a zombie if and only if
-		//   (1) it is assigned to a worker,
-		//   (2) the worker's tmux session is dead,
-		//   (3) the stage has been running long enough to be real (age guard), AND
-		//   (4) no outcome has been recorded (Outcome == "" — checked above).
-		// Condition (4) is already enforced: the loop skips items whose Outcome
-		// is non-empty. Conditions (1–3) are enforced below.
-		//
-		// Age guard: use StageDispatchedAt (set only when a worker is assigned)
-		// rather than UpdatedAt (bumped by notes, outcome signals, and other
-		// changes). This ensures the guard always reflects actual dispatch time,
-		// not incidental updates. Falls back to UpdatedAt for droplets dispatched
-		// before this field was introduced.
-		// Scale: production (30s heartbeat) → 2min guard; tests (1s heartbeat) → 4s guard.
+		// Dead session detection: tmux dead or agent process dead.
+		// Reset to open for re-dispatch. The circuit breaker below
+		// will pool the droplet if it keeps dying.
 		zombieGuard := 4 * s.heartbeatInterval
 		if item.Assignee != "" {
 			sessionID := repo.Name + "-" + item.Assignee
@@ -1299,127 +1260,75 @@ func (s *Castellarius) heartbeatRepo(ctx context.Context, repo aqueduct.RepoConf
 			if time.Since(dispatchedAt) < zombieGuard {
 				continue
 			}
+
+			dead := false
+			tmuxDead := false
 			if !isTmuxAlive(sessionID) {
+				dead = true
+				tmuxDead = true
+				s.logger.Info("heartbeat: tmux dead — resetting to open",
+					"repo", repo.Name, "droplet", item.ID,
+					"assignee", item.Assignee, "session_age", time.Since(dispatchedAt).Round(time.Second).String())
+			} else if !isAgentAlive(sessionID) {
+				dead = true
+				exec.Command("tmux", "kill-session", "-t", sessionID).Run()
+				s.logger.Info("heartbeat: agent dead — killing session, resetting to open",
+					"repo", repo.Name, "droplet", item.ID,
+					"assignee", item.Assignee, "session", sessionID)
+			}
+
+			if dead {
 				step := currentCataracta(item, wf)
 				if step == nil {
 					s.logger.Error("heartbeat: no step for dead session — skipping",
 						"repo", repo.Name, "droplet", item.ID)
 					continue
 				}
-				// Release the pool slot for the dead worker so the next dispatch
-				// cycle can reassign it to another droplet.
 				if pool := s.pools[repo.Name]; pool != nil {
 					if w := pool.FindByName(item.Assignee); w != nil {
 						pool.Release(w)
 					}
 				}
-				// Append a history note so the zombie event is visible in
-				// `ct droplet show` and the TUI timeline.
-				zombieNote := fmt.Sprintf(
-					"Session zombie detected: tmux session %s dead, no outcome recorded. Aqueduct worker: %s, cataractae: %s. Resetting to open for re-dispatch. [%s]",
-					sessionID, item.Assignee, step.Name, time.Now().UTC().Format(time.RFC3339),
-				)
-				if err := client.AddNote(item.ID, "scheduler", zombieNote); err != nil {
-					s.logger.Warn("heartbeat: AddNote failed for zombie reset",
-						"droplet", item.ID, "error", err)
+				var noteMsg string
+				if tmuxDead {
+					noteMsg = fmt.Sprintf("[scheduler:zombie] Session %s died without outcome (worker=%s, cataractae=%s). [%s]",
+						sessionID, item.Assignee, step.Name, time.Now().UTC().Format(time.RFC3339))
+				} else {
+					noteMsg = fmt.Sprintf("Session killed. Re-dispatching (worker=%s, cataractae=%s). [%s]",
+						item.Assignee, step.Name, time.Now().UTC().Format(time.RFC3339))
 				}
-				s.logger.Info("heartbeat: zombie detected — resetting to open",
-					"repo", repo.Name,
-					"droplet", item.ID,
-					"assignee", item.Assignee,
-					"cataractae", step.Name,
-					"session_age", time.Since(dispatchedAt).Round(time.Second).String(),
-				)
+				s.addNote(client, item.ID, "scheduler", noteMsg)
 				if err := client.Assign(item.ID, "", step.Name); err != nil {
-					s.logger.Error("heartbeat: zombie reset failed",
-						"repo", repo.Name, "droplet", item.ID, "error", err)
+					s.logger.Error("heartbeat: reset failed", "droplet", item.ID, "error", err)
 				}
-				continue // handled — skip progress check for this item
-			}
-
-			// The tmux session is alive. Check whether the claude agent process is
-			// still running inside it. If not, the agent exited without signaling an
-			// outcome (e.g. OOM kill, hard token limit) — kill the orphaned session,
-			// record a diagnostic note, and reset the droplet for re-dispatch.
-			if !isAgentAlive(sessionID) {
-				step := currentCataracta(item, wf)
-				if step == nil {
-					s.logger.Error("heartbeat: no step for agent-dead session — skipping",
-						"repo", repo.Name, "droplet", item.ID)
-					continue
-				}
-				if pool := s.pools[repo.Name]; pool != nil {
-					if w := pool.FindByName(item.Assignee); w != nil {
-						pool.Release(w)
-					}
-				}
-				zombieNote := fmt.Sprintf(
-					"Session zombie detected: tmux alive but claude process dead. Session killed. Re-dispatching. [%s]",
-					time.Now().UTC().Format(time.RFC3339),
-				)
-				if err := client.AddNote(item.ID, "scheduler", zombieNote); err != nil {
-					s.logger.Warn("heartbeat: AddNote failed for agent-dead zombie",
-						"droplet", item.ID, "error", err)
-				}
-				s.logger.Info("heartbeat: agent-dead zombie — killed session, resetting to open",
-					"repo", repo.Name,
-					"droplet", item.ID,
-					"assignee", item.Assignee,
-					"cataractae", step.Name,
-					"session", sessionID,
-				)
-				if err := client.Assign(item.ID, "", step.Name); err != nil {
-					s.logger.Error("heartbeat: agent-dead zombie reset failed",
-						"repo", repo.Name, "droplet", item.ID, "error", err)
-				}
-				continue // handled — skip progress check for this item
+				continue
 			}
 		}
 
-		// Stall detection: use the agent heartbeat timestamp as the primary signal.
-		// Agents call `ct droplet heartbeat <id>` every 60 seconds while working.
-		// If the heartbeat is recent (< threshold), the agent is alive — skip.
-		// If no heartbeat has been emitted yet, fall back to UpdatedAt so pre-feature
-		// agents and agents that die before their first heartbeat remain detectable.
+		// Stall detection: agent heartbeat older than threshold.
 		stallSig := item.LastHeartbeatAt
 		if stallSig.IsZero() {
 			stallSig = item.UpdatedAt
 		}
-
-		// Not stalled: heartbeat (or UpdatedAt fallback) is within the threshold.
 		if time.Since(stallSig) <= threshold {
 			continue
 		}
 
-		// Stalled. Write an escalation note. Do NOT auto-respawn: agents that are
-		// emitting heartbeats are alive and working; agents that are not emitting
-		// heartbeats are handled by zombie detection (isTmuxAlive / isAgentAlive).
+		// Stalled — write an escalation note.
 		heartbeatStatus := "none"
 		if !item.LastHeartbeatAt.IsZero() {
 			heartbeatStatus = item.LastHeartbeatAt.UTC().Format(time.RFC3339)
 		}
-		note := fmt.Sprintf(
-			"%s elapsed=%s heartbeat=%s",
-			stallNotePrefix,
-			formatStallDuration(time.Since(stallSig)),
-			heartbeatStatus,
-		)
-		if err := client.AddNote(item.ID, "scheduler", note); err != nil {
-			s.logger.Warn("heartbeat: AddNote failed", "droplet", item.ID, "error", err)
-		} else {
-			s.logger.Warn("heartbeat: stall detected",
-				"repo", repo.Name,
-				"droplet", item.ID,
-				"cataractae", item.CurrentCataractae,
-				"stall_duration", time.Since(stallSig).Round(time.Second).String(),
-				"threshold", threshold.String(),
-			)
-		}
+		note := fmt.Sprintf("%s elapsed=%s heartbeat=%s",
+			stallNotePrefix, formatStallDuration(time.Since(stallSig)), heartbeatStatus)
+		s.addNote(client, item.ID, "scheduler", note)
+		s.logger.Warn("heartbeat: stall detected",
+			"repo", repo.Name, "droplet", item.ID,
+			"cataractae", item.CurrentCataractae,
+			"stall_duration", time.Since(stallSig).Round(time.Second).String(),
+			"threshold", threshold.String())
 
-		// Orphan recovery: no assignee means no named session exists for this
-		// droplet. Force-reset to open so the next dispatch cycle reclaims it.
-		// This handles Castellarius crash/restart and failed dispatch where the
-		// droplet was never assigned a worker.
+		// Orphan: no assignee, no session. Reset to open.
 		if item.Assignee == "" {
 			stepName := item.CurrentCataractae
 			if stepName == "" {
@@ -1427,22 +1336,20 @@ func (s *Castellarius) heartbeatRepo(ctx context.Context, repo aqueduct.RepoConf
 					stepName = step.Name
 				}
 			}
-			if err := client.AddNote(item.ID, "scheduler",
-				"[scheduler:recovery] reset orphaned in_progress droplet to open — no assignee, no active session"); err != nil {
-				s.logger.Warn("heartbeat: orphan recovery note failed",
-					"droplet", item.ID, "error", err)
-			}
-			s.logger.Info("heartbeat: orphan recovery — resetting to open",
-				"repo", repo.Name,
-				"droplet", item.ID,
-				"cataractae", stepName,
-			)
+			s.addNote(client, item.ID, "scheduler",
+				fmt.Sprintf("[scheduler:recovery] Orphan reset to open (cataractae=%s).", stepName))
+			s.logger.Info("heartbeat: orphan reset to open",
+				"repo", repo.Name, "droplet", item.ID, "cataractae", stepName)
 			if err := client.Assign(item.ID, "", stepName); err != nil {
-				s.logger.Error("heartbeat: orphan recovery reset failed",
-					"repo", repo.Name, "droplet", item.ID, "error", err)
+				s.logger.Error("heartbeat: orphan reset failed", "droplet", item.ID, "error", err)
 			}
 		}
 	}
+
+	// Circuit breaker: pool droplets that have been dispatched too many
+	// times without producing an outcome. This is the only path that
+	// pools — everything else resets to open for re-dispatch.
+	s.circuitBreaker(repo, items)
 }
 
 // stallThresholdDuration returns the configured stall threshold, defaulting to 45 minutes.
@@ -1469,6 +1376,78 @@ func formatStallDuration(d time.Duration) string {
 		return fmt.Sprintf("%dh", hours)
 	}
 	return fmt.Sprintf("%dh%dm", hours, minutes)
+}
+
+// circuitBreakerMaxDispatches is the maximum number of dispatch attempts within
+// circuitBreakerWindow that a droplet can have without producing an outcome
+// before being pooled. This is the sole mechanism that transitions a droplet
+// to pooled — everything else resets to open.
+const (
+	circuitBreakerMaxDispatches = 5
+	circuitBreakerWindow        = 15 * time.Minute
+)
+
+// circuitBreaker checks in-progress droplets for a tight respawn loop:
+// a droplet that has been dispatched many times within a short window
+// without ever producing an outcome. If detected, the droplet is pooled
+// to stop the token burn. This is the only path that pools.
+func (s *Castellarius) circuitBreaker(repo aqueduct.RepoConfig, items []*cistern.Droplet) {
+	client := s.clients[repo.Name]
+
+	for _, item := range items {
+		if item.Outcome != "" {
+			continue
+		}
+		if item.StageDispatchedAt.IsZero() {
+			continue
+		}
+		// Only check items that have been around long enough to accumulate cycles.
+		if time.Since(item.StageDispatchedAt) < circuitBreakerWindow {
+			continue
+		}
+
+		notes, err := client.GetNotes(item.ID)
+		if err != nil {
+			continue
+		}
+
+		cutoff := time.Now().Add(-circuitBreakerWindow)
+		dispatchCount := 0
+		for _, n := range notes {
+			if n.CataractaeName == "scheduler" &&
+				strings.Contains(n.Content, "Session died without outcome") &&
+				n.CreatedAt.After(cutoff) {
+				dispatchCount++
+			}
+		}
+
+		if dispatchCount >= circuitBreakerMaxDispatches {
+			reason := fmt.Sprintf("[circuit-breaker] %d dead sessions in %s with no outcome — pooling",
+				dispatchCount, circuitBreakerWindow)
+			s.logger.Warn("circuit breaker: pooling droplet",
+				"repo", repo.Name, "droplet", item.ID,
+				"dead_sessions", dispatchCount, "window", circuitBreakerWindow)
+			s.addNote(client, item.ID, "scheduler", reason)
+
+			// Release the pool slot.
+			if item.Assignee != "" {
+				if pool := s.pools[repo.Name]; pool != nil {
+					if w := pool.FindByName(item.Assignee); w != nil {
+						pool.Release(w)
+					}
+				}
+			}
+
+			if s.sandboxRoot != "" {
+				primaryDir := filepath.Join(s.sandboxRoot, repo.Name, "_primary")
+				removeDropletWorktree(primaryDir, s.sandboxRoot, repo.Name, item.ID, true)
+			}
+
+			if err := client.Pool(item.ID, reason); err != nil {
+				s.logger.Error("circuit breaker: pool failed", "droplet", item.ID, "error", err)
+			}
+		}
+	}
 }
 
 // isTmuxAliveFn is a variable so tests can substitute a fake implementation
@@ -1594,13 +1573,12 @@ func prepareDropletWorktreeWithLogger(logger *slog.Logger, primaryDir, sandboxRo
 	t0 := time.Now()
 
 	if _, err := os.Stat(worktreePath); err == nil {
-		// Worktree exists — resume by checking out the branch, then hard-reset
-		// to guarantee a clean state. Any uncommitted changes from prior manual
-		// work or prior cataractae are discarded — agents must commit their work.
+		// Worktree exists — resume the branch, preserving any uncommitted work
+		// from the prior session. The agent will be told to commit its changes.
 
 		// Abort any in-progress rebase or merge left by a prior interrupted
-		// dispatch (e.g. Castellarius restart, timeout). Both commands exit
-		// non-zero when nothing is in progress — errors are ignored.
+		// dispatch (e.g. Castellarius restart, timeout). These are corrupted
+		// git state, not meaningful uncommitted work.
 		abortRebase := exec.Command("git", "rebase", "--abort")
 		abortRebase.Dir = worktreePath
 		_ = abortRebase.Run()
@@ -1615,14 +1593,6 @@ func prepareDropletWorktreeWithLogger(logger *slog.Logger, primaryDir, sandboxRo
 		if out, err := checkout.CombinedOutput(); err != nil {
 			return "", fmt.Errorf("git checkout %s in %s: %w: %s", branch, worktreePath, err, out)
 		}
-		reset := exec.Command("git", "reset", "--hard", "HEAD")
-		reset.Dir = worktreePath
-		if out, err := reset.CombinedOutput(); err != nil {
-			logger.Warn("git reset --hard HEAD failed", "path", worktreePath, "error", err, "output", string(out))
-		}
-		clean := exec.Command("git", "clean", "-fd")
-		clean.Dir = worktreePath
-		_ = clean.Run()
 
 		logger.Info("worktree resumed",
 			"droplet", dropletID, "path", worktreePath,
@@ -1716,58 +1686,6 @@ func removeDropletWorktreeWithLogger(logger *slog.Logger, primaryDir, sandboxRoo
 	} else {
 		logger.Info("worktree deleted", "droplet", dropletID, "path", worktreePath)
 	}
-}
-
-// dirtyNonContextFiles returns uncommitted non-CONTEXT.md files in dir.
-// An empty slice means the worktree is clean for dispatch.
-// An error is returned when git status itself fails (non-git dir, disk error,
-// permissions) — callers must treat this as an unknown dirty state and
-// recirculate conservatively rather than proceeding to spawn.
-func dirtyNonContextFiles(dir string) ([]string, error) {
-	cmd := exec.Command("git", "status", "--porcelain")
-	cmd.Dir = dir
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("git status in %s: %w", dir, err)
-	}
-	var dirty []string
-	for _, line := range strings.Split(string(out), "\n") {
-		if line == "" {
-			continue
-		}
-		// Format: "XY filename" — XY is always exactly 2 chars, then a space.
-		if len(line) < 4 {
-			continue
-		}
-		xy := line[:2]
-		// Skip untracked files ("??" prefix) — gitignored binaries (ct, install)
-		// show as untracked and should never block dispatch.
-		if xy == "??" {
-			continue
-		}
-		name := strings.TrimSpace(line[3:])
-		if name != "CONTEXT.md" && name != ".current-stage" {
-			dirty = append(dirty, name)
-		}
-	}
-	return dirty, nil
-}
-
-// cleanupBranchInSandbox detaches HEAD in the worktree and deletes the feature
-// branch. Called by the Castellarius after a droplet completes or recirculates.
-// Errors are ignored — this is best-effort cleanup.
-//
-// Deprecated: use removeDropletWorktree for per-droplet worktrees.
-// Kept for backwards compatibility with existing tests.
-func cleanupBranchInSandbox(dir, branch string) {
-	// Detach HEAD so we can delete the branch.
-	detach := exec.Command("git", "checkout", "--detach", "HEAD")
-	detach.Dir = dir
-	_ = detach.Run()
-
-	del := exec.Command("git", "branch", "-D", branch)
-	del.Dir = dir
-	_ = del.Run()
 }
 
 // WriteContext writes a CONTEXT.md file with notes from previous steps.

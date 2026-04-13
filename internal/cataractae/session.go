@@ -430,8 +430,8 @@ Do not wrap the agent command in a shell (bash -c, sh -c, pipes, tee) unless you
 **3. CONTEXT.md is pipeline state — never commit it.**
 CONTEXT.md is injected at dispatch time and listed in .gitignore. If you see it in a git add or git commit, stop. Committing it causes merge conflicts across concurrent deliveries and corrupts origin/main.
 
-**4. The zombie circuit breaker will pool after 5 spawns with no outcome.**
-If a droplet is being repeatedly respawned with no progress, the system will pool it automatically. If you see this happening in notes, do not attempt to work around it — pool the droplet and explain why in the notes so a human can investigate.
+**4. The circuit breaker pools after 5 dead sessions in 15 minutes.**
+If your droplet keeps dying without signaling an outcome, the scheduler will pool it automatically. This stops token burn — a human needs to investigate before the droplet is re-opened.
 
 **5. Do not call git add -f or git add --force on any ignored file.**
 The .gitignore exists for a reason. Overriding it for pipeline state files (CONTEXT.md, .current-stage, session logs) corrupts the state machine.

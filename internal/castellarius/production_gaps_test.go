@@ -181,7 +181,7 @@ func TestDispatch_SpawnFailure_ResetsDropletAndReleasesWorker(t *testing.T) {
 		t.Errorf("expected 'spawn failed' log; got:\n%s", log)
 	}
 
-	// Droplet must have been reset to open (Assign called with empty worker).
+	// Droplet must have been reset to open (not pooled).
 	client.mu.Lock()
 	status := ""
 	if it, ok := client.items["spawn-fail"]; ok {
@@ -189,7 +189,7 @@ func TestDispatch_SpawnFailure_ResetsDropletAndReleasesWorker(t *testing.T) {
 	}
 	client.mu.Unlock()
 	if status != "open" {
-		t.Errorf("droplet status = %q after spawn failure; want 'open' so it can be retried", status)
+		t.Errorf("droplet status = %q after spawn failure; want 'open'", status)
 	}
 }
 

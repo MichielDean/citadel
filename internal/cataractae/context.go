@@ -179,6 +179,19 @@ func writeContextFile(path string, p ContextParams) error {
 		b.WriteString("\n\n")
 	}
 
+	if p.Level == aqueduct.ContextFullCodebase || p.Level == "" {
+		if dirty, err := uncommittedFiles(p.SandboxDir); err == nil && len(dirty) > 0 {
+			b.WriteString("### Uncommitted Files from Prior Session\n\n")
+			b.WriteString("The worktree has uncommitted changes from a prior agent session.\n")
+			b.WriteString("You MUST commit these changes before making new ones.\n")
+			b.WriteString("Review the changes, ensure they are correct, then commit with a descriptive message.\n\n")
+			for _, f := range dirty {
+				b.WriteString(fmt.Sprintf("- `%s`\n", f))
+			}
+			b.WriteString("\n")
+		}
+	}
+
 	b.WriteString(fmt.Sprintf("## Current Step: %s\n\n", p.Step.Name))
 	b.WriteString(fmt.Sprintf("- **Type:** %s\n", p.Step.Type))
 	if p.Step.Identity != "" {
@@ -420,6 +433,32 @@ func readSkillDescription(path string) string {
 // non-heading, non-empty line as a brief description. Falls back to name.
 func skillDescription(name string) string {
 	return readSkillDescription(skills.LocalPath(name))
+}
+
+// uncommittedFiles returns a list of modified/staged files (excluding CONTEXT.md,
+// .current-stage, and untracked files) in the given directory. Returns nil on error.
+func uncommittedFiles(dir string) ([]string, error) {
+	cmd := exec.Command("git", "status", "--porcelain")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	var files []string
+	for _, line := range strings.Split(string(out), "\n") {
+		if len(line) < 4 {
+			continue
+		}
+		xy := line[:2]
+		if xy == "??" {
+			continue
+		}
+		name := strings.TrimSpace(line[3:])
+		if name != "CONTEXT.md" && name != ".current-stage" {
+			files = append(files, name)
+		}
+	}
+	return files, nil
 }
 
 // generateDiff captures all committed changes on the item's feature branch vs

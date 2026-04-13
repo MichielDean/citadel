@@ -223,10 +223,17 @@ func TestPurgeOldItems_DefaultRetentionDays(t *testing.T) {
 // --- recoverInProgress tests ---
 
 func TestRecoverInProgress(t *testing.T) {
+	// Mock tmux as dead so recoverInProgress pools droplets with no outcome
+	// rather than leaving them for a live session.
+	orig := isTmuxAliveFn
+	isTmuxAliveFn = func(_ string) bool { return false }
+	t.Cleanup(func() { isTmuxAliveFn = orig })
+
 	tests := []struct {
-		name     string
-		item     *cistern.Droplet
-		wantStep string
+		name      string
+		item      *cistern.Droplet
+		wantStep  string
+		wantPooled bool
 	}{
 		{
 			name: "item with outcome not reset",
@@ -234,7 +241,8 @@ func TestRecoverInProgress(t *testing.T) {
 				ID: "r1", CurrentCataractae: "implement", Status: "in_progress",
 				Assignee: "alpha", Outcome: "pass",
 			},
-			wantStep: "", // not touched — observe phase handles it
+			wantStep:   "", // not touched — observe phase handles it
+			wantPooled: false,
 		},
 		{
 			name: "item without outcome reset to current step",
@@ -242,7 +250,8 @@ func TestRecoverInProgress(t *testing.T) {
 				ID: "r2", CurrentCataractae: "review", Status: "in_progress",
 				Assignee: "alpha", Outcome: "",
 			},
-			wantStep: "review",
+			wantStep:   "review",
+			wantPooled: false,
 		},
 		{
 			name: "empty step falls back to first workflow step",
@@ -250,7 +259,8 @@ func TestRecoverInProgress(t *testing.T) {
 				ID: "r3", CurrentCataractae: "", Status: "in_progress",
 				Assignee: "alpha", Outcome: "",
 			},
-			wantStep: "implement",
+			wantStep:   "implement",
+			wantPooled: false,
 		},
 	}
 	for _, tc := range tests {
@@ -261,6 +271,15 @@ func TestRecoverInProgress(t *testing.T) {
 			sched.recoverInProgress()
 			client.mu.Lock()
 			defer client.mu.Unlock()
+			if tc.wantPooled {
+				if _, ok := client.pooled[tc.item.ID]; !ok {
+					t.Errorf("expected droplet %s to be pooled, but it was not", tc.item.ID)
+				}
+			} else {
+				if _, ok := client.pooled[tc.item.ID]; ok {
+					t.Errorf("expected droplet %s not to be pooled, but it was", tc.item.ID)
+				}
+			}
 			if client.steps[tc.item.ID] != tc.wantStep {
 				t.Errorf("step = %q, want %q", client.steps[tc.item.ID], tc.wantStep)
 			}
@@ -410,7 +429,7 @@ func TestHeartbeatRepo_UnknownAssignee_WritesStallNote(t *testing.T) {
 // TestHeartbeatRepo_ZombieDetected_AddsNoteAndResetsToOpen verifies that when
 // a tmux session is dead and the item is old enough, heartbeatRepo writes a
 // zombie note (containing session name, worker, and cataractae) and resets the
-// droplet to open via client.Assign.
+// droplet to open for re-dispatch.
 func TestHeartbeatRepo_ZombieDetected_AddsNoteAndResetsToOpen(t *testing.T) {
 	orig := isTmuxAliveFn
 	isTmuxAliveFn = func(_ string) bool { return false }
@@ -446,7 +465,7 @@ func TestHeartbeatRepo_ZombieDetected_AddsNoteAndResetsToOpen(t *testing.T) {
 			t.Errorf("zombie note missing %q; got: %s", want, note.notes)
 		}
 	}
-	// Droplet must be reset to open.
+	// Droplet must be reset to open for re-dispatch.
 	if got := client.items[item.ID].Status; got != "open" {
 		t.Errorf("droplet status after zombie reset = %q, want %q", got, "open")
 	}

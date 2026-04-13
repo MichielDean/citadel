@@ -167,43 +167,6 @@ func TestPrepareBranchInSandbox_ResumeBranch(t *testing.T) {
 	}
 }
 
-// --- cleanupBranchInSandbox tests ---
-
-// TestCleanupBranchInSandbox_DeletesBranch verifies that cleanup detaches HEAD
-// and deletes the feature branch.
-func TestCleanupBranchInSandbox_DeletesBranch(t *testing.T) {
-	dir := makeBareAndClone(t)
-
-	if err := prepareBranchInSandbox(dir, "drop-clean"); err != nil {
-		t.Fatalf("prepareBranchInSandbox: %v", err)
-	}
-	// Make a commit so the branch is not identical to origin/main.
-	if err := os.WriteFile(filepath.Join(dir, "work.go"), []byte("// work\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	branchMustRun(t, branchGitCmd(dir, "add", "."))
-	branchMustRun(t, branchGitCmd(dir, "commit", "-m", "work"))
-
-	cleanupBranchInSandbox(dir, "feat/drop-clean")
-
-	if branchExists(t, dir, "feat/drop-clean") {
-		t.Error("feat/drop-clean should have been deleted by cleanup")
-	}
-
-	// HEAD must be detached after cleanup.
-	if got := currentBranch(t, dir); got != "HEAD" {
-		t.Errorf("HEAD after cleanup = %q, want detached (HEAD)", got)
-	}
-}
-
-// TestCleanupBranchInSandbox_NoopWhenBranchMissing verifies that cleanup is
-// best-effort and does not panic or error when the branch does not exist.
-func TestCleanupBranchInSandbox_NoopWhenBranchMissing(t *testing.T) {
-	dir := makeBareAndClone(t)
-	// cleanupBranchInSandbox ignores errors — must not panic.
-	cleanupBranchInSandbox(dir, "feat/nonexistent")
-}
-
 // --- removeDropletWorktree tests ---
 
 // TestRemoveDropletWorktree_DeletesBranch verifies that removeDropletWorktree

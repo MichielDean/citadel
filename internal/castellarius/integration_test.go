@@ -280,6 +280,22 @@ func waitDelivered(ctx context.Context, client *cistern.Client, dropletID string
 	}
 }
 
+// waitPooled polls every 200ms until the named droplet reaches 'pooled'
+// status or ctx expires.  Returns true on pool, false on timeout.
+func waitPooled(ctx context.Context, client *cistern.Client, dropletID string) bool {
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(200 * time.Millisecond):
+		}
+		d, err := client.Get(dropletID)
+		if err == nil && d != nil && d.Status == "pooled" {
+			return true
+		}
+	}
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Integration tests
 // ─────────────────────────────────────────────────────────────────────────────
@@ -336,11 +352,11 @@ func TestIntegration_HappyPath_FakeAgentDeliversDroplet(t *testing.T) {
 // TestIntegration_StartupRecovery_OrphanedDroplet_RedeliversDroplet verifies
 // that a droplet left in_progress with no outcome before the Castellarius
 // started (simulating an agent that died in a previous process run) is reset
-// at startup and eventually delivered:
+// to open and then re-delivered:
 //
 //	Given: a droplet is in_progress/no-outcome when Castellarius starts
-//	When:  recoverInProgress (startup path) resets it to open; Castellarius dispatches it
-//	Then:  fakeagent signals pass and the droplet reaches 'delivered' within 20s
+//	When:  recoverInProgress (startup path) resets it to open (dead session)
+//	Then:  the droplet is re-dispatched and reaches 'delivered' status
 func TestIntegration_StartupRecovery_OrphanedDroplet_RedeliversDroplet(t *testing.T) {
 	checkIntegrationPrereqs(t)
 	fakeagentPath := buildFakeagent(t)
@@ -388,8 +404,8 @@ func TestIntegration_StartupRecovery_OrphanedDroplet_RedeliversDroplet(t *testin
 			d.Status, d.Outcome)
 	}
 
-	// Start the Castellarius.  recoverInProgress will reset the item to open,
-	// then dispatchRepo picks it up and fakeagent delivers it.
+	// Start the Castellarius.  recoverInProgress will reset the item to open
+	// (dead session, no outcome) and then the main loop will re-dispatch it.
 	sched := newIntScheduler(client, runner, prefix)
 
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
@@ -409,11 +425,12 @@ func TestIntegration_StartupRecovery_OrphanedDroplet_RedeliversDroplet(t *testin
 
 // TestIntegration_HeartbeatRecovery_DeadSession_RedeliversDroplet verifies
 // that a droplet whose agent session dies at runtime (without signaling) is
-// detected by the heartbeat goroutine and reset to open for re-dispatch:
+// detected by the heartbeat goroutine, reset to open, and then re-dispatched
+// to a new session that signals pass:
 //
 //	Given: a droplet is dispatched to a fakeagent that exits without signaling
-//	When:  the heartbeat fires, confirms the tmux session is dead, and resets to open
-//	Then:  a new fakeagent is dispatched, signals pass, and the droplet is delivered
+//	When:  the heartbeat fires, confirms the tmux session is dead, resets to open
+//	Then:  the droplet is re-dispatched and reaches 'delivered' status
 func TestIntegration_HeartbeatRecovery_DeadSession_RedeliversDroplet(t *testing.T) {
 	checkIntegrationPrereqs(t)
 	fakeagentPath := buildFakeagent(t)

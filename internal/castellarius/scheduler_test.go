@@ -175,6 +175,11 @@ func (m *mockClient) Pool(id, reason string) error {
 		return m.poolErr
 	}
 	m.pooled[id] = reason
+	if item, ok := m.items[id]; ok {
+		item.Status = "pooled"
+		item.Assignee = ""
+		item.AssignedAqueduct = ""
+	}
 	return nil
 }
 
@@ -621,12 +626,12 @@ func TestTick_CrashRequeue(t *testing.T) {
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	// Item stays at "implement" — not advanced, not pooled.
+	// Spawn failed — droplet is reset to open at step "implement", not left in_progress.
 	if client.steps["b1"] != "implement" {
-		t.Errorf("expected step to remain 'implement' after crash, got %q", client.steps["b1"])
+		t.Errorf("expected droplet reset to step 'implement' after spawn failure, got %q", client.steps["b1"])
 	}
-	if _, ok := client.pooled["b1"]; ok {
-		t.Error("should not pool on crash — just requeue")
+	if item, ok := client.items["b1"]; ok && item.Status != "open" {
+		t.Errorf("expected droplet status 'open' after spawn failure, got %q", item.Status)
 	}
 }
 
@@ -1838,8 +1843,8 @@ func TestObserve_ExternalCancel_NormalFlowUnaffected(t *testing.T) {
 }
 
 // TestDispatch_DirtyWorktree verifies that when a worktree has uncommitted files
-// from a prior session, prepareDropletWorktree hard-resets them away (commit #86
-// behaviour) and the agent spawns normally into a clean state.
+// from a prior session, the agent spawns normally and the dirty state is preserved.
+// The agent is told about uncommitted files via CONTEXT.md and must commit them.
 func TestDispatch_DirtyWorktree(t *testing.T) {
 	sandboxRoot := t.TempDir()
 
@@ -1851,15 +1856,12 @@ func TestDispatch_DirtyWorktree(t *testing.T) {
 		Status:            "open",
 	})
 
-	// Create the worktree directory and initialize a git repo inside it.
-	// Per-droplet worktrees are at sandboxRoot/<repo>/<dropletID>.
 	sandboxDir := filepath.Join(sandboxRoot, "test-repo", itemID)
 	if err := os.MkdirAll(sandboxDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	makeGitSandbox(t, sandboxDir)
 
-	// Create the feature branch so prepareDropletWorktree's checkout succeeds.
 	cmd := exec.Command("git", "checkout", "-b", "feat/"+itemID)
 	cmd.Dir = sandboxDir
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -1881,21 +1883,20 @@ func TestDispatch_DirtyWorktree(t *testing.T) {
 	sched.Tick(context.Background())
 	time.Sleep(50 * time.Millisecond)
 
-	// prepareDropletWorktree hard-resets on resume (commit #86), so the dirty
-	// file is cleaned before the dirty check runs. Spawn proceeds normally.
+	// Spawn proceeds normally — dirty state is preserved for the agent to commit.
 	runner.mu.Lock()
 	defer runner.mu.Unlock()
 	if len(runner.calls) != 1 {
-		t.Errorf("expected spawn to proceed after hard-reset cleaned dirty file, got %d runner calls", len(runner.calls))
+		t.Fatalf("expected spawn to proceed with dirty worktree, got %d runner calls", len(runner.calls))
 	}
 
-	// No dirty-worktree note should be attached — the reset handled it silently.
-	client.mu.Lock()
-	defer client.mu.Unlock()
-	for _, n := range client.attached {
-		if n.id == itemID && strings.Contains(n.notes, "uncommitted files") {
-			t.Errorf("unexpected dirty-worktree note (hard-reset should have cleaned it): %v", n)
-		}
+	// The dirty state should still be present — not hard-reset away.
+	content, err := os.ReadFile(filepath.Join(sandboxDir, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "dirty\n" {
+		t.Errorf("dirty file was reset; expected preserved content, got %q", string(content))
 	}
 }
 
@@ -2007,148 +2008,6 @@ func TestDispatch_RebaseInProgress(t *testing.T) {
 	}
 }
 
-// --- dirtyNonContextFiles unit tests ---
-
-func TestDirtyNonContextFiles_Error(t *testing.T) {
-	// Non-existent directory: git status should fail and return an error.
-	files, err := dirtyNonContextFiles("/does/not/exist/at/all")
-	if err == nil {
-		t.Error("expected error for non-existent directory, got nil")
-	}
-	if len(files) != 0 {
-		t.Errorf("expected no files on error, got %v", files)
-	}
-}
-
-func TestDirtyNonContextFiles_Clean(t *testing.T) {
-	dir := t.TempDir()
-	makeGitSandbox(t, dir)
-
-	files, err := dirtyNonContextFiles(dir)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(files) != 0 {
-		t.Errorf("expected no dirty files for clean repo, got %v", files)
-	}
-}
-
-func TestDirtyNonContextFiles_DirtyTrackedFile(t *testing.T) {
-	dir := t.TempDir()
-	makeGitSandbox(t, dir)
-
-	// Modify a tracked file without committing.
-	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("modified\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	files, err := dirtyNonContextFiles(dir)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(files) == 0 {
-		t.Fatal("expected dirty files, got none")
-	}
-	found := false
-	for _, f := range files {
-		if f == "README.md" {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("expected README.md in dirty files, got %v", files)
-	}
-}
-
-func TestDirtyNonContextFiles_FiltersContextMD(t *testing.T) {
-	dir := t.TempDir()
-	makeGitSandbox(t, dir)
-
-	// Commit CONTEXT.md as a tracked file, then modify it.
-	if err := os.WriteFile(filepath.Join(dir, "CONTEXT.md"), []byte("original\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	for _, args := range [][]string{
-		{"git", "add", "CONTEXT.md"},
-		{"git", "commit", "-m", "add CONTEXT.md"},
-	} {
-		cmd := exec.Command(args[0], args[1:]...)
-		cmd.Dir = dir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("%v: %v\n%s", args, err, out)
-		}
-	}
-	if err := os.WriteFile(filepath.Join(dir, "CONTEXT.md"), []byte("modified\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	files, err := dirtyNonContextFiles(dir)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	for _, f := range files {
-		if f == "CONTEXT.md" {
-			t.Error("CONTEXT.md should be filtered from dirty files")
-		}
-	}
-}
-
-func TestDirtyNonContextFiles_FiltersUntracked(t *testing.T) {
-	dir := t.TempDir()
-	makeGitSandbox(t, dir)
-
-	// Create an untracked file (never added to git).
-	if err := os.WriteFile(filepath.Join(dir, "untracked.go"), []byte("// new\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	files, err := dirtyNonContextFiles(dir)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	for _, f := range files {
-		if f == "untracked.go" {
-			t.Error("untracked file should be filtered from dirty files")
-		}
-	}
-}
-
-// TestDirtyNonContextFiles_FiltersCurrentStage verifies that a tracked, modified
-// .current-stage file is excluded from the dirty list so the stage marker never
-// blocks dispatch.
-func TestDirtyNonContextFiles_FiltersCurrentStage(t *testing.T) {
-	dir := t.TempDir()
-	makeGitSandbox(t, dir)
-
-	// Commit .current-stage as a tracked file, then modify it.
-	if err := os.WriteFile(filepath.Join(dir, ".current-stage"), []byte("implementer\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	for _, args := range [][]string{
-		{"git", "add", ".current-stage"},
-		{"git", "commit", "-m", "add stage marker"},
-	} {
-		cmd := exec.Command(args[0], args[1:]...)
-		cmd.Dir = dir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("%v: %v\n%s", args, err, out)
-		}
-	}
-	if err := os.WriteFile(filepath.Join(dir, ".current-stage"), []byte("reviewer\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	files, err := dirtyNonContextFiles(dir)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	for _, f := range files {
-		if f == ".current-stage" {
-			t.Error(".current-stage should be filtered from dirty files")
-		}
-	}
-}
-
 // TestDispatch_DiffOnlyStepGetsSandboxDir verifies that when a diff_only agent
 // step is dispatched, the Castellarius prepares the per-droplet worktree and
 // passes its path as req.SandboxDir. Without this, generateDiff runs on the
@@ -2248,15 +2107,15 @@ func TestHeartbeatRepo_StallDetected_AppendsNoteAndWarnLog(t *testing.T) {
 
 	sched.heartbeatRepo(context.Background(), config.Repos[0])
 
-	// Stall note and recovery note must both be appended.
+	// Stall note and orphan note must both be appended.
 	if len(client.attached) != 2 {
-		t.Fatalf("expected 2 notes (stall + recovery), got %d", len(client.attached))
+		t.Fatalf("expected 2 notes (stall + orphan), got %d", len(client.attached))
 	}
 	if !strings.HasPrefix(client.attached[0].notes, stallNotePrefix) {
 		t.Errorf("stall note missing structured prefix %q; got: %s", stallNotePrefix, client.attached[0].notes)
 	}
 	if !strings.Contains(client.attached[1].notes, "[scheduler:recovery]") {
-		t.Errorf("recovery note missing '[scheduler:recovery]'; got: %s", client.attached[1].notes)
+		t.Errorf("orphan note missing '[scheduler:recovery]'; got: %s", client.attached[1].notes)
 	}
 
 	// A Warn-level log entry must be present containing the droplet ID.
@@ -2270,7 +2129,7 @@ func TestHeartbeatRepo_StallDetected_AppendsNoteAndWarnLog(t *testing.T) {
 }
 
 // TestHeartbeatRepo_OrphanRecovery_SecondTick_ItemResetToOpenNotReprocessed
-// verifies that after orphan recovery resets a no-assignee in_progress droplet
+// verifies that after orphan handling resets a no-assignee in_progress droplet
 // to open on the first tick, the second heartbeat tick writes no additional
 // notes because the item is no longer in_progress and is not returned by List.
 func TestHeartbeatRepo_OrphanRecovery_SecondTick_ItemResetToOpenNotReprocessed(t *testing.T) {
@@ -2298,7 +2157,7 @@ func TestHeartbeatRepo_OrphanRecovery_SecondTick_ItemResetToOpenNotReprocessed(t
 		t.Fatalf("expected 2 notes (stall + recovery) after first tick, got %d", len(client.attached))
 	}
 	if item.Status != "open" {
-		t.Errorf("expected item reset to open after orphan recovery, got status %q", item.Status)
+		t.Errorf("expected item reset to open after orphan handling, got status %q", item.Status)
 	}
 
 	// Second call: item is now open (no longer in_progress) → no additional notes.
@@ -2433,8 +2292,8 @@ func TestHeartbeatRepo_StallWithAssignee_WritesNoteNoRespawn(t *testing.T) {
 
 // TestHeartbeatRepo_StallWithNoAssignee_RecoverAndNoSpawn verifies that when a
 // stall is detected on an orphaned droplet (no assignee), both the stall note and
-// the recovery note are written, the droplet is reset to open, and runner.Spawn is
-// NOT called (there is no session to resume).
+// the recovery note are written, the droplet is reset to open for re-dispatch,
+// and runner.Spawn is NOT called (there is no session to resume).
 func TestHeartbeatRepo_StallWithNoAssignee_RecoverAndNoSpawn(t *testing.T) {
 	client := newMockClient()
 	runner := newMockRunner(client)
@@ -2456,15 +2315,15 @@ func TestHeartbeatRepo_StallWithNoAssignee_RecoverAndNoSpawn(t *testing.T) {
 
 	sched.heartbeatRepo(context.Background(), config.Repos[0])
 
-	// Stall note and recovery note must both be written.
+	// Stall note and orphan note must both be written.
 	if len(client.attached) != 2 {
-		t.Fatalf("expected 2 notes (stall + recovery) for orphaned droplet, got %d", len(client.attached))
+		t.Fatalf("expected 2 notes (stall + orphan) for orphaned droplet, got %d", len(client.attached))
 	}
 	if !strings.Contains(client.attached[1].notes, "[scheduler:recovery]") {
 		t.Errorf("second note should be recovery note; got: %s", client.attached[1].notes)
 	}
 
-	// Item must be reset to open.
+	// Item must be reset to open for re-dispatch.
 	if item.Status != "open" {
 		t.Errorf("expected item reset to open, got status %q", item.Status)
 	}
@@ -2479,7 +2338,7 @@ func TestHeartbeatRepo_StallWithNoAssignee_RecoverAndNoSpawn(t *testing.T) {
 }
 
 // TestHeartbeatRepo_OrphanRecovery_ClearsAssignedAqueduct verifies that the
-// orphan recovery path clears assigned_aqueduct so the re-opened droplet is not
+// orphan handling path clears assigned_aqueduct so the pooled droplet is not
 // locked to a specific aqueduct operator that may no longer exist.
 func TestHeartbeatRepo_OrphanRecovery_ClearsAssignedAqueduct(t *testing.T) {
 	client := newMockClient()
@@ -2504,7 +2363,7 @@ func TestHeartbeatRepo_OrphanRecovery_ClearsAssignedAqueduct(t *testing.T) {
 	sched.heartbeatRepo(context.Background(), config.Repos[0])
 
 	if item.Status != "open" {
-		t.Errorf("expected item status=open after recovery, got %q", item.Status)
+		t.Errorf("expected item status=open after orphan handling, got %q", item.Status)
 	}
 	if item.AssignedAqueduct != "" {
 		t.Errorf("expected assigned_aqueduct cleared after recovery, got %q", item.AssignedAqueduct)
@@ -2512,8 +2371,8 @@ func TestHeartbeatRepo_OrphanRecovery_ClearsAssignedAqueduct(t *testing.T) {
 }
 
 // TestHeartbeatRepo_OrphanRecovery_AssignFailure_ClearsDebounce verifies that
-// when the Assign reset fails, the debounce entry is cleared so the next
-// heartbeat retries the recovery rather than suppressing it permanently.
+// when the Assign call fails, the debounce entry is cleared so the next
+// heartbeat retries the orphan handling rather than suppressing it permanently.
 func TestHeartbeatRepo_OrphanRecovery_AssignFailure_ClearsDebounce(t *testing.T) {
 	client := newMockClient()
 	client.assignErr = errors.New("db error")
@@ -2536,15 +2395,15 @@ func TestHeartbeatRepo_OrphanRecovery_AssignFailure_ClearsDebounce(t *testing.T)
 
 	sched.heartbeatRepo(context.Background(), config.Repos[0])
 
-	// Recovery note must be written (best-effort) even when Assign fails.
-	recoveryNotes := 0
+	// Orphan note must be written (best-effort) even when Pool fails.
+	orphanNotes := 0
 	for _, n := range client.attached {
 		if strings.Contains(n.notes, "[scheduler:recovery]") {
-			recoveryNotes++
+			orphanNotes++
 		}
 	}
-	if recoveryNotes < 1 {
-		t.Errorf("expected recovery note even on Assign failure, got %d recovery notes", recoveryNotes)
+	if orphanNotes < 1 {
+		t.Errorf("expected recovery note even on Assign failure, got %d recovery notes", orphanNotes)
 	}
 }
 
@@ -2653,8 +2512,8 @@ func TestHeartbeatRepo_AgentNotEmittingHeartbeat_Stalled(t *testing.T) {
 // --- heartbeat zombie detection tests ---
 
 // TestHeartbeatRepo_TmuxDead_WritesNoteAndResetsDroplet verifies that when the
-// tmux session is dead the droplet is reset to open and a zombie note is written.
-// This covers the existing "tmux fully dead" path (acceptance criterion 3).
+// tmux session is dead the droplet is reset to open for re-dispatch and a zombie
+// note is written.
 func TestHeartbeatRepo_TmuxDead_WritesNoteAndResetsDroplet(t *testing.T) {
 	// Ensure tmux appears dead for our test session.
 	orig := isTmuxAliveFn
@@ -2685,23 +2544,23 @@ func TestHeartbeatRepo_TmuxDead_WritesNoteAndResetsDroplet(t *testing.T) {
 		t.Fatalf("expected 1 zombie note, got %d", len(client.attached))
 	}
 	note := client.attached[0].notes
-	if !strings.Contains(note, "tmux session") || !strings.Contains(note, "dead") {
-		t.Errorf("zombie note missing expected text; got: %s", note)
+	if !strings.Contains(note, "[scheduler:zombie]") {
+		t.Errorf("zombie note missing [scheduler:zombie] prefix; got: %s", note)
 	}
 
-	// Droplet must have been reset to open.
+	// Droplet must have been reset to open for re-dispatch.
 	if item.Status != "open" {
 		t.Errorf("item status = %q, want open", item.Status)
 	}
 	if item.Assignee != "" {
-		t.Errorf("item assignee = %q, want empty", item.Assignee)
+		t.Errorf("item assignee = %q, want empty after reset", item.Assignee)
 	}
 }
 
 // TestHeartbeatRepo_TmuxAliveAgentDead_WritesNoteKillsSessionAndResetsDroplet
-// verifies the new path: tmux session alive but claude process has exited.
-// The heartbeat must kill the session, write a diagnostic note, and reset the
-// droplet to open for re-dispatch (acceptance criterion 2).
+// verifies the path: tmux session alive but agent process has exited.
+// The heartbeat must kill the session, write a diagnostic note, and reset
+// the droplet to open for re-dispatch.
 func TestHeartbeatRepo_TmuxAliveAgentDead_WritesNoteKillsSessionAndResetsDroplet(t *testing.T) {
 	orig := isTmuxAliveFn
 	isTmuxAliveFn = func(_ string) bool { return true }
@@ -2734,9 +2593,6 @@ func TestHeartbeatRepo_TmuxAliveAgentDead_WritesNoteKillsSessionAndResetsDroplet
 		t.Fatalf("expected 1 note, got %d", len(client.attached))
 	}
 	note := client.attached[0].notes
-	if !strings.Contains(note, "tmux alive but claude process dead") {
-		t.Errorf("note missing expected text; got: %s", note)
-	}
 	if !strings.Contains(note, "Session killed") {
 		t.Errorf("note missing 'Session killed'; got: %s", note)
 	}
@@ -2744,12 +2600,12 @@ func TestHeartbeatRepo_TmuxAliveAgentDead_WritesNoteKillsSessionAndResetsDroplet
 		t.Errorf("note missing 'Re-dispatching'; got: %s", note)
 	}
 
-	// Droplet must have been reset to open.
+	// Droplet must have been reset to open for re-dispatch.
 	if item.Status != "open" {
 		t.Errorf("item status = %q, want open", item.Status)
 	}
 	if item.Assignee != "" {
-		t.Errorf("item assignee = %q, want empty", item.Assignee)
+		t.Errorf("item assignee = %q, want empty after reset", item.Assignee)
 	}
 }
 
@@ -2959,25 +2815,25 @@ func TestHeartbeatRepo_GenuineZombie_StageDispatchedAtOld_Detected(t *testing.T)
 
 	sched.heartbeatRepo(context.Background(), config.Repos[0])
 
-	// StageDispatchedAt is old → zombie guard fires → droplet must be reset.
+	// StageDispatchedAt is old → zombie guard fires → droplet must be reset to open.
 	if item.Status != "open" {
 		t.Errorf("item status = %q, want open — genuine zombie must be reset", item.Status)
 	}
 	if item.Assignee != "" {
-		t.Errorf("item assignee = %q, want empty — genuine zombie must be unassigned", item.Assignee)
+		t.Errorf("item assignee = %q, want empty — genuine zombie must be reset", item.Assignee)
 	}
 	if len(client.attached) != 1 {
 		t.Fatalf("expected 1 zombie note, got %d", len(client.attached))
 	}
 	if !strings.Contains(client.attached[0].notes, "zombie") {
-		t.Errorf("zombie note missing expected text; got: %s", client.attached[0].notes)
+		t.Errorf("zombie note missing 'zombie'; got: %s", client.attached[0].notes)
 	}
 }
 
 // TestHeartbeatRepo_UpdatedAtFallback_StaleUpdatedAt_ZombieFires verifies the
-// migration fallback branch (scheduler.go:1438-1439): when StageDispatchedAt is
+// migration fallback branch: when StageDispatchedAt is
 // zero (pre-migration droplet) and UpdatedAt is older than zombieGuard, the
-// droplet is treated as a zombie and reset to open.
+// droplet is treated as a zombie and pooled.
 func TestHeartbeatRepo_UpdatedAtFallback_StaleUpdatedAt_ZombieFires(t *testing.T) {
 	orig := isTmuxAliveFn
 	isTmuxAliveFn = func(_ string) bool { return false }
@@ -3004,25 +2860,25 @@ func TestHeartbeatRepo_UpdatedAtFallback_StaleUpdatedAt_ZombieFires(t *testing.T
 
 	sched.heartbeatRepo(context.Background(), config.Repos[0])
 
-	// UpdatedAt fallback: stale UpdatedAt → zombie fires → droplet must be reset.
+	// UpdatedAt fallback: stale UpdatedAt → zombie fires → droplet must be reset to open.
 	if item.Status != "open" {
-		t.Errorf("item status = %q, want open — stale UpdatedAt fallback must trigger zombie", item.Status)
+		t.Errorf("item status = %q, want open — stale UpdatedAt fallback must trigger zombie reset", item.Status)
 	}
 	if item.Assignee != "" {
-		t.Errorf("item assignee = %q, want empty — zombie reset must clear assignee", item.Assignee)
+		t.Errorf("item assignee = %q, want empty — zombie must clear assignee", item.Assignee)
 	}
 	if len(client.attached) != 1 {
 		t.Fatalf("expected 1 zombie note, got %d", len(client.attached))
 	}
 	if !strings.Contains(client.attached[0].notes, "zombie") {
-		t.Errorf("zombie note missing expected text; got: %s", client.attached[0].notes)
+		t.Errorf("zombie note missing 'zombie'; got: %s", client.attached[0].notes)
 	}
 }
 
 // TestHeartbeatRepo_UpdatedAtFallback_RecentUpdatedAt_ZombieSuppressed verifies the
-// migration fallback branch (scheduler.go:1438-1439): when StageDispatchedAt is
+// migration fallback branch: when StageDispatchedAt is
 // zero (pre-migration droplet) and UpdatedAt is recent (within zombieGuard), the
-// droplet is NOT declared a zombie — the age guard suppresses the reset.
+// droplet is NOT declared a zombie — the age guard suppresses the pool.
 func TestHeartbeatRepo_UpdatedAtFallback_RecentUpdatedAt_ZombieSuppressed(t *testing.T) {
 	orig := isTmuxAliveFn
 	isTmuxAliveFn = func(_ string) bool { return false }
