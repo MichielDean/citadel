@@ -2538,3 +2538,174 @@ func TestGetDropletChanges_NotFoundReturnEmpty(t *testing.T) {
 		t.Errorf("got %d changes, want 0 for nonexistent droplet", len(changes))
 	}
 }
+
+// --- Restart tests ---
+
+func TestRestart_WithCataractae(t *testing.T) {
+	c := testClient(t)
+	item, err := c.Add("myrepo", "Stuck feature", "", 1, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.GetReady("myrepo")
+	c.Assign(item.ID, "alice", "implement")
+	c.SetOutcome(item.ID, "pass")
+
+	got, err := c.Restart(item.ID, "review")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "open" {
+		t.Errorf("Status = %q, want %q", got.Status, "open")
+	}
+	if got.Assignee != "" {
+		t.Errorf("Assignee = %q, want empty", got.Assignee)
+	}
+	if got.Outcome != "" {
+		t.Errorf("Outcome = %q, want empty", got.Outcome)
+	}
+	if got.CurrentCataractae != "review" {
+		t.Errorf("CurrentCataractae = %q, want %q", got.CurrentCataractae, "review")
+	}
+	if got.AssignedAqueduct != "" {
+		t.Errorf("AssignedAqueduct = %q, want empty", got.AssignedAqueduct)
+	}
+}
+
+func TestRestart_WithSameCataractae(t *testing.T) {
+	c := testClient(t)
+	item, err := c.Add("myrepo", "Task", "", 1, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.GetReady("myrepo")
+	c.Assign(item.ID, "bob", "implement")
+
+	got, err := c.Restart(item.ID, "implement")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "open" {
+		t.Errorf("Status = %q, want %q", got.Status, "open")
+	}
+	if got.CurrentCataractae != "implement" {
+		t.Errorf("CurrentCataractae = %q, want %q", got.CurrentCataractae, "implement")
+	}
+	if got.Assignee != "" {
+		t.Errorf("Assignee = %q, want empty", got.Assignee)
+	}
+}
+
+func TestRestart_WritesSchedulerNote(t *testing.T) {
+	c := testClient(t)
+	item, err := c.Add("myrepo", "Task", "", 1, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = c.Restart(item.ID, "delivery")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	notes, err := c.GetNotes(item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(notes) != 1 {
+		t.Fatalf("got %d notes, want 1", len(notes))
+	}
+	if notes[0].CataractaeName != "scheduler" {
+		t.Errorf("note cataractae = %q, want %q", notes[0].CataractaeName, "scheduler")
+	}
+	if !strings.Contains(notes[0].Content, "restarted at cataractae") {
+		t.Errorf("note content = %q, want it to contain 'restarted at cataractae'", notes[0].Content)
+	}
+	if !strings.Contains(notes[0].Content, "delivery") {
+		t.Errorf("note content = %q, want it to contain 'delivery'", notes[0].Content)
+	}
+	if !strings.Contains(notes[0].Content, "[") {
+		t.Errorf("note content = %q, want it to contain a timestamp in brackets", notes[0].Content)
+	}
+}
+
+func TestRestart_PreservesExistingNotes(t *testing.T) {
+	c := testClient(t)
+	item, err := c.Add("myrepo", "Task", "", 1, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.AddNote(item.ID, "implement", "first implementation note")
+	c.AddNote(item.ID, "review", "first review note")
+
+	_, err = c.Restart(item.ID, "implement")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	notes, err := c.GetNotes(item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	existingCount := 0
+	for _, n := range notes {
+		if n.CataractaeName != "scheduler" {
+			existingCount++
+		}
+	}
+	if existingCount != 2 {
+		t.Errorf("got %d existing notes, want 2", existingCount)
+	}
+}
+
+func TestRestart_ClearsOutcomeAndAssignee(t *testing.T) {
+	c := testClient(t)
+	item, err := c.Add("myrepo", "Task", "", 1, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.GetReady("myrepo")
+	c.Assign(item.ID, "worker-1", "review")
+	c.SetOutcome(item.ID, "pass")
+	c.SetAssignedAqueduct(item.ID, "cistern-alpha")
+
+	got, err := c.Restart(item.ID, "implement")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Assignee != "" {
+		t.Errorf("Assignee = %q, want empty after restart", got.Assignee)
+	}
+	if got.Outcome != "" {
+		t.Errorf("Outcome = %q, want empty after restart", got.Outcome)
+	}
+	if got.AssignedAqueduct != "" {
+		t.Errorf("AssignedAqueduct = %q, want empty after restart", got.AssignedAqueduct)
+	}
+}
+
+func TestRestart_NotFound(t *testing.T) {
+	c := testClient(t)
+	_, err := c.Restart("nonexistent", "implement")
+	if err == nil {
+		t.Error("expected error for nonexistent droplet")
+	}
+}
+
+func TestRestart_UpdatesTimestamp(t *testing.T) {
+	c := testClient(t)
+	item, err := c.Add("myrepo", "Task", "", 1, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := item.UpdatedAt
+
+	time.Sleep(10 * time.Millisecond)
+	got, err := c.Restart(item.ID, "review")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.UpdatedAt.After(before) {
+		t.Errorf("UpdatedAt = %v, want after %v", got.UpdatedAt, before)
+	}
+}

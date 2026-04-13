@@ -1324,3 +1324,42 @@ func (c *Client) CountOpenIssues(dropletID string) (int, error) {
 	}
 	return count, nil
 }
+
+// Restart resets a stuck or failed droplet back to 'open' status at the specified
+// cataractae stage. It clears the assignee and outcome fields, sets current_cataractae
+// to cataractaeName, and writes a scheduler note with a timestamp. All existing notes
+// are preserved. Returns the updated droplet.
+func (c *Client) Restart(id, cataractaeName string) (*Droplet, error) {
+	droplet, err := c.Get(id)
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now().UTC()
+	res, err := c.db.Exec(
+		`UPDATE droplets SET status = 'open', assignee = '', outcome = NULL,
+		 current_cataractae = ?, assigned_aqueduct = '', updated_at = ?
+		 WHERE id = ?`,
+		cataractaeName, now, id,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("cistern: restart %s: %w", id, err)
+	}
+	if err := checkRowsAffected(res, id); err != nil {
+		return nil, err
+	}
+
+	ts := now.Format("2006-01-02 15:04:05")
+	note := fmt.Sprintf("restarted at cataractae %q [%s]", cataractaeName, ts)
+	if err := c.AddNote(id, "scheduler", note); err != nil {
+		return nil, fmt.Errorf("cistern: restart note %s: %w", id, err)
+	}
+
+	droplet.Status = "open"
+	droplet.Assignee = ""
+	droplet.Outcome = ""
+	droplet.CurrentCataractae = cataractaeName
+	droplet.AssignedAqueduct = ""
+	droplet.UpdatedAt = now
+	return droplet, nil
+}
