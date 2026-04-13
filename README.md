@@ -632,8 +632,9 @@ ct droplet deps <id> --add <dep-id>                               Add a dependen
 ct droplet deps <id> --remove <dep-id>                            Remove a dependency
 ct droplet close <id>                                             Mark delivered
 ct droplet reopen <id>                                            Return to cistern (status=open, cataractae unchanged)
-ct droplet restart <id> --cataractae delivery                     Re-enter at a specific cataractae (recovery)
-ct droplet restart <id> --cataractae delivery --notes "..."       Re-enter with a recovery note
+ct droplet restart <id>                                         Restart from current cataractae
+ct droplet restart <id> --cataractae delivery                   Re-enter at a specific cataractae (recovery)
+ct droplet restart <id> --cataractae delivery --notes "..."     Re-enter with a recovery note
 ct droplet purge --older-than 30d                                 Delete old delivered/pooled droplets
 ct droplet purge --older-than 24h --dry-run                       Preview what would be purged
 ct droplet pool <id> --notes "..."                               Mark a droplet pooled
@@ -767,6 +768,9 @@ ct droplet restart sc-gh7lg --cataractae implement \
 
 `restart` clears the assignee, outcome, and sets status back to `open` at the named cataractae.
 The Castellarius picks it up on the next tick. Works from any terminal state: delivered, pooled, or open.
+Cataractae names are validated against the aqueduct config — if the config cannot be loaded, any name is accepted.
+Without `--cataractae`, the droplet restarts from its current stage. If the droplet has no current stage,
+`--cataractae` must be provided.
 
 This differs from `reopen` (which returns to `open` with the cataractae unchanged) and
 `recirculate` (which is an agent-issued signal during active processing). `restart` is for

@@ -36,7 +36,9 @@ ct droplet edit <id> -t "title"            # Edit title
 ct droplet edit <id> --description "desc"  # Edit description
 ct droplet edit <id> -x critical -p 1     # Edit complexity and priority
 ct droplet edit <id> --description -        # Read description from stdin
-ct droplet restart <id>                  # Retry failed droplet
+ct droplet restart <id>                  # Restart from current cataractae
+ct droplet restart <id> --cataractae delivery   # Re-enter at a specific cataractae (validated against aqueduct config)
+ct droplet restart <id> --cataractae delivery --notes "..."   # Re-enter with a recovery note
 ct droplet pool <id>                    # Pool — cannot currently proceed
 ct droplet cancel <id>                   # Cancel droplet — won't be implemented or no longer needed
 ct droplet note <id> "..."               # Add a note

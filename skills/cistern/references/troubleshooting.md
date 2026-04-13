@@ -152,9 +152,10 @@ The UNASSIGNED section displays:
 Once you see an orphaned droplet, you have three options:
 
 1. **Restart the droplet** to re-enter the pipeline:
-   ```bash
-   ct droplet restart <id>    # Returns to open status at the current cataractae
-   ```
+    ```bash
+    ct droplet restart <id>                       # Returns to open status at the current cataractae
+    ct droplet restart <id> --cataractae implement  # Re-enter at a specific cataractae
+    ```
 
 2. **Cancel the droplet** if it's no longer needed:
    ```bash
@@ -170,7 +171,8 @@ Once you see an orphaned droplet, you have three options:
 
 ```bash
 ct droplet show <id>          # Check status + last error
-ct droplet restart <id>       # Retry the current stage
+ct droplet restart <id>                      # Retry the current stage
+ct droplet restart <id> --cataractae review  # Retry at a specific cataractae
 ```
 
 If repeatedly failing, check logs for the specific cataractae:
@@ -198,10 +200,14 @@ or, if no heartbeat has been emitted:
 **Rate-limiting:** To prevent log spam from long-stalled droplets, the scheduler writes at most one stall note per hour for the same droplet. If a droplet remains stalled beyond the first detection, no new note is written until 60 minutes have passed since the last note (or until the heartbeat advances, which resets the window).
 
 **What to do when you see stall notes:**
-1. Check the `heartbeat` field: if it shows `none`, the agent never emitted a heartbeat — it likely died before starting work. Check exit detection logs and consider restarting: `ct droplet restart <id>`
+1. Check the `heartbeat` field: if it shows `none`, the agent never emitted a heartbeat — it likely died before starting work. Check exit detection logs and consider restarting:
+   - `ct droplet restart <id>` — restart at current cataractae
+   - `ct droplet restart <id> --cataractae implement` — restart at a specific cataractae
 2. If `heartbeat` shows a timestamp, the agent was alive at that point. Check if the agent session is still running: `ct droplet peek <id>` (shows live session output)
 3. A stall note does **not** trigger an automatic respawn — the agent may simply be slow (e.g., waiting on an LLM response). Monitor before acting.
-4. If the droplet can proceed, restart it: `ct droplet restart <id>`
+4. If the droplet can proceed, restart it:
+   - `ct droplet restart <id>` — restart at current cataractae
+   - `ct droplet restart <id> --cataractae review` — restart at a specific cataractae
 5. If it's a known limitation or awaiting external resources, pool it: `ct droplet pool <id> --notes "..."`
 
 ### Droplet Repeatedly Failing with "backing off" Messages
@@ -290,7 +296,8 @@ journalctl --user -u cistern-castellarius --since "1h ago" | grep "spawn-cycle" 
 **Recovery action:**
 Once you've fixed the root cause (fixed the agent code, restored a missing skill, increased timeouts):
 ```bash
-ct droplet restart <id>        # Resets the spawn-cycle counter and re-dispatches
+ct droplet restart <id>                         # Resets the spawn-cycle counter and re-dispatches
+ct droplet restart <id> --cataractae implement  # Re-dispatch at a specific cataractae
 ```
 
 If the issue persists after restart, the droplet will be pooled again. Investigate the agent logs before attempting another restart.

@@ -648,55 +648,6 @@ var dropletReopenCmd = &cobra.Command{
 	},
 }
 
-// --- cistern restart ---
-
-var restartCataractae string
-var restartNotes string
-
-var dropletRestartCmd = &cobra.Command{
-	Use:   "restart <id>",
-	Short: "Re-enter a droplet at a specific cataractae",
-	Long: `Restart sends a delivered or pooled droplet back into the
-pipeline at the named cataractae. Use this to recover orphaned droplets
-after delivery failures without losing prior history.
-
-Examples:
-  ct droplet restart sc-uvfhw --cataractae delivery
-  ct droplet restart sc-uvfhw --cataractae delivery --notes "PR #157 conflicts resolved manually"`,
-	Args: cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		if restartCataractae == "" {
-			return fmt.Errorf("--cataractae is required (e.g. --cataractae delivery)")
-		}
-
-		c, err := cistern.New(resolveDBPath(), "")
-		if err != nil {
-			return err
-		}
-		defer c.Close()
-
-		id := args[0]
-
-		if restartNotes != "" {
-			if err := c.AddNote(id, "restart", restartNotes); err != nil {
-				return fmt.Errorf("add note: %w", err)
-			}
-		}
-
-		// Assign("", cataractae) sets status='open', clears outcome and assignee.
-		// The Castellarius will pick it up on the next tick.
-		if err := c.Assign(id, "", restartCataractae); err != nil {
-			return fmt.Errorf("restart: %w", err)
-		}
-
-		fmt.Printf("droplet %s → restarting at cataractae %q\n", id, restartCataractae)
-		if restartNotes != "" {
-			fmt.Printf("  note: %s\n", restartNotes)
-		}
-		return nil
-	},
-}
-
 // --- cistern pool ---
 
 var poolNotes string
@@ -1634,10 +1585,6 @@ func init() {
 	dropletIssueListCmd.Flags().StringVar(&issueListFlaggedBy, "flagged-by", "", "filter by cataractae name that filed the issue")
 
 	dropletIssueCmd.AddCommand(dropletIssueAddCmd, dropletIssueResolveCmd, dropletIssueRejectCmd, dropletIssueListCmd)
-
-	dropletRestartCmd.Flags().StringVar(&restartCataractae, "cataractae", "", "cataractae to re-enter (required, e.g. delivery, implement, qa)")
-	dropletRestartCmd.Flags().StringVar(&restartNotes, "notes", "", "optional note to record before restarting")
-	_ = dropletRestartCmd.MarkFlagRequired("cataractae")
 
 	dropletEditCmd.Flags().StringVarP(&editTitle, "title", "t", "", "new title")
 	dropletEditCmd.Flags().StringVar(&editDescription, "description", "", "new description (use - to read from stdin)")

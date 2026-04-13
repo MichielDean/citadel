@@ -33,6 +33,35 @@ ct droplet edit <id>                                   # Interactive: open in $E
 - `internal/cistern/client.go` — `EditDropletFields` gains `Title` field and `Empty()` method; `UpdateTitle` removed; `EditDroplet` validates title and priority
 - `internal/cistern/client_test.go` — tests for title editing, empty title, invalid priority, clear description, multiline description
 
+### ct droplet restart: restart from current stage, optional cataractae, and validation (ci-lsscg)
+
+The `ct droplet restart` command now supports restarting from the droplet's current cataractae stage without requiring `--cataractae`, validates cataractae names against the aqueduct config, and writes a scheduler note with a timestamp.
+
+**Key changes:**
+- **Optional `--cataractae`**: Without `--cataractae`, the droplet restarts from its current stage. If the droplet has no current stage, `--cataractae` must be provided.
+- **Cataractae validation**: When `--cataractae` is provided, the name is validated against the droplet's aqueduct config. If the config cannot be loaded, validation is skipped and any name is accepted.
+- **Scheduler note**: The `Restart` method writes a `[scheduler]` note with the cataractae name and UTC timestamp (e.g., `restarted at cataractae "delivery" [2026-04-13 15:04:05]`).
+- **State reset**: `Restart` clears assignee, outcome, assigned_aqueduct, stage_dispatched_at, and last_heartbeat_at, sets status to `open`, and sets current_cataractae to the target.
+- **`--notes` flag**: Optional notes recorded before the restart, consistent with other droplet commands.
+- **New `Restart` method** on `cistern.Client`: Replaces the previous use of `Assign` for restarts, providing a dedicated, self-documenting API.
+- **Refactored command file**: Moved from inline definition in `cistern.go` to a dedicated `droplet_restart.go` file with extracted validation helpers.
+
+**Command syntax:**
+```bash
+ct droplet restart <id>                                  # Restart from current cataractae
+ct droplet restart <id> --cataractae delivery            # Re-enter at a specific cataractae (recovery)
+ct droplet restart <id> --cataractae delivery --notes "..."  # Re-enter with a recovery note
+```
+
+**Breaking change**: `--cataractae` is now optional. Previously it was required. Scripts that pass `--cataractae` continue to work unchanged.
+
+**Files changed:**
+- `cmd/ct/droplet_restart.go` — new file: command implementation, cataractae validation, and init
+- `cmd/ct/droplet_restart_test.go` — new file: comprehensive tests for restart command, validation, and findWorkflowForRepo
+- `cmd/ct/cistern.go` — removed inline dropletRestartCmd definition and its flag/init registrations
+- `internal/cistern/client.go` — added `Restart(id, cataractaeName string) (*Droplet, error)` method with full state reset and scheduler note
+- `internal/cistern/client_test.go` — added tests for Restart: state reset, note writing, timestamp update, field clearing
+
 ### ct droplet tail: real-time event streaming (ci-asqg6)
 
 Added `ct droplet tail <id>` command that watches a droplet and streams status change events to stdout in real time.

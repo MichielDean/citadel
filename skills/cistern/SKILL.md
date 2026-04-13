@@ -149,7 +149,8 @@ ct droplet list --repo <repo>
 ct droplet show <id>
 
 # Manage
-ct droplet restart <id>
+ct droplet restart <id>                           # Restart from current cataractae
+ct droplet restart <id> --cataractae delivery     # Re-enter at a specific cataractae
 ct droplet pool <id>
 ct droplet cancel <id>
 ct droplet note <id> "..."
