@@ -1300,8 +1300,8 @@ func TestInferLLMProviderFromPreset_KnownPresets(t *testing.T) {
 		{"claude", "anthropic"},
 		{"codex", "openai"},
 		{"gemini", "gemini"},
-		{"copilot", ""},
-		{"opencode", ""},
+		{"copilot", "openai"},
+		{"opencode", "ollama"},
 		{"unknown", ""},
 	}
 	for _, tc := range tests {

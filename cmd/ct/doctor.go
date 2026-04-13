@@ -436,6 +436,10 @@ func inferLLMProviderFromPreset(presetName string) string {
 		return "openai"
 	case "gemini":
 		return "gemini"
+	case "opencode":
+		return "ollama"
+	case "copilot":
+		return "openai"
 	}
 	return ""
 }
