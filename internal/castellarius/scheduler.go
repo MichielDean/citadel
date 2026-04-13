@@ -109,6 +109,7 @@ type Castellarius struct {
 	startupCfgMtime    time.Time     // mtime of cistern.yaml at startup; used to detect updates
 	supervised         bool          // true if managed by systemd/supervisord/etc.
 	reloadCh           chan struct{} // signals Tick() to hot-reload workflows from disk
+	outcomeCh          chan struct{} // signals immediate tick when an agent writes an outcome
 
 	// drainTimeout is the maximum duration to wait for in-flight sessions to
 	// signal an outcome after SIGTERM. Defaults to 5 minutes.
@@ -207,6 +208,7 @@ func New(config aqueduct.AqueductConfig, dbPath string, runner CataractaeRunner,
 		startupBinaryMtime:     startupBinaryMtime,
 		supervised:             isSupervisedProcess(),
 		reloadCh:               make(chan struct{}, 1),
+		outcomeCh:              make(chan struct{}, 1),
 	}
 	for _, o := range opts {
 		o(s)
@@ -342,6 +344,18 @@ func defaultAqueductNames(n int) []string {
 	return names
 }
 
+// NotifyOutcome signals the Castellarius that an agent has written an outcome
+// to the DB. This triggers an immediate tick (observe + dispatch) so outcomes
+// are processed without waiting for the next poll cycle. Called by ct droplet
+// pass/recirculate/pool after writing the outcome, and by SIGUSR1 handler.
+func (s *Castellarius) NotifyOutcome() {
+	select {
+	case s.outcomeCh <- struct{}{}:
+	default:
+		// Channel full — a tick is already scheduled, no need to queue another.
+	}
+}
+
 // Run starts the scheduler loop. It blocks until ctx is cancelled.
 func (s *Castellarius) Run(ctx context.Context) error {
 	supervisorStatus := "unsupervised (manual restart required for binary updates)"
@@ -420,6 +434,9 @@ func (s *Castellarius) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return s.drainInFlight()
 		case <-ticker.C:
+			s.tick(ctx)
+		case <-s.outcomeCh:
+			s.logger.Info("outcome signal — immediate tick")
 			s.tick(ctx)
 		}
 	}

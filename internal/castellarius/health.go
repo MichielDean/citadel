@@ -13,6 +13,7 @@ type HealthFile struct {
 	PollIntervalSec  int        `json:"pollIntervalSec"`
 	DroughtRunning   bool       `json:"droughtRunning"`
 	DroughtStartedAt *time.Time `json:"droughtStartedAt"`
+	PID              int        `json:"pid"`
 }
 
 // writeHealthFile atomically writes the health file to
@@ -33,6 +34,7 @@ func (s *Castellarius) writeHealthFile() {
 		PollIntervalSec:  int(s.pollInterval.Seconds()),
 		DroughtRunning:   s.droughtRunning.Load(),
 		DroughtStartedAt: s.droughtStartedAt.Load(),
+		PID:              os.Getpid(),
 	}
 
 	b, err := json.Marshal(data)

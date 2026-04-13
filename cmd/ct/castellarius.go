@@ -110,6 +110,18 @@ keep dispatching droplets into aqueducts automatically.`,
 		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer cancel()
 
+		// SIGUSR1 triggers an immediate tick when an agent signals an outcome.
+		// The Castellarius processes the outcome on the next tick, which normally
+		// takes 10s, but SIGUSR1 causes it to run immediately.
+		sigusr1Ch := make(chan os.Signal, 1)
+		signal.Notify(sigusr1Ch, syscall.SIGUSR1)
+		defer signal.Stop(sigusr1Ch)
+		go func() {
+			for range sigusr1Ch {
+				sched.NotifyOutcome()
+			}
+		}()
+
 		// Tmux keepalive: ensure the tmux server stays running for the lifetime of
 		// the Castellarius. If the server dies (socket cleaned up, idle timeout, etc.)
 		// all subsequent session spawns fail silently. We maintain a dedicated
