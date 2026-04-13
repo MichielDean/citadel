@@ -38,6 +38,20 @@ ct droplet note <id> "..."               # Add a note
 ct droplet heartbeat <id>                # Record agent heartbeat (called by agents every 60 seconds)
 ```
 
+### Tail — Stream Droplet Events
+
+```bash
+ct droplet tail <id>                     # Show last 20 status change events and exit
+ct droplet tail <id> --follow            # Stream events continuously (like tail -f); exits on terminal state
+ct droplet tail <id> --lines 50          # Show last 50 events on start (default: 20)
+ct droplet tail <id> --format json        # Output events as NDJSON (one JSON object per line)
+ct droplet tail <id> --follow --format json  # Continuous JSON event stream
+```
+
+Streams cataractae notes and events (status changes, stage transitions, assignee changes) for a droplet. With `--follow`, polls every 2 seconds and exits automatically when the droplet reaches a terminal state (delivered, pooled, cancelled). Press Ctrl-C to stop following early.
+
+In text mode (default), each line shows: `2026-04-13 14:30:00 [note] reviewer: Found type mismatch in handler`. In JSON mode, each line is a JSON object with `time`, `kind`, and `value` fields.
+
 ### Add Options
 
 | Flag | Values | Default |

@@ -348,7 +348,7 @@ func (c *Client) GetReady(repo string) (*Droplet, error) {
 }
 
 // GetReadyForAqueduct is like GetReady but only returns droplets that are either
-// unassigned (assigned_aqueduct = '') or already assigned to aqueductName.
+// unassigned (assigned_aqueduct = ”) or already assigned to aqueductName.
 // This enforces sticky aqueduct assignment: once a droplet enters an aqueduct
 // it stays there for its entire lifecycle.
 func (c *Client) GetReadyForAqueduct(repo, aqueductName string) (*Droplet, error) {
@@ -1006,6 +1006,45 @@ func (c *Client) ListRecentEvents(limit int) ([]RecentEvent, error) {
 		events = append(events, e)
 	}
 	return events, rows.Err()
+}
+
+// DropletChange represents a note or event change for a single droplet.
+// It is used by the tail command to stream events to stdout.
+type DropletChange struct {
+	Time  time.Time `json:"time"`
+	Kind  string    `json:"kind"`  // "note" or "event"
+	Value string    `json:"value"` // note content or event payload
+}
+
+// GetDropletChanges returns up to limit most recent changes for a specific droplet,
+// ordered oldest-first. Changes come from two sources:
+//   - cataractae notes (content and cataractae_name)
+//   - events table (event_type + payload)
+func (c *Client) GetDropletChanges(id string, limit int) ([]DropletChange, error) {
+	rows, err := c.db.Query(`
+		SELECT created_at, kind, value FROM (
+			SELECT created_at, 'note' AS kind, cataractae_name || ': ' || content AS value
+			FROM cataractae_notes WHERE droplet_id = ?
+			UNION ALL
+			SELECT created_at, 'event' AS kind, event_type || ': ' || COALESCE(payload, '') AS value
+			FROM events WHERE droplet_id = ?
+			ORDER BY created_at DESC
+			LIMIT ?
+		) ORDER BY created_at ASC`, id, id, limit)
+	if err != nil {
+		return nil, fmt.Errorf("cistern: get droplet changes %s: %w", id, err)
+	}
+	defer rows.Close()
+
+	var changes []DropletChange
+	for rows.Next() {
+		var ch DropletChange
+		if err := rows.Scan(&ch.Time, &ch.Kind, &ch.Value); err != nil {
+			return nil, fmt.Errorf("cistern: scan droplet change: %w", err)
+		}
+		changes = append(changes, ch)
+	}
+	return changes, rows.Err()
 }
 
 // DropletStats holds counts of droplets grouped by display status.

@@ -633,6 +633,12 @@ ct droplet purge --older-than 30d                                 Delete old del
 ct droplet purge --older-than 24h --dry-run                       Preview what would be purged
 ct droplet pool <id> --notes "..."                               Mark a droplet pooled
 
+# Tail — stream droplet events in real time
+ct droplet tail <id>                                        Show last 20 events and exit
+ct droplet tail <id> --follow                               Stream events continuously (like tail -f); exits on terminal state
+ct droplet tail <id> --lines 50                             Show last 50 events on start
+ct droplet tail <id> --format json                          Output events as NDJSON (one JSON object per line)
+
 # Droplet outcomes — used by agent cataractae to signal completion
 ct droplet pass <id>                                              Advance to next cataractae
 ct droplet pass <id> --notes "..."                                Advance with notes

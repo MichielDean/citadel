@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+### ct droplet tail: real-time event streaming (ci-asqg6)
+
+Added `ct droplet tail <id>` command that watches a droplet and streams status change events to stdout in real time.
+
+**Key features:**
+- **Historical events**: Shows the last N events on start (default 20, configurable via `--lines`)
+- **Follow mode**: `--follow` flag enables continuous watching (like `tail -f`), polling every 2 seconds for new events
+- **Terminal exit**: Follow mode exits automatically when the droplet reaches a terminal state (delivered, pooled, cancelled)
+- **JSON output**: `--format json` outputs one JSON object per line (NDJSON) with `time`, `kind`, and `value` fields
+- **Signal handling**: Clean shutdown on SIGINT/SIGTERM during follow mode
+
+**Command syntax:**
+```bash
+ct droplet tail <id>                        # Show last 20 events and exit
+ct droplet tail <id> --follow               # Stream continuously; exits on terminal state
+ct droplet tail <id> --lines 50             # Show last 50 events on start
+ct droplet tail <id> --format json          # NDJSON output
+ct droplet tail <id> --follow --format json  # Continuous JSON stream
+```
+
+**Events streamed:** cataractae notes (with author) and events (status changes, stage transitions, assignee changes).
+
+**Files added:**
+- `cmd/ct/droplet_tail.go` — command implementation
+- `internal/cistern/client.go` — `GetDropletChanges` query and `DropletChange` struct
+
 ### Constitutional layer: embed system safety invariants in baseCataractaePrompt (ci-1wh4x)
 
 Added five non-negotiable system safety invariants to the constitutional layer (baseCataractaePrompt) that every cataractae reads before executing. These invariants encode lessons learned from production incidents and critical system boundaries that agents must never cross.

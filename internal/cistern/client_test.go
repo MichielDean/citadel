@@ -2298,3 +2298,166 @@ func TestExternalRef_RoundTrips_ThroughGetReadyForAqueduct(t *testing.T) {
 		t.Errorf("GetReadyForAqueduct ExternalRef = %q, want %q", got.ExternalRef, "jira:DPF-456")
 	}
 }
+
+// --- GetDropletChanges tests ---
+
+func TestGetDropletChanges_Empty(t *testing.T) {
+	c := testClient(t)
+	item, err := c.Add("myrepo", "Task", "", 1, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	changes, err := c.GetDropletChanges(item.ID, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 0 {
+		t.Errorf("got %d changes, want 0 for new droplet", len(changes))
+	}
+}
+
+func TestGetDropletChanges_ReturnsNotes(t *testing.T) {
+	c := testClient(t)
+	item, err := c.Add("myrepo", "Task", "", 1, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := c.AddNote(item.ID, "implement", "wrote the code"); err != nil {
+		t.Fatal(err)
+	}
+
+	changes, err := c.GetDropletChanges(item.ID, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 1 {
+		t.Fatalf("got %d changes, want 1", len(changes))
+	}
+	if changes[0].Kind != "note" {
+		t.Errorf("Kind = %q, want %q", changes[0].Kind, "note")
+	}
+	if !strings.Contains(changes[0].Value, "implement") {
+		t.Errorf("Value = %q, want it to contain 'implement'", changes[0].Value)
+	}
+	if !strings.Contains(changes[0].Value, "wrote the code") {
+		t.Errorf("Value = %q, want it to contain note content", changes[0].Value)
+	}
+}
+
+func TestGetDropletChanges_ReturnsEvents(t *testing.T) {
+	c := testClient(t)
+	item, err := c.Add("myrepo", "Task", "", 1, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	c.Pool(item.ID, "needs review")
+
+	changes, err := c.GetDropletChanges(item.ID, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 1 {
+		t.Fatalf("got %d changes, want 1", len(changes))
+	}
+	if changes[0].Kind != "event" {
+		t.Errorf("Kind = %q, want %q", changes[0].Kind, "event")
+	}
+	if !strings.Contains(changes[0].Value, "pool") {
+		t.Errorf("Value = %q, want it to contain 'pool'", changes[0].Value)
+	}
+}
+
+func TestGetDropletChanges_MixedNotesAndEvents(t *testing.T) {
+	c := testClient(t)
+	item, err := c.Add("myrepo", "Task", "", 1, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	c.AddNote(item.ID, "implement", "wrote code")
+	c.Pool(item.ID, "stuck")
+	c.AddNote(item.ID, "review", "found issues")
+
+	changes, err := c.GetDropletChanges(item.ID, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 3 {
+		t.Fatalf("got %d changes, want 3", len(changes))
+	}
+	kinds := map[string]int{}
+	for _, ch := range changes {
+		kinds[ch.Kind]++
+	}
+	if kinds["note"] != 2 {
+		t.Errorf("expected 2 note changes, got %d", kinds["note"])
+	}
+	if kinds["event"] != 1 {
+		t.Errorf("expected 1 event change, got %d", kinds["event"])
+	}
+}
+
+func TestGetDropletChanges_RespectsLimit_ReturnsNewest(t *testing.T) {
+	c := testClient(t)
+	item, err := c.Add("myrepo", "Task", "", 1, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	notes := []string{"alpha", "beta", "gamma", "delta", "epsilon"}
+	for _, n := range notes {
+		c.AddNote(item.ID, "step", n)
+	}
+
+	changes, err := c.GetDropletChanges(item.ID, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 3 {
+		t.Fatalf("got %d changes, want 3 (limit applied)", len(changes))
+	}
+	want := []string{"gamma", "delta", "epsilon"}
+	for i, ch := range changes {
+		if !strings.Contains(ch.Value, want[i]) {
+			t.Errorf("change[%d] = %q, want it to contain %q", i, ch.Value, want[i])
+		}
+	}
+}
+
+func TestGetDropletChanges_OrderedOldestFirst(t *testing.T) {
+	c := testClient(t)
+	item, err := c.Add("myrepo", "Task", "", 1, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	c.AddNote(item.ID, "implement", "first note")
+	time.Sleep(10 * time.Millisecond)
+	c.AddNote(item.ID, "review", "second note")
+
+	changes, err := c.GetDropletChanges(item.ID, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 2 {
+		t.Fatalf("got %d changes, want 2", len(changes))
+	}
+	if !changes[0].Time.Before(changes[1].Time) {
+		t.Errorf("changes not in chronological order: %v >= %v", changes[0].Time, changes[1].Time)
+	}
+}
+
+func TestGetDropletChanges_NotFoundReturnEmpty(t *testing.T) {
+	c := testClient(t)
+
+	changes, err := c.GetDropletChanges("nonexistent", 20)
+	if err != nil {
+		t.Fatalf("expected no error for nonexistent droplet, got: %v", err)
+	}
+	if len(changes) != 0 {
+		t.Errorf("got %d changes, want 0 for nonexistent droplet", len(changes))
+	}
+}

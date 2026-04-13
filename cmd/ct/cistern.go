@@ -1476,12 +1476,16 @@ func init() {
 	dropletEditCmd.Flags().StringVar(&editComplexity, "complexity", "", "new complexity: standard|full|critical (or 1-3)")
 	dropletEditCmd.Flags().IntVar(&editPriority, "priority", 0, "new priority")
 
+	dropletTailCmd.Flags().StringVar(&tailFmt, "format", "text", "output format: text or json")
+	dropletTailCmd.Flags().IntVar(&tailCount, "lines", 20, "number of historical events to show on start")
+	dropletTailCmd.Flags().BoolVar(&tailFollow, "follow", false, "keep watching for new events (like tail -f)")
+
 	dropletCmd.AddCommand(dropletAddCmd, dropletListCmd, dropletShowCmd, dropletNoteCmd,
 		dropletCloseCmd, dropletReopenCmd, dropletPurgeCmd,
 		dropletPassCmd, dropletRecirculateCmd, dropletPoolCmd, dropletCancelCmd, dropletApproveCmd,
 		dropletStatsCmd, dropletDepsCmd, dropletPeekCmd, dropletIssueCmd, dropletSearchCmd,
 		dropletExportCmd, dropletRenameCmd, dropletRestartCmd, dropletEditCmd,
-		dropletHeartbeatCmd)
+		dropletTailCmd, dropletHeartbeatCmd)
 	rootCmd.AddCommand(dropletCmd)
 }
 
