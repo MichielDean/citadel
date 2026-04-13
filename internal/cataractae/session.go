@@ -315,24 +315,23 @@ func (s *Session) buildPresetCmd(preset provider.ProviderPreset, skillsDir strin
 
 	parts := s.presetBaseParts(preset, skillsDir)
 
-	if preset.PromptFlag != "" {
-		prompt := s.buildPrompt()
+	prompt := s.buildPrompt()
 
-		// When the full prompt exceeds the safe tmux command-line limit
-		// (~8 KB), write it to a file in the worktree and use a shell
-		// expansion to read it. This prevents tmux from rejecting the
-		// session creation with "failed to send command" on very long
-		// prompts (cataractae prompts with skills can exceed 8 KB).
-		//
+	// Determine the effective prompt flag: use the preset's PromptFlag if set,
+	// otherwise fall back to the NonInteractive PromptFlag (e.g. opencode uses
+	// "" for PromptFlag but "-p" in NonInteractive).
+	promptFlag := preset.PromptFlag
+	if promptFlag == "" && preset.NonInteractive.PromptFlag != "" {
+		promptFlag = preset.NonInteractive.PromptFlag
+	}
+
+	if promptFlag != "" {
 		// For providers that read their instructions file natively
 		// (e.g. opencode reads AGENTS.md), a PromptFileTemplate can
 		// replace the full prompt with a short reference. When set, the
 		// prompt content is written to the file named by PromptFileTemplate
-		// and a short --prompt referencing CONTEXT.md is used instead.
+		// and a short prompt referencing CONTEXT.md is used instead.
 		if preset.PromptFileTemplate != "" {
-			// Write the full prompt to the instructions file in the worktree.
-			// The template string may contain {identity} as a placeholder for
-			// the resolved identity file path.
 			identityPath := s.resolveIdentityPath()
 			promptFile := strings.ReplaceAll(preset.PromptFileTemplate, "{identity}", identityPath)
 			promptFilePath := filepath.Join(s.WorkDir, promptFile)
@@ -347,19 +346,34 @@ func (s *Session) buildPresetCmd(preset provider.ProviderPreset, skillsDir strin
 					"path", promptFilePath,
 					"bytes", len(prompt))
 			}
-			// Use a short prompt that references the instructions file.
-			// The agent reads its full persona from the instructions file natively.
 			shortPrompt := "Read CONTEXT.md for your task and begin work. Follow the instructions in " + promptFile + "."
-			parts = append(parts, preset.PromptFlag, shellQuote(shortPrompt))
+			parts = append(parts, promptFlag, shellQuote(shortPrompt))
 		} else if len(prompt) > maxPromptForTmux {
-			// Fallback: write the full prompt to a temp file and use shell expansion.
 			promptFile := filepath.Join(s.WorkDir, ".prompt")
 			if err := os.WriteFile(promptFile, []byte(prompt), 0o644); err != nil {
 				return "", fmt.Errorf("spawn: write prompt file: %w", err)
 			}
-			parts = append(parts, preset.PromptFlag, "\"$(cat "+shellQuote(promptFile)+")\"")
+			parts = append(parts, promptFlag, "\"$(cat "+shellQuote(promptFile)+")\"")
 		} else {
-			parts = append(parts, preset.PromptFlag, "'"+strings.ReplaceAll(prompt, "'", `'\''`)+"'")
+			parts = append(parts, promptFlag, "'"+strings.ReplaceAll(prompt, "'", `'\''`)+"'")
+		}
+	} else if preset.PromptFileTemplate != "" {
+		// No prompt flag available, but the provider reads an instructions
+		// file natively (e.g. AGENTS.md). Write the full prompt to it so
+		// the agent picks it up automatically.
+		identityPath := s.resolveIdentityPath()
+		promptFile := strings.ReplaceAll(preset.PromptFileTemplate, "{identity}", identityPath)
+		promptFilePath := filepath.Join(s.WorkDir, promptFile)
+		if err := os.WriteFile(promptFilePath, []byte(prompt), 0o644); err != nil {
+			slog.Default().Error("spawn: failed to write prompt file",
+				"session", s.ID,
+				"path", promptFilePath,
+				"error", err)
+		} else {
+			slog.Default().Info("spawn: wrote prompt file",
+				"session", s.ID,
+				"path", promptFilePath,
+				"bytes", len(prompt))
 		}
 	}
 
