@@ -1282,12 +1282,23 @@ func (s *Castellarius) heartbeatRepo(ctx context.Context, repo aqueduct.RepoConf
 				// Re-read the item from the DB before resetting. The agent may
 				// have called ct droplet pass/recirculate/pool between when we
 				// fetched the list and now. If an outcome exists, the observe
-				// cycle will handle it — do not reset.
+				// cycle will handle it. Even if the outcome was already consumed
+				// by the observe cycle (which clears it via Assign), we can detect
+				// that by checking if the cataractae stage advanced — if so, the
+				// droplet has already moved on and we must not reset it.
 				fresh, err := client.Get(item.ID)
-				if err == nil && fresh.Outcome != "" {
-					s.logger.Info("heartbeat: dead session but outcome already written — skipping reset",
-						"repo", repo.Name, "droplet", item.ID, "outcome", fresh.Outcome)
-					continue
+				if err == nil {
+					if fresh.Outcome != "" {
+						s.logger.Info("heartbeat: dead session but outcome already written — skipping reset",
+							"repo", repo.Name, "droplet", item.ID, "outcome", fresh.Outcome)
+						continue
+					}
+					if fresh.CurrentCataractae != item.CurrentCataractae {
+						s.logger.Info("heartbeat: dead session but cataractae already advanced — skipping reset",
+							"repo", repo.Name, "droplet", item.ID,
+							"was", item.CurrentCataractae, "now", fresh.CurrentCataractae)
+						continue
+					}
 				}
 
 				step := currentCataracta(item, wf)
