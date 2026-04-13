@@ -198,6 +198,17 @@ func (s *Session) collectEnvArgs() []string {
 		args = append(args, "-e", "GH_TOKEN="+tok)
 	}
 
+	// Always-unset: env vars that interfere with non-interactive agent execution.
+	// OPENCODE_SERVER_* causes "session not found" errors when opencode run
+	// tries to connect to an authenticated server instead of starting fresh.
+	// See: https://github.com/anomalyco/opencode/issues/8502
+	args = append(args,
+		"-e", "OPENCODE_SERVER_USERNAME=",
+		"-e", "OPENCODE_SERVER_PASSWORD=",
+		"-e", "OPENCODE_PID=",
+		"-e", "OPENCODE=",
+	)
+
 	return args
 }
 
@@ -317,20 +328,17 @@ func (s *Session) buildPresetCmd(preset provider.ProviderPreset, skillsDir strin
 
 	prompt := s.buildPrompt()
 
-	// Determine the effective prompt flag: use the preset's PromptFlag if set,
-	// otherwise fall back to the NonInteractive PromptFlag (e.g. opencode uses
-	// "" for PromptFlag but "-p" in NonInteractive).
+	// Determine how the prompt is delivered to the agent:
+	//   1. PromptFlag set → use flag + value (e.g. claude uses -p)
+	//   2. PromptPositional + PromptFileTemplate → write AGENTS.md, append short prompt as positional arg
+	//   3. PromptFileTemplate only → write AGENTS.md, no prompt arg (agent reads it natively)
+	//   4. None → build the prompt flag from NonInteractive config as fallback
 	promptFlag := preset.PromptFlag
-	if promptFlag == "" && preset.NonInteractive.PromptFlag != "" {
+	if promptFlag == "" && preset.NonInteractive.PromptFlag != "" && !preset.PromptPositional {
 		promptFlag = preset.NonInteractive.PromptFlag
 	}
 
 	if promptFlag != "" {
-		// For providers that read their instructions file natively
-		// (e.g. opencode reads AGENTS.md), a PromptFileTemplate can
-		// replace the full prompt with a short reference. When set, the
-		// prompt content is written to the file named by PromptFileTemplate
-		// and a short prompt referencing CONTEXT.md is used instead.
 		if preset.PromptFileTemplate != "" {
 			identityPath := s.resolveIdentityPath()
 			promptFile := strings.ReplaceAll(preset.PromptFileTemplate, "{identity}", identityPath)
@@ -357,10 +365,29 @@ func (s *Session) buildPresetCmd(preset provider.ProviderPreset, skillsDir strin
 		} else {
 			parts = append(parts, promptFlag, "'"+strings.ReplaceAll(prompt, "'", `'\''`)+"'")
 		}
+	} else if preset.PromptPositional && preset.PromptFileTemplate != "" {
+		// Providers like opencode take the prompt as a positional argument
+		// rather than a flag. Write the full prompt to the instructions file
+		// and append a short positional prompt after all flags.
+		identityPath := s.resolveIdentityPath()
+		promptFile := strings.ReplaceAll(preset.PromptFileTemplate, "{identity}", identityPath)
+		promptFilePath := filepath.Join(s.WorkDir, promptFile)
+		if err := os.WriteFile(promptFilePath, []byte(prompt), 0o644); err != nil {
+			slog.Default().Error("spawn: failed to write prompt file",
+				"session", s.ID,
+				"path", promptFilePath,
+				"error", err)
+		} else {
+			slog.Default().Info("spawn: wrote prompt file",
+				"session", s.ID,
+				"path", promptFilePath,
+				"bytes", len(prompt))
+		}
+		shortPrompt := "Read CONTEXT.md for your task and begin work. Follow the instructions in " + promptFile + "."
+		parts = append(parts, shellQuote(shortPrompt))
 	} else if preset.PromptFileTemplate != "" {
-		// No prompt flag available, but the provider reads an instructions
-		// file natively (e.g. AGENTS.md). Write the full prompt to it so
-		// the agent picks it up automatically.
+		// No prompt flag and no positional mode, but the provider reads an
+		// instructions file natively. Write the full prompt to it.
 		identityPath := s.resolveIdentityPath()
 		promptFile := strings.ReplaceAll(preset.PromptFileTemplate, "{identity}", identityPath)
 		promptFilePath := filepath.Join(s.WorkDir, promptFile)

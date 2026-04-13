@@ -94,7 +94,7 @@ func TestBuiltins_NonInteractiveConfig(t *testing.T) {
 		{"codex", "exec", "", "-p", ""},
 		{"gemini", "", "", "-p", ""},
 		{"copilot", "", "", "-p", ""},
-		{"opencode", "run", "", "-p", ""},
+		{"opencode", "run", "", "", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

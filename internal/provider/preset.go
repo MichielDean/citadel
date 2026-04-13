@@ -60,6 +60,12 @@ type ProviderPreset struct {
 	// When empty, no prompt flag is appended and the prompt must be delivered via
 	// an alternative mechanism (stdin, instructions file, etc.).
 	PromptFlag string `json:"prompt_flag,omitempty"`
+	// PromptPositional indicates that the prompt should be appended as a
+	// positional argument rather than via a flag. When true and PromptFileTemplate
+	// is set, the short prompt is appended as a positional argument after the
+	// subcommand and flags. This is for CLIs like opencode where the prompt
+	// is a positional argument, not a flag value.
+	PromptPositional bool `json:"prompt_positional,omitempty"`
 	// PermissionsFlag is the CLI flag used to grant additional permissions.
 	PermissionsFlag string `json:"permissions_flag,omitempty"`
 	// InstructionsFile is the filename the agent reads for task instructions (e.g. "CLAUDE.md").
@@ -165,13 +171,13 @@ var builtins = []ProviderPreset{
 		Name:                "opencode",
 		Command:            "opencode",
 		Subcommand:          "run",
+		Args:               []string{"--dangerously-skip-permissions"},
 		ModelFlag:          "--model",
 		DefaultModel:       "ollama/glm-5.1:cloud",
-		PromptFlag:         "",
-		ContinueFlag:       "--continue",
+		PromptPositional:   true,
 		InstructionsFile:   "AGENTS.md",
 		PromptFileTemplate: "AGENTS.md",
-		NonInteractive:     NonInteractiveConfig{Subcommand: "run", PromptFlag: "-p"},
+		NonInteractive:     NonInteractiveConfig{Subcommand: "run"},
 	},
 }
 
