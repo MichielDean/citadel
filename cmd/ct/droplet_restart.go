@@ -97,14 +97,12 @@ func validateRestartCataractae(cataractaeName, repo string) error {
 	if workflow == nil {
 		return nil
 	}
-	for _, step := range workflow.Cataractae {
-		if step.Name == cataractaeName {
-			return nil
-		}
-	}
 	var validNames []string
 	for _, step := range workflow.Cataractae {
 		validNames = append(validNames, step.Name)
+		if step.Name == cataractaeName {
+			return nil
+		}
 	}
 	return fmt.Errorf("cataractae %q is not valid for repo %s; valid cataractae: %s", cataractaeName, repo, strings.Join(validNames, ", "))
 }
