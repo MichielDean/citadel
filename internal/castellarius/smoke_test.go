@@ -125,6 +125,13 @@ func (c *pipelineClient) Assign(id, worker, step string) error {
 	return nil
 }
 
+func (c *pipelineClient) Get(id string) (*cistern.Droplet, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	item := c.item
+	return &item, nil
+}
+
 // SetOutcome is called by the mock runner to signal step completion.
 // The observe phase reads this on the next Tick to route the item.
 func (c *pipelineClient) SetOutcome(id, outcome string) error {

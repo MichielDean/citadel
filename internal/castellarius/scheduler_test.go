@@ -134,6 +134,15 @@ func (m *mockClient) Assign(id, worker, step string) error {
 	return nil
 }
 
+func (m *mockClient) Get(id string) (*cistern.Droplet, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if item, ok := m.items[id]; ok {
+		return item, nil
+	}
+	return nil, fmt.Errorf("not found: %s", id)
+}
+
 func (m *mockClient) SetOutcome(id, outcome string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

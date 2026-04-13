@@ -34,6 +34,7 @@ const (
 type CisternClient interface {
 	GetReady(repo string) (*cistern.Droplet, error)
 	Assign(id, worker, step string) error
+	Get(id string) (*cistern.Droplet, error)
 
 	AddNote(id, step, content string) error
 	GetNotes(id string) ([]cistern.CataractaeNote, error)
@@ -1278,6 +1279,17 @@ func (s *Castellarius) heartbeatRepo(ctx context.Context, repo aqueduct.RepoConf
 			}
 
 			if dead {
+				// Re-read the item from the DB before resetting. The agent may
+				// have called ct droplet pass/recirculate/pool between when we
+				// fetched the list and now. If an outcome exists, the observe
+				// cycle will handle it — do not reset.
+				fresh, err := client.Get(item.ID)
+				if err == nil && fresh.Outcome != "" {
+					s.logger.Info("heartbeat: dead session but outcome already written — skipping reset",
+						"repo", repo.Name, "droplet", item.ID, "outcome", fresh.Outcome)
+					continue
+				}
+
 				step := currentCataracta(item, wf)
 				if step == nil {
 					s.logger.Error("heartbeat: no step for dead session — skipping",
