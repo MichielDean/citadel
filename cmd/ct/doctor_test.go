@@ -950,7 +950,7 @@ func TestRunDoctorExtendedChecks_ProviderBinaryMissing_Fails(t *testing.T) {
 	// Redirect PATH so 'claude' won't be found.
 	emptyBinDir := t.TempDir()
 	t.Setenv("PATH", emptyBinDir)
-	t.Setenv("ANTHROPIC_API_KEY", "test-key")
+	t.Setenv("GH_TOKEN", "test-key")
 
 	wfPath := filepath.Join(aqueductDir, "workflow.yaml")
 	if err := os.WriteFile(wfPath, []byte(minimalWorkflowYAML), 0o644); err != nil {
@@ -1482,10 +1482,10 @@ func TestClaudeAuthenticated_NonZeroExit_FailsCheck(t *testing.T) {
 func TestCheckCisternEnvHasKey_KeyPresent_ReturnsNil(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "env")
-	if err := os.WriteFile(path, []byte("ANTHROPIC_API_KEY=sk-ant-abc123\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("OPENAI_API_KEY=sk-test123\n"), 0o600); err != nil {
 		t.Fatalf("write env: %v", err)
 	}
-	if err := checkCisternEnvHasKey(path, "ANTHROPIC_API_KEY"); err != nil {
+	if err := checkCisternEnvHasKey(path, "OPENAI_API_KEY"); err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
@@ -1496,7 +1496,7 @@ func TestCheckCisternEnvHasKey_KeyAbsent_ReturnsError(t *testing.T) {
 	if err := os.WriteFile(path, []byte("GH_TOKEN=ghp_abc\n"), 0o600); err != nil {
 		t.Fatalf("write env: %v", err)
 	}
-	if err := checkCisternEnvHasKey(path, "ANTHROPIC_API_KEY"); err == nil {
+	if err := checkCisternEnvHasKey(path, "OPENAI_API_KEY"); err == nil {
 		t.Error("expected error when key is absent from env file")
 	}
 }
@@ -1504,17 +1504,17 @@ func TestCheckCisternEnvHasKey_KeyAbsent_ReturnsError(t *testing.T) {
 func TestCheckCisternEnvHasKey_KeyPresentButEmpty_ReturnsError(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "env")
-	if err := os.WriteFile(path, []byte("ANTHROPIC_API_KEY=\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("OPENAI_API_KEY=\n"), 0o600); err != nil {
 		t.Fatalf("write env: %v", err)
 	}
-	if err := checkCisternEnvHasKey(path, "ANTHROPIC_API_KEY"); err == nil {
+	if err := checkCisternEnvHasKey(path, "OPENAI_API_KEY"); err == nil {
 		t.Error("expected error when key is present but has empty value")
 	}
 }
 
 func TestCheckCisternEnvHasKey_FileAbsent_ReturnsError(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nonexistent", "env")
-	if err := checkCisternEnvHasKey(path, "ANTHROPIC_API_KEY"); err == nil {
+	if err := checkCisternEnvHasKey(path, "OPENAI_API_KEY"); err == nil {
 		t.Error("expected error when env file does not exist")
 	}
 }
@@ -1522,11 +1522,11 @@ func TestCheckCisternEnvHasKey_FileAbsent_ReturnsError(t *testing.T) {
 func TestCheckCisternEnvHasKey_CommentsAndBlankLines_Ignored(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "env")
-	content := "# credentials\n\nANTHROPIC_API_KEY=sk-ant-real\nGH_TOKEN=ghp_abc\n"
+	content := "# credentials\n\nOPENAI_API_KEY=sk-test-real\nGH_TOKEN=ghp_abc\n"
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatalf("write env: %v", err)
 	}
-	if err := checkCisternEnvHasKey(path, "ANTHROPIC_API_KEY"); err != nil {
+	if err := checkCisternEnvHasKey(path, "OPENAI_API_KEY"); err != nil {
 		t.Errorf("unexpected error with comments and blank lines: %v", err)
 	}
 }
@@ -1534,11 +1534,11 @@ func TestCheckCisternEnvHasKey_CommentsAndBlankLines_Ignored(t *testing.T) {
 func TestCheckCisternEnvHasKey_MultipleKeys_FindsCorrectOne(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "env")
-	content := "GH_TOKEN=ghp_abc\nANTHROPIC_API_KEY=sk-ant-real\nEXTRA_VAR=value\n"
+	content := "GH_TOKEN=ghp_abc\nOPENAI_API_KEY=sk-test-real\nEXTRA_VAR=value\n"
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatalf("write env: %v", err)
 	}
-	if err := checkCisternEnvHasKey(path, "ANTHROPIC_API_KEY"); err != nil {
+	if err := checkCisternEnvHasKey(path, "OPENAI_API_KEY"); err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
@@ -1579,7 +1579,7 @@ func TestFixCisternEnvFile_ExistingFile_IsNotModified(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "env")
 
-	existing := []byte("ANTHROPIC_API_KEY=sk-ant-existing\n")
+	existing := []byte("OPENAI_API_KEY=sk-test-existing\n")
 	if err := os.WriteFile(path, existing, 0o600); err != nil {
 		t.Fatalf("write existing: %v", err)
 	}
@@ -1624,8 +1624,8 @@ func TestFixCisternEnvFile_NewFile_ContainsCommentStub(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read env: %v", err)
 	}
-	if !strings.Contains(string(data), "ANTHROPIC_API_KEY") {
-		t.Error("new env file does not contain ANTHROPIC_API_KEY comment stub")
+	if !strings.Contains(string(data), "OPENAI_API_KEY") {
+		t.Error("new env file does not contain OPENAI_API_KEY comment stub")
 	}
 	if !strings.Contains(string(data), "#") {
 		t.Error("new env file does not contain comment lines")
@@ -1762,7 +1762,7 @@ func TestInstallSystemdService_PreservesExistingEnvFile(t *testing.T) {
 		t.Fatalf("mkdir cistern: %v", err)
 	}
 	envPath := filepath.Join(cisternDir, "env")
-	existing := []byte("ANTHROPIC_API_KEY=sk-ant-existing\n")
+	existing := []byte("OPENAI_API_KEY=sk-test-existing\n")
 	if err := os.WriteFile(envPath, existing, 0o600); err != nil {
 		t.Fatalf("write existing env: %v", err)
 	}
@@ -1816,7 +1816,7 @@ func TestInstallSystemdService_ServiceFileUsesWrapperScript(t *testing.T) {
 	}
 }
 
-func TestInstallSystemdService_ServiceFileHasNoAnthropicAPIKey(t *testing.T) {
+func TestInstallSystemdService_ServiceFileHasNoHardcodedAPIKey(t *testing.T) {
 	home := setupInstallSystemdServiceTest(t)
 
 	if err := installSystemdService(); err != nil {
@@ -1828,8 +1828,10 @@ func TestInstallSystemdService_ServiceFileHasNoAnthropicAPIKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read service file: %v", err)
 	}
-	if strings.Contains(string(data), "ANTHROPIC_API_KEY") {
-		t.Error("service file must not contain ANTHROPIC_API_KEY — credentials are loaded by the wrapper script")
+	for _, key := range []string{"OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GH_TOKEN"} {
+		if strings.Contains(string(data), key) {
+			t.Errorf("service file must not contain %s — credentials are loaded by the wrapper script", key)
+		}
 	}
 }
 
@@ -1882,19 +1884,20 @@ func TestInstallSystemdService_WrapperStatError_ReturnsError(t *testing.T) {
 }
 
 // TestCheckSystemdServiceEnv_NoAPIKeyCheck verifies that checkSystemdServiceEnv
-// does NOT produce a warning about ANTHROPIC_API_KEY being absent from the
-// service environment. ANTHROPIC_API_KEY is now loaded at runtime by the wrapper
-// script sourcing ~/.cistern/env, so it will never appear in systemd's
-// Environment property — reporting its absence as a failure would be a false positive.
+// does NOT produce a warning about provider API keys being absent from the
+// service environment. Provider keys are now loaded at runtime via the
+// EnvironmentFile directive (~/.cistern/env), so they will never appear in
+// systemd's Environment property — reporting their absence as a failure
+// would be a false positive.
 func TestCheckSystemdServiceEnv_NoAPIKeyCheck(t *testing.T) {
-	// Inject a fake systemctl that returns a service env with no ANTHROPIC_API_KEY.
+	// Inject a fake systemctl that returns a service env with no provider API keys.
 	origFn := checkSystemdEnvFn
 	t.Cleanup(func() { checkSystemdEnvFn = origFn })
 	checkSystemdEnvFn = func(_ string) ([]byte, error) {
 		return []byte("Environment=PATH=/usr/local/bin:/usr/bin:/bin\n"), nil
 	}
 
-	// Capture stdout to verify no ANTHROPIC_API_KEY warning is emitted.
+	// Capture stdout to verify no provider API key warning is emitted.
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatalf("os.Pipe: %v", err)
@@ -1911,8 +1914,10 @@ func TestCheckSystemdServiceEnv_NoAPIKeyCheck(t *testing.T) {
 	buf.ReadFrom(r)
 	output := buf.String()
 
-	if strings.Contains(output, "ANTHROPIC_API_KEY") {
-		t.Errorf("checkSystemdServiceEnv emitted an ANTHROPIC_API_KEY warning; output:\n%s", output)
+	for _, key := range []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY"} {
+		if strings.Contains(output, key) {
+			t.Errorf("checkSystemdServiceEnv emitted a %s warning; output:\n%s", key, output)
+		}
 	}
 }
 
@@ -1920,7 +1925,7 @@ func TestCheckSystemdServiceEnv_NoAPIKeyCheck(t *testing.T) {
 
 // TestDoctorEnvCheck_GeminiProvider_GeminiKeySet_Passes verifies that the doctor
 // env file check passes for a gemini-configured setup when GEMINI_API_KEY is
-// present in ~/.cistern/env and ANTHROPIC_API_KEY is absent.
+// present in ~/.cistern/env and no other provider keys are set.
 func TestDoctorEnvCheck_GeminiProvider_GeminiKeySet_Passes(t *testing.T) {
 	home := t.TempDir()
 	cfgPath := writeMinimalConfig(t, home, "gemini")
@@ -2037,8 +2042,8 @@ func TestDoctorEnvCheck_GeminiProvider_GeminiKeyMissing_Fails(t *testing.T) {
 	home := t.TempDir()
 	cfgPath := writeMinimalConfig(t, home, "gemini")
 	envPath := filepath.Join(filepath.Dir(cfgPath), "env")
-	// Env file with only ANTHROPIC_API_KEY — not what gemini needs.
-	if err := os.WriteFile(envPath, []byte("ANTHROPIC_API_KEY=sk-ant-test\n"), 0o600); err != nil {
+	// Env file with only OPENAI_API_KEY — not what gemini needs.
+	if err := os.WriteFile(envPath, []byte("OPENAI_API_KEY=sk-test123\n"), 0o600); err != nil {
 		t.Fatalf("write env: %v", err)
 	}
 

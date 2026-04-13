@@ -127,10 +127,10 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		checkCisternEnvPermissions(envPath)
 
 		// Check that each env var required by the configured provider(s) is
-		// present in the env file. For the claude provider (the default), no env
-		// vars are required — claude uses its own OAuth credentials file and needs
-		// no ANTHROPIC_API_KEY. Non-claude providers (codex → OPENAI_API_KEY, etc.)
-		// still require their keys in the env file.
+		// present in the env file. For the claude provider, no env vars are
+		// required — claude uses its own OAuth credentials file. Non-claude
+		// providers (codex → OPENAI_API_KEY, etc.) still require their keys
+		// in the env file.
 		requiredEnvVars, _ := startupRequiredEnvVars(cfgPath)
 		for _, key := range requiredEnvVars {
 			var envKeyFix func() error
@@ -594,7 +594,7 @@ func checkSystemdService(cfg *aqueduct.AqueductConfig) {
 
 	// If active, also validate the service environment:
 	// 1. Agent binary is reachable from the service PATH.
-	// 2. ANTHROPIC_API_KEY (or other required env vars) are set in the service env.
+	// 2. Required env vars are set in the service env.
 	if active {
 		checkSystemdServiceEnv(serviceName, cfg)
 	}
@@ -906,7 +906,7 @@ func checkCisternEnvHasKey(envPath, key string) error {
 }
 
 // cisternEnvStub is the default content written to a new ~/.cistern/env file.
-const cisternEnvStub = "# Cistern credentials — add your API key here\n# ANTHROPIC_API_KEY=sk-ant-...\n# GH_TOKEN=ghp_...\n"
+const cisternEnvStub = "# Cistern credentials — add your provider API keys here\n# OPENAI_API_KEY=sk-...\n# GEMINI_API_KEY=...\n# GH_TOKEN=ghp_...\n"
 
 // fixCisternEnvFile creates envPath with mode 0o600 if it does not exist.
 // New files are populated with a commented-out stub.

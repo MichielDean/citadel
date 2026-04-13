@@ -95,8 +95,8 @@ type Workflow struct {
 // AqueductConfig or on an individual RepoConfig. Non-empty fields are applied on
 // top of the resolved built-in preset during provider resolution.
 type ProviderConfig struct {
-	// Name is the built-in preset name (e.g. "claude", "codex") or "custom".
-	// Defaults to "claude" when omitted at both levels.
+	// Name is the built-in preset name (e.g. "claude", "opencode") or "custom".
+	// When omitted at both levels, ResolveProvider defaults to the "claude" preset.
 	Name string `yaml:"name,omitempty"`
 	// Model is the default model passed via the preset's ModelFlag at launch time.
 	// An empty string means "use the preset's own default".
@@ -152,7 +152,7 @@ type RateLimitConfig struct {
 type LLMConfig struct {
 	// Provider is the LLM API provider name.
 	// Known values: "anthropic", "openai", "openrouter", "ollama", "custom".
-	// Defaults to "anthropic" when omitted.
+	// When omitted, defaults to "anthropic".
 	Provider string `yaml:"provider,omitempty"`
 	// BaseURL overrides the provider's default API base URL.
 	// Required when Provider is "custom".
@@ -184,10 +184,11 @@ type AqueductConfig struct {
 	DeliveryAddr string `yaml:"delivery_addr,omitempty"`
 	// Provider sets the default agent provider for all repos. Individual repos
 	// may override this with their own provider block.
-	// When omitted, the "claude" built-in preset is used.
+	// When omitted, the "claude" built-in preset is used as the default.
 	Provider *ProviderConfig `yaml:"provider,omitempty"`
 	// LLM configures the LLM API backend for AI-assisted features such as
-	// ct droplet add --filter. When omitted, the default anthropic preset is used.
+	// ct droplet add --filter. When omitted, the default anthropic preset is used
+	// for API calls.
 	LLM *LLMConfig `yaml:"llm,omitempty"`
 
 	// DrainTimeoutMinutes is the maximum time (in minutes) the Castellarius

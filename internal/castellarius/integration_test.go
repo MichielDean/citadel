@@ -479,14 +479,14 @@ func TestIntegration_HeartbeatRecovery_DeadSession_RedeliversDroplet(t *testing.
 	}
 }
 
-// TestIntegration_EnvHygiene_APIKeyNotForwardedToSession verifies that
-// ANTHROPIC_API_KEY is NOT present in the environment of a spawned tmux session
-// when it is not set in the Castellarius's own environment:
+// TestIntegration_EnvHygiene_LeakedKeyNotForwardedToSession verifies that
+// environment variables not in the preset's EnvPassthrough are NOT present in
+// the environment of a spawned tmux session:
 //
-//	Given: ANTHROPIC_API_KEY is absent from the runner's env passthrough
+//	Given: a secret key is set in the test process env but not in the runner's env passthrough
 //	When:  a session is spawned; fakeagent prints its env (FAKEAGENT_MODE=env_dump)
-//	Then:  the session log does not contain ANTHROPIC_API_KEY
-func TestIntegration_EnvHygiene_APIKeyNotForwardedToSession(t *testing.T) {
+//	Then:  the session log does not contain the leaked key
+func TestIntegration_EnvHygiene_LeakedKeyNotForwardedToSession(t *testing.T) {
 	checkIntegrationPrereqs(t)
 	fakeagentPath := buildFakeagent(t)
 	ctPath := buildCt(t)
@@ -502,7 +502,7 @@ func TestIntegration_EnvHygiene_APIKeyNotForwardedToSession(t *testing.T) {
 	logDir := t.TempDir()
 
 	// The runner explicitly only forwards CT_DB, CT_BIN, PATH, and FAKEAGENT_MODE —
-	// ANTHROPIC_API_KEY is intentionally excluded even if the caller sets it.
+	// other env vars are intentionally excluded even if the caller sets them.
 	runner := &integrationRunner{
 		t:        t,
 		agentBin: fakeagentPath,
@@ -515,9 +515,9 @@ func TestIntegration_EnvHygiene_APIKeyNotForwardedToSession(t *testing.T) {
 	}
 	t.Cleanup(runner.cleanup)
 
-	// Set the sentinel value in the test process env.  The runner must not
+	// Set a sentinel value in the test process env.  The runner must not
 	// forward it — verifying that callers cannot accidentally leak secrets.
-	const sentinelKey = "ANTHROPIC_API_KEY"
+	const sentinelKey = "LEAKED_SECRET_KEY"
 	const sentinelVal = "test-secret-must-not-leak"
 	t.Setenv(sentinelKey, sentinelVal)
 

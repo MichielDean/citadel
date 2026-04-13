@@ -627,7 +627,7 @@ func resolveConfigPath() string {
 //
 // If cfgPath is empty or the config cannot be parsed, it returns nil env vars
 // and usesClaude=true — claude authenticates via its own OAuth credentials file
-// and requires no ANTHROPIC_API_KEY env var.
+// and requires no provider API key env var.
 func startupRequiredEnvVars(cfgPath string) (requiredVars []string, usesClaude bool) {
 	if cfgPath == "" {
 		return nil, true

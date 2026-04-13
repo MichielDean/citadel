@@ -348,7 +348,7 @@ func TestInit_EnvFileNotOverwrittenWithoutForce(t *testing.T) {
 
 	// Write sentinel content to env file.
 	envFile := filepath.Join(home, ".cistern", "env")
-	sentinel := []byte("ANTHROPIC_API_KEY=sk-ant-sentinel\n")
+	sentinel := []byte("GH_TOKEN=ghp_sentinel\n")
 	if err := os.WriteFile(envFile, sentinel, 0o600); err != nil {
 		t.Fatalf("write sentinel: %v", err)
 	}

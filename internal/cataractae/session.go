@@ -21,7 +21,7 @@ type Session struct {
 	// WorkDir is the directory the agent runs in.
 	WorkDir string
 
-	// Model is the LLM model to use (e.g., "sonnet", "haiku").
+	// Model is the LLM model to use (e.g. "ollama/glm-5.1:cloud", "sonnet").
 	// Empty means default.
 	Model string
 
@@ -183,14 +183,6 @@ func (s *Session) collectEnvArgs() []string {
 	for k, v := range s.Preset.ExtraEnv {
 		args = append(args, "-e", k+"="+v)
 	}
-
-	// Explicitly unset ANTHROPIC_API_KEY in every spawned session. Claude CLI
-	// manages its own OAuth credentials via ~/.claude/.credentials.json — it
-	// does not need this var, and a stale value in the tmux global environment
-	// (from a previous Castellarius process that sourced ~/.cistern/env) would
-	// override Claude's own valid credentials and cause auth failures.
-	// Passing an empty value via -e overrides the tmux global env inheritance.
-	args = append(args, "-e", "ANTHROPIC_API_KEY=")
 
 	// Always-pass: platform-level vars needed regardless of provider.
 	if path := os.Getenv("PATH"); path != "" {

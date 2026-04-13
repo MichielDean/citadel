@@ -748,7 +748,7 @@ func TestBuildPresetCmd_PromptFlag_OmittedWhenEmpty(t *testing.T) {
 // path only iterated EnvPassthrough (which did not include GH_TOKEN for claude).
 func TestCollectEnvArgs_GHToken_AlwaysForwarded_PresetPath(t *testing.T) {
 	t.Setenv("GH_TOKEN", "ghtoken-preset-123")
-	t.Setenv("ANTHROPIC_API_KEY", "") // isolate to GH_TOKEN check
+	t.Setenv("OPENAI_API_KEY", "") // isolate to GH_TOKEN check
 
 	s := &Session{
 		ID:     "test",

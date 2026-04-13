@@ -15,7 +15,7 @@
 //	mock := mockllm.New()
 //	defer mock.Close()
 //
-//	t.Setenv("ANTHROPIC_API_KEY", "test-key")
+//	t.Setenv("OPENAI_API_KEY", "test-key")
 //	t.Setenv("ANTHROPIC_BASE_URL", mock.URL)
 //
 //	// make an HTTP call that hits the mock server, then:
