@@ -1595,12 +1595,14 @@ func init() {
 	dropletTailCmd.Flags().IntVar(&tailCount, "lines", 20, "number of historical events to show on start")
 	dropletTailCmd.Flags().BoolVar(&tailFollow, "follow", false, "keep watching for new events (like tail -f)")
 
+	dropletLogCmd.Flags().StringVar(&logFmt, "format", "text", "output format: text or json")
+
 	dropletCmd.AddCommand(dropletAddCmd, dropletListCmd, dropletShowCmd, dropletNoteCmd,
 		dropletCloseCmd, dropletReopenCmd, dropletPurgeCmd,
 		dropletPassCmd, dropletRecirculateCmd, dropletPoolCmd, dropletCancelCmd, dropletApproveCmd,
 		dropletStatsCmd, dropletDepsCmd, dropletPeekCmd, dropletIssueCmd, dropletSearchCmd,
 		dropletExportCmd, dropletRenameCmd, dropletRestartCmd, dropletEditCmd,
-		dropletTailCmd, dropletHeartbeatCmd)
+		dropletTailCmd, dropletHeartbeatCmd, dropletLogCmd)
 	rootCmd.AddCommand(dropletCmd)
 }
 
