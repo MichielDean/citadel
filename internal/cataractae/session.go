@@ -61,12 +61,15 @@ func (s *Session) Spawn() error {
 // spawn creates a new tmux session running the agent fresh. With exec prefix,
 // if the session is alive, the agent IS alive — no stale session is possible.
 func (s *Session) spawn() error {
-	// With exec prefix, if the session is alive the agent is alive.
-	// No exit detection needed — return nil and let the existing session continue.
+	// Kill any existing session for this worker. A session from a previous
+	// cataractae may still be running if the agent hasn't exited yet after
+	// signaling its outcome. The observe cycle advances the droplet to the
+	// next step, and the dispatch cycle re-assigns the same worker — but
+	// the running session is for the OLD step, not the new one.
 	if isSessionAlive(s.ID) {
-		slog.Default().Info("session: already running — skipping respawn",
+		slog.Default().Info("session: killing existing session before respawn",
 			"session", s.ID)
-		return nil
+		exec.Command("tmux", "kill-session", "-t", s.ID).Run() //nolint:errcheck
 	}
 
 	home, err := os.UserHomeDir()
