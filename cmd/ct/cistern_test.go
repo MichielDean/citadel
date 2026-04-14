@@ -644,7 +644,8 @@ func TestDropletCancel(t *testing.T) {
 	}
 	c.Close()
 
-	cancelNotes = ""
+	cancelReason = "no longer needed"
+	defer func() { cancelReason = "" }()
 	out := captureStdout(t, func() {
 		if err := dropletCancelCmd.RunE(dropletCancelCmd, []string{item.ID}); err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -654,7 +655,6 @@ func TestDropletCancel(t *testing.T) {
 		t.Errorf("expected 'cancelled' in output, got: %q", out)
 	}
 
-	// Verify status is cancelled in the DB.
 	c2, _ := cistern.New(db, "")
 	defer c2.Close()
 	got, err := c2.Get(item.ID)
@@ -666,7 +666,7 @@ func TestDropletCancel(t *testing.T) {
 	}
 }
 
-func TestDropletCancel_WithNotes(t *testing.T) {
+func TestDropletCancel_WithReason(t *testing.T) {
 	dir := t.TempDir()
 	db := filepath.Join(dir, "test.db")
 	t.Setenv("CT_DB", db)
@@ -681,14 +681,13 @@ func TestDropletCancel_WithNotes(t *testing.T) {
 	}
 	c.Close()
 
-	cancelNotes = "superseded by newer approach"
-	defer func() { cancelNotes = "" }()
+	cancelReason = "superseded by newer approach"
+	defer func() { cancelReason = "" }()
 
 	if err := dropletCancelCmd.RunE(dropletCancelCmd, []string{item.ID}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Verify the reason note was recorded.
 	c2, _ := cistern.New(db, "")
 	defer c2.Close()
 	notes, err := c2.GetNotes(item.ID)
@@ -697,13 +696,53 @@ func TestDropletCancel_WithNotes(t *testing.T) {
 	}
 	found := false
 	for _, n := range notes {
-		if strings.Contains(n.Content, "superseded by newer approach") {
+		if n.CataractaeName == "scheduler" && strings.Contains(n.Content, "superseded by newer approach") {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Errorf("cancel reason note not recorded; notes: %v", notes)
+		t.Errorf("cancel scheduler note with reason not recorded; notes: %v", notes)
+	}
+}
+
+func TestDropletCancel_RequiresReason(t *testing.T) {
+	dir := t.TempDir()
+	db := filepath.Join(dir, "test.db")
+	t.Setenv("CT_DB", db)
+
+	cancelReason = ""
+	err := dropletCancelCmd.RunE(dropletCancelCmd, []string{"any-id"})
+	if err == nil {
+		t.Fatal("expected error when --reason is not provided")
+	}
+	if !strings.Contains(err.Error(), "--reason is required") {
+		t.Errorf("error = %v, want --reason is required", err)
+	}
+}
+
+func TestDropletCancel_TerminalStatus(t *testing.T) {
+	dir := t.TempDir()
+	db := filepath.Join(dir, "test.db")
+	t.Setenv("CT_DB", db)
+
+	c, err := cistern.New(db, "ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, _ := c.Add("repo", "Done feature", "", 1, 3)
+	c.CloseItem(item.ID)
+	c.Close()
+
+	cancelReason = "should fail"
+	defer func() { cancelReason = "" }()
+
+	err = dropletCancelCmd.RunE(dropletCancelCmd, []string{item.ID})
+	if err == nil {
+		t.Fatal("expected error when cancelling delivered droplet")
+	}
+	if !strings.Contains(err.Error(), "terminal status") {
+		t.Errorf("error = %v, want terminal status message", err)
 	}
 }
 
@@ -712,7 +751,8 @@ func TestDropletCancel_NotFound(t *testing.T) {
 	db := filepath.Join(dir, "test.db")
 	t.Setenv("CT_DB", db)
 
-	cancelNotes = ""
+	cancelReason = "any reason"
+	defer func() { cancelReason = "" }()
 	err := dropletCancelCmd.RunE(dropletCancelCmd, []string{"nonexistent"})
 	if err == nil {
 		t.Fatal("expected error for nonexistent droplet")

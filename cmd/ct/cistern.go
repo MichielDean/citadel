@@ -1074,29 +1074,6 @@ not be considered stalled regardless of how long it has been running.`,
 	},
 }
 
-// --- cistern cancel ---
-
-var cancelNotes string
-
-var dropletCancelCmd = &cobra.Command{
-	Use:   "cancel <id>",
-	Short: "Cancel a droplet — won't be implemented or is no longer needed",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := cistern.New(resolveDBPath(), "")
-		if err != nil {
-			return err
-		}
-		defer c.Close()
-
-		if err := c.Cancel(args[0], cancelNotes); err != nil {
-			return err
-		}
-		fmt.Printf("droplet %s: cancelled\n", args[0])
-		return nil
-	},
-}
-
 // --- cistern approve ---
 
 var dropletApproveCmd = &cobra.Command{
@@ -1570,7 +1547,6 @@ func init() {
 	dropletRecirculateCmd.Flags().StringVar(&recirculateTo, "to", "", "named cataractae to recirculate to (e.g. --to implement)")
 	dropletRecirculateCmd.Flags().StringVar(&recirculateNotes, "notes", "", "add a note before signaling recirculate")
 	dropletPoolCmd.Flags().StringVar(&poolNotes, "notes", "", "add a note before signaling pool")
-	dropletCancelCmd.Flags().StringVar(&cancelNotes, "notes", "", "reason for cancellation")
 
 	dropletPeekCmd.Flags().IntVar(&peekLines, "lines", 0, "number of scrollback lines to capture; 0 means full scrollback")
 	dropletPeekCmd.Flags().BoolVar(&peekRaw, "raw", false, "read the session log file directly instead of attaching to tmux")

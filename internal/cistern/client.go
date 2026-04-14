@@ -675,12 +675,15 @@ func (c *Client) Pool(id, reason string) error {
 
 // Cancel marks a droplet as cancelled. Cancelled droplets are excluded from the
 // dispatch queue and from default list views. They can still be retrieved with
-// List(repo, "cancelled"). If reason is non-empty it is recorded as a note.
-// assigned_aqueduct is cleared atomically so no ghost assignments linger.
+// List(repo, "cancelled"). It clears assignee, outcome, and assigned_aqueduct
+// atomically so no ghost assignments linger. A scheduler note with timestamp is
+// recorded, and the reason (if non-empty) is included. The cancel is recorded
+// as an event in the events table for the audit trail.
 func (c *Client) Cancel(id, reason string) error {
+	now := time.Now().UTC()
 	res, err := c.db.Exec(
-		`UPDATE droplets SET status = 'cancelled', assigned_aqueduct = '', updated_at = ? WHERE id = ?`,
-		time.Now().UTC(), id,
+		`UPDATE droplets SET status = 'cancelled', assignee = '', outcome = NULL, assigned_aqueduct = '', updated_at = ? WHERE id = ?`,
+		now, id,
 	)
 	if err != nil {
 		return fmt.Errorf("cistern: cancel %s: %w", id, err)
@@ -688,10 +691,22 @@ func (c *Client) Cancel(id, reason string) error {
 	if err := checkRowsAffected(res, id); err != nil {
 		return err
 	}
+
+	ts := now.Format("2006-01-02 15:04:05")
+	note := fmt.Sprintf("cancelled [%s]", ts)
 	if reason != "" {
-		if err := c.AddNote(id, "cancel", reason); err != nil {
-			return err
-		}
+		note = fmt.Sprintf("cancelled: %s [%s]", reason, ts)
+	}
+	if err := c.AddNote(id, "scheduler", note); err != nil {
+		return fmt.Errorf("cistern: cancel note %s: %w", id, err)
+	}
+
+	_, err = c.db.Exec(
+		`INSERT INTO events (droplet_id, event_type, payload, created_at) VALUES (?, 'cancel', ?, ?)`,
+		id, reason, now,
+	)
+	if err != nil {
+		return fmt.Errorf("cistern: cancel event %s: %w", id, err)
 	}
 	return nil
 }

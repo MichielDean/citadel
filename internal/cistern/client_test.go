@@ -1373,7 +1373,7 @@ func TestCancel_SetsStatusCancelled(t *testing.T) {
 	}
 }
 
-func TestCancel_RecordsReasonAsNote(t *testing.T) {
+func TestCancel_RecordsSchedulerNoteWithReason(t *testing.T) {
 	c := testClient(t)
 	item, _ := c.Add("myrepo", "Old feature", "", 1, 3)
 
@@ -1386,22 +1386,19 @@ func TestCancel_RecordsReasonAsNote(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(notes) == 0 {
-		t.Fatal("expected at least one note after cancel with reason")
-	}
 	found := false
 	for _, n := range notes {
-		if strings.Contains(n.Content, reason) {
+		if n.CataractaeName == "scheduler" && strings.Contains(n.Content, reason) && strings.Contains(n.Content, "cancelled:") {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Errorf("cancel reason %q not found in notes: %v", reason, notes)
+		t.Errorf("scheduler note with reason %q not found in notes: %v", reason, notes)
 	}
 }
 
-func TestCancel_EmptyReason_NoNote(t *testing.T) {
+func TestCancel_EmptyReason_WritesSchedulerNote(t *testing.T) {
 	c := testClient(t)
 	item, _ := c.Add("myrepo", "Old feature", "", 1, 3)
 
@@ -1413,8 +1410,149 @@ func TestCancel_EmptyReason_NoNote(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(notes) != 0 {
-		t.Errorf("expected no notes for cancel with empty reason, got %d", len(notes))
+	if len(notes) == 0 {
+		t.Fatal("expected a scheduler note after cancel even with empty reason")
+	}
+	if notes[0].CataractaeName != "scheduler" {
+		t.Errorf("note source = %q, want %q", notes[0].CataractaeName, "scheduler")
+	}
+	if !strings.Contains(notes[0].Content, "cancelled [") {
+		t.Errorf("note content = %q, want 'cancelled [...timestamp...]'", notes[0].Content)
+	}
+}
+
+func TestCancel_ClearsAssignee(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Obsolete task", "", 1, 2)
+	c.Assign(item.ID, "worker-1", "implement")
+
+	pre, err := c.Get(item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pre.Assignee == "" {
+		t.Fatal("precondition failed: assignee not set before cancel")
+	}
+
+	if err := c.Cancel(item.ID, "no longer needed"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := c.Get(item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Assignee != "" {
+		t.Errorf("Assignee after Cancel = %q, want empty string", got.Assignee)
+	}
+}
+
+func TestCancel_ClearsOutcome(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Obsolete task", "", 1, 2)
+	c.Assign(item.ID, "worker-1", "implement")
+	c.SetOutcome(item.ID, "pass")
+
+	pre, err := c.Get(item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pre.Outcome == "" {
+		t.Fatal("precondition failed: outcome not set before cancel")
+	}
+
+	if err := c.Cancel(item.ID, "no longer needed"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := c.Get(item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Outcome != "" {
+		t.Errorf("Outcome after Cancel = %q, want empty string", got.Outcome)
+	}
+}
+
+func TestCancel_ClearsAssignedAqueduct(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Obsolete task", "", 1, 2)
+	c.SetAssignedAqueduct(item.ID, "cistern-gamma")
+	pre, err := c.Get(item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pre.AssignedAqueduct != "cistern-gamma" {
+		t.Fatal("precondition failed: SetAssignedAqueduct did not set the field")
+	}
+
+	if err := c.Cancel(item.ID, "no longer needed"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := c.Get(item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.AssignedAqueduct != "" {
+		t.Errorf("AssignedAqueduct after Cancel = %q, want empty string", got.AssignedAqueduct)
+	}
+}
+
+func TestCancel_RecordsCancelEvent(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Obsolete task", "", 1, 2)
+
+	reason := "superseded by ct-abc12"
+	if err := c.Cancel(item.ID, reason); err != nil {
+		t.Fatal(err)
+	}
+
+	events, err := c.ListRecentEvents(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, e := range events {
+		if e.Droplet == item.ID && e.Event == "cancel" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("cancel event not found in recent events: %v", events)
+	}
+}
+
+func TestCancel_PreservesExistingNotes(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Obsolete task", "", 1, 2)
+
+	c.AddNote(item.ID, "implement", "started work")
+	c.AddNote(item.ID, "review", "found issues")
+
+	if err := c.Cancel(item.ID, "no longer needed"); err != nil {
+		t.Fatal(err)
+	}
+
+	notes, err := c.GetNotes(item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var implFound, reviewFound bool
+	for _, n := range notes {
+		if n.CataractaeName == "implement" && strings.Contains(n.Content, "started work") {
+			implFound = true
+		}
+		if n.CataractaeName == "review" && strings.Contains(n.Content, "found issues") {
+			reviewFound = true
+		}
+	}
+	if !implFound {
+		t.Error("existing implement note lost after cancel")
+	}
+	if !reviewFound {
+		t.Error("existing review note lost after cancel")
 	}
 }
 
@@ -2216,33 +2354,6 @@ func TestPool_ClearsAssignedAqueduct(t *testing.T) {
 	}
 	if got.AssignedAqueduct != "" {
 		t.Errorf("AssignedAqueduct after Pool = %q, want empty string", got.AssignedAqueduct)
-	}
-}
-
-// TestCancel_ClearsAssignedAqueduct verifies that cancelling a droplet removes
-// assigned_aqueduct so no ghost assignments linger.
-func TestCancel_ClearsAssignedAqueduct(t *testing.T) {
-	c := testClient(t)
-	item, _ := c.Add("myrepo", "Obsolete task", "", 1, 2)
-	c.SetAssignedAqueduct(item.ID, "cistern-gamma")
-	pre, err := c.Get(item.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if pre.AssignedAqueduct != "cistern-gamma" {
-		t.Fatal("precondition failed: SetAssignedAqueduct did not set the field")
-	}
-
-	if err := c.Cancel(item.ID, "no longer needed"); err != nil {
-		t.Fatal(err)
-	}
-
-	got, err := c.Get(item.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.AssignedAqueduct != "" {
-		t.Errorf("AssignedAqueduct after Cancel = %q, want empty string", got.AssignedAqueduct)
 	}
 }
 
