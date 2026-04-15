@@ -2007,9 +2007,8 @@ max_cataractae: 1
 		"cistern-droplet-state",
 		"cistern-git",
 		"cistern-github",
-		"code-simplifier",
+		"cistern-reviewer",
 		"critical-code-reviewer",
-		"reviewer",
 	}
 	for _, name := range installerStubs {
 		dir := filepath.Join(skillsDir, name)

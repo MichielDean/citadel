@@ -12,7 +12,6 @@ cataractae:
   - name: implement
     type: agent
     identity: implementer
-    model: sonnet       # optional: any value accepted by claude CLI (e.g. sonnet, opus, haiku); omit to use agent default
     context: full_codebase
     skills:
       - name: cistern-droplet-state
@@ -22,45 +21,24 @@ cataractae:
       - name: cistern-github
         path: skills/cistern-github/SKILL.md
     timeout_minutes: 30
-    on_pass: simplify
-    on_fail: pooled
-    on_pool: pooled
-
-  - name: simplify
-    type: agent
-    identity: simplifier
-    model: sonnet
-    context: full_codebase
-    skills:
-      - name: cistern-droplet-state
-        path: skills/cistern-droplet-state/SKILL.md
-      - name: cistern-git
-        path: skills/cistern-git/SKILL.md
-      - name: code-simplifier
-        path: skills/code-simplifier/SKILL.md
-    timeout_minutes: 20
     on_pass: review
-    on_fail: implement
-    on_recirculate: implement
+    on_fail: pooled
     on_pool: pooled
 
   - name: review
     type: agent
     identity: reviewer
-    model: opus          # adversarial multi-hop reasoning across full codebase — Opus required; Sonnet misses 6-hop inference chains
     context: full_codebase
     skills:
       - name: cistern-droplet-state
         path: skills/cistern-droplet-state/SKILL.md
-      - name: critical-code-reviewer
-        path: skills/critical-code-reviewer/SKILL.md
+      - name: cistern-reviewer
+        path: skills/cistern-reviewer/SKILL.md
       - name: cistern-git
         path: skills/cistern-git/SKILL.md
       - name: cistern-github
         path: skills/cistern-github/SKILL.md
-      - name: reviewer
-        path: skills/reviewer/SKILL.md
-    timeout_minutes: 15
+    timeout_minutes: 20
     on_pass: qa
     on_fail: implement
     on_recirculate: implement
@@ -69,7 +47,6 @@ cataractae:
   - name: qa
     type: agent
     identity: qa
-    model: sonnet
     context: full_codebase
     skills:
       - name: cistern-droplet-state
@@ -85,7 +62,6 @@ cataractae:
   - name: security-review
     type: agent
     identity: security
-    model: opus          # attack chain tracing requires strong working memory — Opus required
     context: full_codebase
     skills:
       - name: cistern-droplet-state
@@ -99,7 +75,6 @@ cataractae:
   - name: docs
     type: agent
     identity: docs_writer
-    model: haiku         # mechanical copy-editing task — read diff, update .md files, no deep reasoning needed
     context: full_codebase
     skills:
       - name: cistern-droplet-state
@@ -115,7 +90,6 @@ cataractae:
   - name: delivery
     type: agent
     identity: delivery
-    model: sonnet       # delivery failure modes (merge conflicts, CI failures, rebase issues) require real reasoning — Sonnet required for edge cases
     skills:
       - name: cistern-github
         path: skills/cistern-github/SKILL.md

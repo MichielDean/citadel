@@ -18,22 +18,8 @@ cataractae:
       - name: cistern-git
       - name: cistern-github
     timeout_minutes: 30
-    on_pass: simplify
-    on_fail: pooled
-    on_pool: pooled
-
-  - name: simplify
-    type: agent
-    identity: simplifier
-    context: full_codebase
-    skills:
-      - name: cistern-droplet-state
-      - name: cistern-git
-      - name: code-simplifier
-    timeout_minutes: 20
     on_pass: review
-    on_fail: implement
-    on_recirculate: implement
+    on_fail: pooled
     on_pool: pooled
 
   - name: review
@@ -45,7 +31,7 @@ cataractae:
       - name: cistern-reviewer
       - name: cistern-git
       - name: cistern-github
-    timeout_minutes: 15
+    timeout_minutes: 20
     on_pass: qa
     on_fail: implement
     on_recirculate: implement

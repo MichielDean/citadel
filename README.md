@@ -59,7 +59,7 @@ ct dashboard
 Every droplet flows through the same sequence of cataractae, regardless of complexity level:
 
 ```
-All:      implement → simplify → review → qa → security-review → docs → delivery → done
+All:      implement → review → qa → security-review → docs → delivery → done
 ```
 
 All droplets flow through the same pipeline and auto-merge after delivery.
@@ -68,17 +68,15 @@ Filtration is an optional pre-intake step that refines vague ideas before they e
 
 1. **Implement** (`implement`) — Reads the droplet description, implements the feature, writes tests, commits. Verifies every concrete deliverable from the description exists in the commit before signaling pass.
 
-2. **Simplify** (`simplify`) — Refines the implementation for clarity, consistency, and maintainability without changing behaviour. Runs on all branches with new commits since `origin/main`.
+2. **Adversarial Review** (`review`) — Reviews a diff with full codebase access. Checks for bugs, security issues, missing tests, logic errors, and orphaned code (unreferenced files, imports, or type values left behind by deletions). Also looks for duplicate implementations, broken contracts, pattern violations, and unnecessary complexity (redundant code, dead variables, unclear names, consolidatable logic).
 
-3. **Adversarial Review** (`review`) — Reviews a diff with full codebase access. Checks for bugs, security issues, missing tests, logic errors, and orphaned code (unreferenced files, imports, or type values left behind by deletions). Also looks for duplicate implementations, broken contracts, and pattern violations in the broader codebase.
+3. **QA** (`qa`) — Active verification with full codebase access: runs tests, checks each deliverable exists via `grep`, verifies CLI flags, checks mirror file consistency. Recirculates to implement on any failure.
 
-4. **QA** (`qa`) — Active verification with full codebase access: runs tests, checks each deliverable exists via `grep`, verifies CLI flags, checks mirror file consistency. Recirculates to implement on any failure.
+4. **Security Review** (`security-review`) — Adversarial security audit of the diff with full codebase access. Traces call chains to verify auth checks, audits cumulative exposure, and checks for auth bypass, injection, prompt injection, exposed secrets, resource safety, and path traversal.
 
-5. **Security Review** (`security-review`) — Adversarial security audit of the diff with full codebase access. Traces call chains to verify auth checks, audits cumulative exposure, and checks for auth bypass, injection, prompt injection, exposed secrets, resource safety, and path traversal.
+5. **Docs** (`docs`) — Reviews the diff and updates documentation for all user-visible changes: README, CHANGELOG, CLI reference, config docs. Skips if there are no user-visible changes.
 
-6. **Docs** (`docs`) — Reviews the diff and updates documentation for all user-visible changes: README, CHANGELOG, CLI reference, config docs. Skips if there are no user-visible changes.
-
-7. **Delivery** (`delivery`) — Owns all git operations: rebase, PR creation, CI monitoring, PR review response, and merge. One agent handles the full branch-to-merged lifecycle. If a delivery agent stalls, the Castellarius detects and recovers automatically — see [Automatic Stuck Delivery Recovery](#automatic-stuck-delivery-recovery).
+6. **Delivery** (`delivery`) — Owns all git operations: rebase, PR creation, CI monitoring, PR review response, and merge. One agent handles the full branch-to-merged lifecycle. If a delivery agent stalls, the Castellarius detects and recovers automatically — see [Automatic Stuck Delivery Recovery](#automatic-stuck-delivery-recovery).
 
 ## Pipeline Behaviors
 
@@ -199,13 +197,11 @@ cataractae:
   - name: implement
     type: agent
     identity: implementer
-    model: sonnet       # passed to claude CLI as --model sonnet
     context: full_codebase
 
-  - name: simplify
+  - name: review
     type: agent
-    identity: simplifier
-    model: opus         # stronger model for deep refactoring
+    identity: reviewer
     context: full_codebase
 ```
 
@@ -288,9 +284,8 @@ Skills are referenced by name in your aqueduct YAML under each cataractae's `ski
 | Skill | Purpose | Cataractae |
 |---|---|---|
 | `cistern-droplet-state` | Signal pass/recirculate/block with `ct` CLI | All |
-| `cistern-git` | Git conventions: exclude CONTEXT.md, merge-base diff, no stash | implement, simplify, docs, delivery |
+| `cistern-git` | Git conventions: exclude CONTEXT.md, merge-base diff, no stash | implement, docs, delivery |
 | `cistern-github` | PR creation, CI checks, squash-merge, and automatic conflict resolution for Cistern delivery | implement, review, delivery |
-| `code-simplifier` | Simplification heuristics and patterns | simplify |
 | `cistern-reviewer` | Adversarial code review for Go, TypeScript/Next.js, and TypeScript/React — all findings equal, recirculate on any finding, pass only when nothing remains | review |
 
 The `cistern-git` skill encodes hard-won rules: always use `git add -A -- ':!CONTEXT.md'`, always use merge-base diff (`git diff $(git merge-base HEAD origin/main)..HEAD`) instead of two-dot — two-dot includes other PRs that merged to main after branching on unrebased branches, never stash in per-droplet worktrees.
