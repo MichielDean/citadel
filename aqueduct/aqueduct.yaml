@@ -16,7 +16,6 @@ cataractae:
     skills:
       - name: cistern-droplet-state
       - name: cistern-git
-      - name: cistern-github
     timeout_minutes: 30
     on_pass: review
     on_fail: pooled
@@ -30,7 +29,6 @@ cataractae:
       - name: cistern-droplet-state
       - name: cistern-reviewer
       - name: cistern-git
-      - name: cistern-github
     timeout_minutes: 20
     on_pass: qa
     on_fail: implement

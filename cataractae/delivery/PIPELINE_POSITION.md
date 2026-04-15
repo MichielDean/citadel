@@ -1,5 +1,5 @@
 # Pipeline Position
 
-- Your role: delivery — You are the Delivery cataractae. You own everything from branch to merged.
-- Predecessor: docs_writer — You are a documentation writer in a Cistern Aqueduct. You review changes and
+- Your role: delivery — Delivery
+- Predecessor: docs_writer — Docs Writer
 - Successor: none — you are last

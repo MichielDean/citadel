@@ -266,7 +266,7 @@ func ScaffoldCataractaeDir(cataractaeDir, name string) (personaPath, instrPath s
 }
 
 func cataractaePersonaTemplate(name string) string {
-	return fmt.Sprintf("# Role: %s\n\nTODO: Describe who this cataractae is and what makes them effective.\n", TitleCaseName(name))
+	return fmt.Sprintf("# Role: %s\n", TitleCaseName(name))
 }
 
 func cataractaeInstructionsTemplate() string {

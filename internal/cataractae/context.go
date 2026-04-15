@@ -262,15 +262,19 @@ func writeContextFile(path string, p ContextParams) error {
 		b.WriteString("---\n\n")
 	} else if !isReviewer && len(revisionNotes) > 0 {
 		// Implementer/QA with prior issues: surface fixes at the top.
-		b.WriteString("## ⚠️ REVISION REQUIRED — Fix these issues before anything else\n\n")
-		b.WriteString("This droplet was recirculated. The following issues were found and **must** be fixed.\n")
-		b.WriteString("Do not proceed to implementation until you have read and understood each issue.\n\n")
-		for i, n := range revisionNotes {
-			b.WriteString(fmt.Sprintf("### Issue %d (from: %s)\n\n", i+1, n.CataractaeName))
-			b.WriteString(n.Content)
-			b.WriteString("\n\n")
+		// Filter out non-actionable "no findings" notes to reduce noise.
+		actionableNotes := filterActionableRevisionNotes(revisionNotes)
+		if len(actionableNotes) > 0 {
+			b.WriteString("## ⚠️ REVISION REQUIRED — Fix these issues before anything else\n\n")
+			b.WriteString("This droplet was recirculated. The following issues were found and **must** be fixed.\n")
+			b.WriteString("Do not proceed to implementation until you have read and understood each issue.\n\n")
+			for i, n := range actionableNotes {
+				b.WriteString(fmt.Sprintf("### Issue %d (from: %s)\n\n", i+1, n.CataractaeName))
+				b.WriteString(n.Content)
+				b.WriteString("\n\n")
+			}
+			b.WriteString("---\n\n")
 		}
-		b.WriteString("---\n\n")
 	}
 
 	// Background section: open issues from other cataractae — for reviewer steps only.
@@ -343,17 +347,8 @@ func writeContextFile(path string, p ContextParams) error {
 		b.WriteString("</available_skills>\n\n")
 	}
 
-	b.WriteString("## Signaling Completion\n\n")
-	b.WriteString("When your work is done, signal your outcome using the `ct` CLI:\n\n")
-	b.WriteString("**Pass (work complete, move to next step):**\n")
-	b.WriteString(fmt.Sprintf("    ct droplet pass %s\n\n", p.Item.ID))
-	b.WriteString("**Recirculate (needs rework — send back upstream):**\n")
-	b.WriteString(fmt.Sprintf("    ct droplet recirculate %s\n", p.Item.ID))
-	b.WriteString(fmt.Sprintf("    ct droplet recirculate %s --to implement\n\n", p.Item.ID))
-	b.WriteString("**Pool (cannot currently proceed):**\n")
-	b.WriteString(fmt.Sprintf("    ct droplet pool %s\n\n", p.Item.ID))
-	b.WriteString("Add notes before signaling:\n")
-	b.WriteString(fmt.Sprintf("    ct droplet note %s \"What you did / found\"\n\n", p.Item.ID))
+	b.WriteString("## Signaling\n\n")
+	b.WriteString(fmt.Sprintf("Signal outcome via contract #5 (ct droplet pass/recirculate/pool). Your item ID: %s.\n\n", p.Item.ID))
 	b.WriteString("The `ct` binary is on your PATH.\n")
 
 	return os.WriteFile(path, []byte(b.String()), 0644)
@@ -539,6 +534,39 @@ func revisionCycleNotes(notes []cistern.CataractaeNote, step *aqueduct.WorkflowC
 			if strings.Contains(name, "review") || strings.Contains(name, "qa") || strings.Contains(name, "security") {
 				filtered = append(filtered, n)
 			}
+		}
+	}
+	return filtered
+}
+
+// isNoFindingsNote reports whether a note contains only a "no findings" / "no
+// issues" statement with no actionable content. These notes are filtered from
+// revision sections to reduce noise — they train the agent to skim.
+func isNoFindingsNote(content string) bool {
+	lower := strings.TrimSpace(strings.ToLower(content))
+	prefixes := []string{
+		"no findings",
+		"no issues",
+		"no security issues",
+		"all tests pass",
+		"all clear",
+		"no gaps found",
+	}
+	for _, p := range prefixes {
+		if strings.HasPrefix(lower, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// filterActionableRevisionNotes removes "no findings" notes from the revision
+// list so the implementer only sees actionable issues, not noise.
+func filterActionableRevisionNotes(notes []cistern.CataractaeNote) []cistern.CataractaeNote {
+	var filtered []cistern.CataractaeNote
+	for _, n := range notes {
+		if !isNoFindingsNote(n.Content) {
+			filtered = append(filtered, n)
 		}
 	}
 	return filtered
