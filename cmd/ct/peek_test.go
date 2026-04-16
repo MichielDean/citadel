@@ -590,3 +590,48 @@ func TestDropletPeek_StageElapsedSubSecond_OmitsStageAge(t *testing.T) {
 		t.Errorf("peek header should NOT contain '(stage' when StageElapsed formats to '0s', got:\n%q", out)
 	}
 }
+
+func TestFormatPeekFollowSeparator_StageElapsedNonZero_IncludesStageAge(t *testing.T) {
+	updatedAt := time.Now().Add(-10 * time.Minute)
+	stageDispatchedAt := time.Now().Add(-5 * time.Minute)
+
+	got := formatPeekFollowSeparator(updatedAt, stageDispatchedAt)
+
+	if !strings.Contains(got, "(stage ") {
+		t.Errorf("expected '(stage X)' in separator when StageDispatchedAt is set, got: %q", got)
+	}
+	if !strings.Contains(got, "5m") && !strings.Contains(got, "4m") {
+		t.Errorf("expected ~5m stage elapsed in separator, got: %q", got)
+	}
+	if !strings.Contains(got, "10m") && !strings.Contains(got, "9m") {
+		t.Errorf("expected ~10m overall elapsed in separator, got: %q", got)
+	}
+}
+
+func TestFormatPeekFollowSeparator_StageDispatchedAtZero_OmitsStageAge(t *testing.T) {
+	updatedAt := time.Now().Add(-10 * time.Minute)
+	stageDispatchedAt := time.Time{}
+
+	got := formatPeekFollowSeparator(updatedAt, stageDispatchedAt)
+
+	if strings.Contains(got, "(stage ") {
+		t.Errorf("expected NO '(stage X)' in separator when StageDispatchedAt is zero, got: %q", got)
+	}
+	if !strings.Contains(got, "10m") && !strings.Contains(got, "9m") {
+		t.Errorf("expected overall elapsed in separator, got: %q", got)
+	}
+}
+
+func TestFormatPeekFollowSeparator_SubSecondStage_OmitsStageAge(t *testing.T) {
+	updatedAt := time.Now().Add(-10 * time.Minute)
+	stageDispatchedAt := time.Now().Add(-200 * time.Millisecond)
+
+	got := formatPeekFollowSeparator(updatedAt, stageDispatchedAt)
+
+	if strings.Contains(got, "(stage ") {
+		t.Errorf("expected NO '(stage X)' in separator when stage elapsed formats to 0s, got: %q", got)
+	}
+	if !strings.Contains(got, "10m") && !strings.Contains(got, "9m") {
+		t.Errorf("expected overall elapsed in separator, got: %q", got)
+	}
+}

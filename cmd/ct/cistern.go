@@ -338,6 +338,16 @@ func displayStatus(status string) string {
 	}
 }
 
+func formatPeekFollowSeparator(updatedAt, stageDispatchedAt time.Time) string {
+	elapsed := formatElapsed(time.Since(updatedAt))
+	if !stageDispatchedAt.IsZero() {
+		if se := formatStageElapsed(time.Since(stageDispatchedAt)); se != "" {
+			return elapsed + " (stage " + se + ")"
+		}
+	}
+	return elapsed
+}
+
 // displayStatusForDroplet returns the display status for a droplet, overriding
 // for human-gated droplets to show "awaiting approval".
 func displayStatusForDroplet(item *cistern.Droplet) string {
@@ -1275,7 +1285,7 @@ var dropletPeekCmd = &cobra.Command{
 		ticker := time.NewTicker(3 * time.Second)
 		defer ticker.Stop()
 		for range ticker.C {
-			fmt.Printf("─── %s ───\n", formatElapsed(time.Since(item.UpdatedAt)))
+			fmt.Printf("─── %s ───\n", formatPeekFollowSeparator(item.UpdatedAt, item.StageDispatchedAt))
 			printCapture()
 		}
 		return nil
