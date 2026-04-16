@@ -15,7 +15,6 @@ cataractae:
     context: full_codebase
     skills:
       - name: cistern-signaling
-      - name: cistern-droplet-state
       - name: cistern-git
       - name: cistern-diff-reader
     timeout_minutes: 20
@@ -30,7 +29,6 @@ cataractae:
     context: full_codebase
     skills:
       - name: cistern-signaling
-      - name: cistern-droplet-state
       - name: cistern-git
       - name: cistern-test-runner
     timeout_minutes: 30
@@ -44,7 +42,6 @@ cataractae:
     context: full_codebase
     skills:
       - name: cistern-signaling
-      - name: cistern-droplet-state
       - name: cistern-git
       - name: cistern-diff-reader
     timeout_minutes: 20
@@ -59,7 +56,6 @@ cataractae:
     context: full_codebase
     skills:
       - name: cistern-signaling
-      - name: cistern-droplet-state
       - name: cistern-git
       - name: cistern-test-runner
       - name: cistern-diff-reader
@@ -75,7 +71,6 @@ cataractae:
     context: full_codebase
     skills:
       - name: cistern-signaling
-      - name: cistern-droplet-state
       - name: cistern-diff-reader
     timeout_minutes: 15
     on_pass: docs
@@ -89,7 +84,6 @@ cataractae:
     context: full_codebase
     skills:
       - name: cistern-signaling
-      - name: cistern-droplet-state
       - name: cistern-git
       - name: cistern-diff-reader
     timeout_minutes: 20
@@ -104,7 +98,6 @@ cataractae:
     skills:
       - name: cistern-signaling
       - name: cistern-github
-      - name: cistern-droplet-state
       - name: cistern-git
       - name: cistern-test-runner
     timeout_minutes: 60

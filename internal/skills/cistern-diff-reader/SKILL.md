@@ -1,21 +1,14 @@
 ---
 name: cistern-diff-reader
-description: Diff reading methodology for Cistern review cataractae. Covers the correct diff command, empty-diff early exit, and the principle of tracing changes to their callers. Use when a cataractae needs to understand what changed in the current droplet.
+description: Diff reading methodology for Cistern review cataractae. Covers empty-diff early exit and the principle of tracing changes to their callers. Use when a cataractae needs to understand what changed in the current droplet. For the diff command itself, see the cistern-git skill.
 ---
 
 # Cistern Diff Reader
 
 ## Get the Diff
 
-Always use merge-base (not two-dot) to show only this branch's own changes:
-
-```bash
-git diff $(git merge-base HEAD origin/main)..HEAD
-git diff $(git merge-base HEAD origin/main)..HEAD --name-only
-```
-
-Two-dot (`git diff origin/main..HEAD`) includes changes from other PRs that merged
-after branching. Merge-base is always correct.
+Use the merge-base diff command from the cistern-git skill. Always use
+merge-base (not two-dot) — it shows only this branch's own changes.
 
 ## Empty Diff
 

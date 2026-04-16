@@ -1,6 +1,6 @@
 ---
 name: cistern-signaling
-description: Role-specific signaling permissions for Cistern cataractae. Defines which signals each role may use, when to use each, issue filing, and prior-issue checking. Replaces per-INSTRUCTIONS.md signaling sections — INSTRUCTIONS.md should reference this skill instead of duplicating its content.
+description: Signaling, droplet state, and role permissions for Cistern cataractae. Defines which signals each role may use, when to use each, issue filing, and prior-issue checking. Replaces per-INSTRUCTIONS.md signaling sections — INSTRUCTIONS.md should reference this skill instead of duplicating its content.
 ---
 
 # Cistern Signaling Protocol
@@ -11,6 +11,38 @@ description: Role-specific signaling permissions for Cistern cataractae. Defines
 2. Signal MUST be called before session exit — stranding burns resources (see contract #5)
 3. Be specific in notes — "Fixed 3 issues in client.go" not "fixed it"
 4. Never signal recirculate without findings
+5. If CONTEXT.md has revision notes from prior cycles, address every single one
+
+## Your Droplet ID
+
+Your droplet ID is in CONTEXT.md under `## Item: <id>`. Use it in every command.
+
+## Signaling Commands
+
+### Pass — work complete, ready to flow forward
+```bash
+ct droplet pass <id> --notes "Summary of what was done and verified."
+```
+
+### Recirculate — needs revision, send back upstream
+```bash
+ct droplet recirculate <id> --notes "Specific issues: 1. <issue> 2. <issue>"
+```
+
+### Recirculate to a specific cataractae
+```bash
+ct droplet recirculate <id> --to implement --notes "Reason for routing to implement."
+```
+
+### Pool — cannot proceed
+```bash
+ct droplet pool <id> --notes "Cannot proceed because: <specific reason and what is needed>"
+```
+
+### Add a note (without signaling)
+```bash
+ct droplet note <id> "Intermediate finding or progress update."
+```
 
 ## Role Permissions
 
