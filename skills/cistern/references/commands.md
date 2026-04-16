@@ -502,11 +502,15 @@ The Filter module provides an interactive multi-turn conversation for refining i
 ct status                        # High-level pipeline health
 ct doctor                        # Check system health and configuration
 ct doctor --fix                  # Auto-repair common issues (credentials, permissions)
+ct doctor --skills               # List all skills referenced by any aqueduct and their install status
 ```
 
 ### `ct doctor` Checks
 
 Verifies your Cistern installation is functional. Runs several categories of checks:
+
+**With `--skills`:**
+Lists every skill referenced by any aqueduct across all configured repos and reports whether each is installed at `~/.cistern/skills/<name>/`. Shows a table with skill name, install status (✓ installed / ✗ missing), and which cataractae use each skill. Replaces the normal doctor check suite when set.
 
 **Credentials & Auth:**
 - Claude OAuth token (auto-refresh via `--fix` if expired)

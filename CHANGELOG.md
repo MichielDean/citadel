@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+### ct doctor --skills: list all skills across all repos with install status (ci-apbx6)
+
+Added `--skills` flag to `ct doctor` that lists every skill referenced by any aqueduct across all configured repos and reports whether each is installed at `~/.cistern/skills/<name>/`. Replaces the normal doctor check suite when set.
+
+**Key features:**
+- **Cross-repo skill listing**: Aggregates skills from all aqueduct workflows into a single deduplicated table
+- **Install status**: Reports ✓ installed or ✗ missing for each skill
+- **Cataractae usage**: Shows which cataractae reference each skill (deduplicated across repos)
+- **Relative and absolute workflow paths**: Resolves both relative (to config directory) and absolute `workflow_path` values
+- **CT_CONFIG support**: Uses `resolveConfigPath()` so `CT_CONFIG` and `--config` are respected
+- **Graceful handling**: Skips repos with invalid workflow YAML, skips empty skill names, reports "no skills referenced" when none found
+
+**Command syntax:**
+```bash
+ct doctor --skills             # List all skills and their install status
+```
+
+**Example output:**
+```
+SKILL            STATUS        USED BY
+─────            ──────        ───────
+cistern-git      ✓ installed  implement, review
+cistern-signaling ✓ installed  implement, review, qa
+security-review  ✗ missing    security
+```
+
+**Files changed:**
+- `cmd/ct/doctor.go` — added `--skills` flag, `runDoctorSkillsCheck()` function
+- `cmd/ct/doctor_test.go` — tests for flag registration, skill listing, deduplication, empty skills, invalid workflows, cataractae usage, CT_CONFIG resolution, config parse errors, absolute paths, and empty skill name skipping
+
 ### ct droplet cancel: cancel a flowing or queued droplet (ci-cvcw4)
 
 Updated `ct droplet cancel <id>` to require `--reason` and enforce terminal-status guard. Previously, cancel accepted an optional `--notes` flag and had no status guard — it could silently overwrite delivered/delivered droplets.

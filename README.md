@@ -691,6 +691,7 @@ ct skills remove <name>              Remove a skill
 # Utilities
 ct doctor                      Full health check (prerequisites, config, instructions file integrity, skills)
 ct doctor --fix                Auto-repair common issues
+ct doctor --skills             List all skills referenced by any aqueduct and their install status
 ct version                     Print version string
 ct version --json              Machine-readable: {"version":"...","commit":"..."}
 ct update                      Pull latest main and rebuild ct in-place; warns if Castellarius is running
