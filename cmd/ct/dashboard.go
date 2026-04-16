@@ -41,6 +41,7 @@ type CataractaeInfo struct {
 	Step            string        `json:"step"`
 	Steps           []string      `json:"steps"`            // workflow step names in order
 	Elapsed         time.Duration `json:"elapsed"`          // nanoseconds; use elapsed/1e9 for seconds
+	StageElapsed    time.Duration `json:"stage_elapsed"`    // time since StageDispatchedAt; 0 if not dispatched
 	CataractaeIndex int           `json:"cataractae_index"` // 1-based index; 0 if unknown
 	TotalCataractae int           `json:"total_cataractae"`
 }
@@ -166,6 +167,9 @@ func fetchDashboardData(cfgPath, dbPath string) (*DashboardData, error) {
 			ci.Title = item.Title
 			ci.Step = item.CurrentCataractae
 			ci.Elapsed = time.Since(item.UpdatedAt)
+			if !item.StageDispatchedAt.IsZero() {
+				ci.StageElapsed = time.Since(item.StageDispatchedAt)
+			}
 			ci.TotalCataractae = len(ci.Steps)
 			ci.CataractaeIndex = slices.Index(ci.Steps, item.CurrentCataractae) + 1
 		}

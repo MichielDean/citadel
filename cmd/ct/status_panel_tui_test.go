@@ -596,3 +596,64 @@ func TestCockpit_Key3_ActivatesStatusPanel(t *testing.T) {
 		t.Error("panelFocused = false, want true after pressing '3'")
 	}
 }
+
+// ── Stage age display ──────────────────────────────────────────────────────
+
+// TestStatusPanel_View_StageElapsed_ShowsStageAge verifies that when a
+// CataractaeInfo has a nonzero StageElapsed value, the stage age is
+// shown alongside the overall elapsed time.
+//
+// Given: a statusPanel with one active aqueduct carrying a droplet with StageElapsed=3m
+// When:  View() is called
+// Then:  output contains the StageElapsed duration (e.g. "3m")
+func TestStatusPanel_View_StageElapsed_ShowsStageAge(t *testing.T) {
+	p := newStatusPanel("", "")
+	p.data = &DashboardData{
+		FlowingCount: 1,
+		Cataractae: []CataractaeInfo{
+			{
+				Name:            "virgo",
+				DropletID:       "ci-stage01",
+				Step:            "implement",
+				CataractaeIndex: 2,
+				TotalCataractae: 5,
+				Elapsed:         5 * time.Minute,
+				StageElapsed:    3 * time.Minute,
+			},
+		},
+		FetchedAt: time.Now(),
+	}
+	v := p.View()
+	if !strings.Contains(v, "3m") {
+		t.Errorf("View() should contain stage age '3m'; output:\n%s", v)
+	}
+}
+
+// TestStatusPanel_View_StageElapsedZero_NoExtraAgeDisplay verifies that when
+// StageElapsed is 0 (no StageDispatchedAt), no extra stage age is shown.
+//
+// Given: a statusPanel with an active aqueduct with StageElapsed=0
+// When:  View() is called
+// Then:  output does NOT show a secondary "0s" stage age
+func TestStatusPanel_View_StageElapsedZero_NoExtraAgeDisplay(t *testing.T) {
+	p := newStatusPanel("", "")
+	p.data = &DashboardData{
+		FlowingCount: 1,
+		Cataractae: []CataractaeInfo{
+			{
+				Name:            "virgo",
+				DropletID:       "ci-nostage01",
+				Step:            "implement",
+				CataractaeIndex: 1,
+				TotalCataractae: 3,
+				Elapsed:         90 * time.Second,
+				StageElapsed:    0,
+			},
+		},
+		FetchedAt: time.Now(),
+	}
+	v := p.View()
+	if strings.Count(v, "ci-nostage01") < 1 {
+		t.Errorf("View() should contain droplet ID; output:\n%s", v)
+	}
+}

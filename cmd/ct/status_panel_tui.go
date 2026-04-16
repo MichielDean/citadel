@@ -167,14 +167,18 @@ func (p statusPanel) View() string {
 			name := fmt.Sprintf("%-*s", maxNameW, ch.Name)
 			if ch.DropletID != "" {
 				elapsed := formatElapsed(ch.Elapsed)
+				stageAge := ""
+				if ch.StageElapsed > 0 {
+					stageAge = " " + formatElapsed(ch.StageElapsed)
+				}
 				var progress string
 				if ch.CataractaeIndex > 0 && ch.TotalCataractae > 0 {
 					progress = fmt.Sprintf("%s [%d/%d]", ch.Step, ch.CataractaeIndex, ch.TotalCataractae)
 				} else {
 					progress = ch.Step
 				}
-				row := fmt.Sprintf("  %s  →  %-16s  %-24s  %s",
-					name, ch.DropletID, progress, elapsed)
+				row := fmt.Sprintf("  %s  →  %-16s  %-24s  %s%s",
+					name, ch.DropletID, progress, elapsed, stageAge)
 				lines = append(lines, tuiStyleGreen.Render(row))
 			} else {
 				row := fmt.Sprintf("  %s  →  idle", name)

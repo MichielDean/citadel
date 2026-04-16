@@ -169,8 +169,8 @@ func (m dashboardTUIModel) openPeekOn(ch CataractaeInfo) (dashboardTUIModel, tea
 // Called as a fallback when openPeekAttachCmdFunc fails; err carries the attach error.
 func (m dashboardTUIModel) openInlinePeek(ch CataractaeInfo, err error) (dashboardTUIModel, tea.Cmd) {
 	session := ch.RepoName + "-" + ch.Name
-	header := fmt.Sprintf("[%s] %s — flowing %s\ntmux attach-session failed (%v) — showing capture-pane snapshot",
-		ch.DropletID, ch.Step, formatElapsed(ch.Elapsed), err)
+	header := fmt.Sprintf("[%s] %s — flowing %s (stage %s)\ntmux attach-session failed (%v) — showing capture-pane snapshot",
+		ch.DropletID, ch.Step, formatElapsed(ch.Elapsed), formatElapsed(ch.StageElapsed), err)
 	pk := newPeekModel(defaultCapturer, session, header, 0)
 	pk.width = m.width
 	pk.height = m.height
@@ -582,6 +582,7 @@ func (m dashboardTUIModel) viewAqueductProgress(ch CataractaeInfo) string {
 	// Label row: step names centered over their segments.
 	// The active step also shows the elapsed time: "review 3m"
 	elapsed := formatElapsed(ch.Elapsed)
+	stageElapsed := formatElapsed(ch.StageElapsed)
 	var lblRow strings.Builder
 	lblRow.WriteString(indent)
 	for i, s := range steps {
@@ -589,8 +590,16 @@ func (m dashboardTUIModel) viewAqueductProgress(ch CataractaeInfo) string {
 			lblRow.WriteString(strings.Repeat(" ", gateW))
 		}
 		lbl := s
-		if i == activeIdx && elapsed != "" {
-			lbl = s + " " + elapsed
+		if i == activeIdx {
+			parts := []string{}
+			if stageElapsed != "" && stageElapsed != "0s" {
+				parts = append(parts, stageElapsed)
+			} else if elapsed != "" && elapsed != "0s" {
+				parts = append(parts, elapsed)
+			}
+			if len(parts) > 0 {
+				lbl = s + " " + strings.Join(parts, " ")
+			}
 		}
 		if len([]rune(lbl)) > segW {
 			lbl = string([]rune(lbl)[:segW-1]) + "…"
@@ -846,16 +855,20 @@ func (m dashboardTUIModel) tuiFlowGraphRow(ch CataractaeInfo) (graphLine, infoLi
 	if activeVisualCol >= 0 {
 		bar := progressBar(ch.CataractaeIndex, ch.TotalCataractae, 8)
 		elapsed := formatElapsed(ch.Elapsed)
+		stageAge := formatElapsed(ch.StageElapsed)
+		elapsedDisplay := elapsed
+		if stageAge != "" && stageAge != "0s" {
+			elapsedDisplay = stageAge
+		}
 		infoLine = strings.Repeat(" ", activeVisualCol) +
 			"↑ " +
 			tuiStyleGreen.Render(ch.Name) +
 			" · " + ch.DropletID +
-			"  " + elapsed +
+			"  " + elapsedDisplay +
 			"  " + tuiStyleGreen.Render(bar)
 		if ch.Title != "" {
-			// Visual width of the non-ANSI content before the title.
 			usedW := activeVisualCol + 2 + len([]rune(ch.Name)) + 3 + len([]rune(ch.DropletID)) +
-				2 + len([]rune(elapsed)) + 2 + 8
+				2 + len([]rune(elapsedDisplay)) + 2 + 8
 			titleW := m.width - usedW - 2
 			if titleW > 0 {
 				title := ch.Title

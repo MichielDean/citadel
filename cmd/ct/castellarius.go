@@ -193,19 +193,23 @@ var castellariusStatusCmd = &cobra.Command{
 		}
 
 		tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-		fmt.Fprintln(tw, "OPERATOR\tREPO\tDROPLET\tCATARACTA\tELAPSED")
-		fmt.Fprintln(tw, "────────\t────\t───────\t─────────\t───────")
+		fmt.Fprintln(tw, "OPERATOR\tREPO\tDROPLET\tCATARACTA\tSTAGE\tELAPSED")
+		fmt.Fprintln(tw, "────────\t────\t───────\t─────────\t─────\t───────")
 
 		totalBusy := 0
 		for _, repo := range cfg.Repos {
 			for _, name := range repoWorkerNames(repo) {
 				if item, ok := assignee[name]; ok {
 					elapsed := int(time.Since(item.UpdatedAt).Minutes())
-					fmt.Fprintf(tw, "%s\t%s\t%s\t[%s]\t%dm\n",
-						name, repo.Name, item.ID, item.CurrentCataractae, elapsed)
+					stageAge := "—"
+					if !item.StageDispatchedAt.IsZero() {
+						stageAge = formatElapsed(time.Since(item.StageDispatchedAt))
+					}
+					fmt.Fprintf(tw, "%s\t%s\t%s\t[%s]\t%s\t%dm\n",
+						name, repo.Name, item.ID, item.CurrentCataractae, stageAge, elapsed)
 					totalBusy++
 				} else {
-					fmt.Fprintf(tw, "%s\t%s\t—\t—\t—\n", name, repo.Name)
+					fmt.Fprintf(tw, "%s\t%s\t—\t—\t—\t—\n", name, repo.Name)
 				}
 			}
 		}
@@ -473,6 +477,10 @@ var statusCmd = &cobra.Command{
 				for _, name := range repoWorkerNames(repo) {
 					if item, ok := assignee[name]; ok {
 						elapsed := formatElapsed(time.Since(item.UpdatedAt))
+						stageAge := ""
+						if !item.StageDispatchedAt.IsZero() {
+							stageAge = " " + formatElapsed(time.Since(item.StageDispatchedAt))
+						}
 						stage := item.CurrentCataractae
 						idx := cataractaeIndexInWorkflow(stage, steps)
 						total := len(steps)
@@ -482,7 +490,7 @@ var statusCmd = &cobra.Command{
 						} else {
 							progress = stage
 						}
-						line := fmt.Sprintf("  %s\t→ %s\t[%s]\t%s\n", name, item.ID, progress, elapsed)
+						line := fmt.Sprintf("  %s\t→ %s\t[%s]\t%s%s\n", name, item.ID, progress, elapsed, stageAge)
 						fmt.Fprint(tw, col(colorGreen, line))
 					} else {
 						line := fmt.Sprintf("  %s\t→ idle\t\t\n", name)

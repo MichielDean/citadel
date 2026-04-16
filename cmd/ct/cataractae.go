@@ -378,8 +378,12 @@ var cataractaeStatusCmd = &cobra.Command{
 				item, ok := active[stepKey{repo.Name, step.Name}]
 				if ok {
 					elapsed := int(time.Since(item.UpdatedAt).Minutes())
-					fmt.Fprintf(tw, "  %s\t%-22s\t← %s\t(%s)\t%dm\n",
-						marker, step.Name, item.ID, item.Assignee, elapsed)
+					stageAge := "—"
+					if !item.StageDispatchedAt.IsZero() {
+						stageAge = formatElapsed(time.Since(item.StageDispatchedAt))
+					}
+					fmt.Fprintf(tw, "  %s\t%-22s\t← %s\t(%s)\t%s\t%dm\n",
+						marker, step.Name, item.ID, item.Assignee, stageAge, elapsed)
 				} else {
 					fmt.Fprintf(tw, "  %s\t%-22s\t—\n", marker, step.Name)
 				}

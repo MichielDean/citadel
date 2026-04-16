@@ -139,6 +139,9 @@ func TestFetchDashboardData_FeedsDataCorrectly(t *testing.T) {
 	if virgo.TotalCataractae != 3 {
 		t.Errorf("virgo.TotalCataractae = %d, want 3", virgo.TotalCataractae)
 	}
+	if virgo.StageElapsed <= 0 {
+		t.Errorf("virgo.StageElapsed = %v, want > 0 (StageDispatchedAt was set by Assign)", virgo.StageElapsed)
+	}
 
 	// Cataracta "marcia" should be dry.
 	var marcia *CataractaeInfo
@@ -1443,5 +1446,77 @@ func TestDashboardStateHash_ChangesWhenUnassignedItemsChange(t *testing.T) {
 
 	if h1 == h2 {
 		t.Error("dashboardStateHash should differ when UnassignedItems changes")
+	}
+}
+
+// TestFetchDashboardData_StageElapsed_UsesStageDispatchedAt verifies that
+// StageElapsed is computed from StageDispatchedAt (not UpdatedAt).
+func TestFetchDashboardData_StageElapsed_UsesStageDispatchedAt(t *testing.T) {
+	cfgPath := tempCfg(t)
+	dbPath := tempDB(t)
+
+	c, err := cistern.New(dbPath, "mr")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	flowing, _ := c.Add("myrepo", "Stage elapsed test", "", 1, 2)
+	c.GetReady("myrepo")
+	c.Assign(flowing.ID, "virgo", "implement")
+	c.Close()
+
+	data := fetchDashboardData(cfgPath, dbPath)
+
+	var virgo *CataractaeInfo
+	for i := range data.Cataractae {
+		if data.Cataractae[i].Name == "virgo" {
+			virgo = &data.Cataractae[i]
+		}
+	}
+	if virgo == nil {
+		t.Fatal("cataractae virgo not found")
+	}
+	if virgo.StageElapsed <= 0 {
+		t.Errorf("StageElapsed = %v, want > 0 when StageDispatchedAt is set", virgo.StageElapsed)
+	}
+	if virgo.Elapsed <= 0 {
+		t.Errorf("Elapsed = %v, want > 0", virgo.Elapsed)
+	}
+}
+
+// TestFetchDashboardData_StageElapsed_ZeroWhenNotDispatched verifies that
+// StageElapsed is 0 when StageDispatchedAt has not been set.
+func TestFetchDashboardData_StageElapsed_ZeroWhenNotDispatched(t *testing.T) {
+	cfgPath := tempCfg(t)
+	dbPath := tempDB(t)
+
+	c, err := cistern.New(dbPath, "mr")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	flowing, _ := c.Add("myrepo", "No stage dispatch test", "", 1, 2)
+	c.GetReady("myrepo")
+	c.Assign(flowing.ID, "virgo", "implement")
+	c.Close()
+
+	data := fetchDashboardData(cfgPath, dbPath)
+
+	var virgo *CataractaeInfo
+	for i := range data.Cataractae {
+		if data.Cataractae[i].Name == "virgo" {
+			virgo = &data.Cataractae[i]
+		}
+	}
+	if virgo == nil {
+		t.Fatal("cataractae virgo not found")
+	}
+
+	p := newStatusPanel("", "")
+	p.data = data
+	v := p.View()
+
+	if !strings.Contains(v, flowing.ID) {
+		t.Errorf("View should contain droplet ID %q; output:\n%s", flowing.ID, v)
 	}
 }
