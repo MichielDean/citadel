@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### ct droplet history: alias for ct droplet log showing event timeline (ci-kcygr)
+
+Added `ct droplet history <id>` command as an alias for `ct droplet log`, providing a more intuitive name for operators who want a quick human-readable event timeline. Produces identical output to `ct droplet log`.
+
+**Command syntax:**
+```bash
+ct droplet history <id>                       # Show event timeline for a droplet
+ct droplet history <id> --format text         # Tab-aligned table with timestamps (default)
+ct droplet history <id> --format json          # One JSON object per line (NDJSON)
+```
+
+**Files changed:**
+- `cmd/ct/droplet_history.go` — new file: command implementation reusing buildLogEntries, printLogText, printLogJSON
+- `cmd/ct/droplet_history_test.go` — new file: comprehensive tests including output parity with log
+- `cmd/ct/cistern.go` — registered dropletHistoryCmd with --format flag
+
 ### ct doctor --skills: list all skills across all repos with install status (ci-apbx6)
 
 Added `--skills` flag to `ct doctor` that lists every skill referenced by any aqueduct across all configured repos and reports whether each is installed at `~/.cistern/skills/<name>/`. Replaces the normal doctor check suite when set.

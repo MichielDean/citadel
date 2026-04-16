@@ -644,6 +644,10 @@ ct droplet tail <id> --format json                          Output events as NDJ
 ct droplet log <id>                                         Show activity log (creation, transitions, signals, heartbeat, notes)
 ct droplet log <id> --format json                           Output as NDJSON (one JSON object per line)
 
+# History — alias for ct droplet log
+ct droplet history <id>                                     Show event timeline (identical output to ct droplet log)
+ct droplet history <id> --format json                       Output as NDJSON
+
 # Droplet outcomes — used by agent cataractae to signal completion
 ct droplet pass <id>                                              Advance to next cataractae
 ct droplet pass <id> --notes "..."                                Advance with notes

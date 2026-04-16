@@ -73,6 +73,16 @@ In text mode, the output starts with a header line (`Droplet: <id>  Title: <titl
 
 Events include: `created` (droplet creation), stage transition names, `pooled` (with reason), `heartbeat` (last known heartbeat), and `note` (cataractae-prefixed notes).
 
+### History — Chronological Activity Timeline (alias for log)
+
+```bash
+ct droplet history <id>                    # Show event timeline for a droplet (alias for log)
+ct droplet history <id> --format text     # Tab-aligned table with timestamps (default)
+ct droplet history <id> --format json      # One JSON object per line (NDJSON)
+```
+
+`ct droplet history` is an alias for `ct droplet log`, providing a more intuitive command name for operators who want a quick human-readable event timeline. It produces identical output.
+
 ### Add Options
 
 | Flag | Values | Default |
