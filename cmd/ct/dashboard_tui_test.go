@@ -562,3 +562,110 @@ func TestView_NoCURRENTFLOWSection(t *testing.T) {
 		t.Error("TUI View should not contain standalone CURRENT FLOW section header")
 	}
 }
+
+// TestOpenInlinePeek_StageElapsedZero_OmitsStageAge verifies that openInlinePeek
+// omits the stage age from the header when StageElapsed is 0, consistent with
+// all other display surfaces that hide stage age when not dispatched.
+//
+// Given: a CataractaeInfo with Elapsed set but StageElapsed=0
+// When:  openInlinePeek is called
+// Then:  the header does not contain "(stage"
+func TestOpenInlinePeek_StageElapsedZero_OmitsStageAge(t *testing.T) {
+	ch := CataractaeInfo{
+		RepoName:     "myrepo",
+		Name:         "virgo",
+		DropletID:    "ci-abc12",
+		Step:         "implement",
+		Elapsed:      5 * time.Minute,
+		StageElapsed: 0,
+	}
+	m := dashboardTUIModel{width: 120, height: 40}
+	model, _ := m.openInlinePeek(ch, errors.New("attach failed"))
+	pm := model.peek
+	if strings.Contains(pm.header, "(stage") {
+		t.Errorf("openInlinePeek header should not contain '(stage' when StageElapsed=0, got:\n%s", pm.header)
+	}
+	if !strings.Contains(pm.header, "flowing 5m") {
+		t.Errorf("openInlinePeek header should contain overall elapsed when StageElapsed=0, got:\n%s", pm.header)
+	}
+}
+
+// TestOpenInlinePeek_StageElapsedNonZero_ShowsStageAge verifies that openInlinePeek
+// includes the stage age in the header when StageElapsed > 0.
+//
+// Given: a CataractaeInfo with Elapsed and StageElapsed both set
+// When:  openInlinePeek is called
+// Then:  the header contains "(stage <duration>)"
+func TestOpenInlinePeek_StageElapsedNonZero_ShowsStageAge(t *testing.T) {
+	ch := CataractaeInfo{
+		RepoName:     "myrepo",
+		Name:         "virgo",
+		DropletID:    "ci-abc12",
+		Step:         "implement",
+		Elapsed:      10 * time.Minute,
+		StageElapsed: 3*time.Minute + 22*time.Second,
+	}
+	m := dashboardTUIModel{width: 120, height: 40}
+	model, _ := m.openInlinePeek(ch, errors.New("attach failed"))
+	pm := model.peek
+	if !strings.Contains(pm.header, "(stage 3m 22s)") {
+		t.Errorf("openInlinePeek header should contain '(stage 3m 22s)' when StageElapsed is set, got:\n%s", pm.header)
+	}
+}
+
+// TestTuiFlowGraphRow_StageElapsed_ShownAppended verifies that tuiFlowGraphRow
+// shows stage elapsed appended alongside overall elapsed (not replacing it),
+// consistent with the non-TUI renderFlowGraphRow.
+//
+// Given: an aqueduct with StageElapsed=2m 14s and Elapsed=5m 30s
+// When:  tuiFlowGraphRow is called
+// Then:  the info line contains both elapsed durations
+func TestTuiFlowGraphRow_StageElapsed_ShownAppended(t *testing.T) {
+	ch := CataractaeInfo{
+		Name:            "virgo",
+		DropletID:       "ci-abc12",
+		Step:            "review",
+		Steps:           []string{"implement", "review", "qa"},
+		Elapsed:         5*time.Minute + 30*time.Second,
+		StageElapsed:    2*time.Minute + 14*time.Second,
+		CataractaeIndex: 2,
+		TotalCataractae: 3,
+	}
+	m := dashboardTUIModel{width: 120}
+	_, infoLine := m.tuiFlowGraphRow(ch)
+	stripped := stripANSITest(infoLine)
+	if !strings.Contains(stripped, "5m 30s") {
+		t.Errorf("tuiFlowGraphRow info line should contain overall elapsed '5m 30s', got:\n%s", stripped)
+	}
+	if !strings.Contains(stripped, "2m 14s") {
+		t.Errorf("tuiFlowGraphRow info line should contain stage elapsed '2m 14s' when StageElapsed is set, got:\n%s", stripped)
+	}
+}
+
+// TestTuiFlowGraphRow_StageElapsedZero_OmitsStageAge verifies that
+// tuiFlowGraphRow does not show a stage age when StageElapsed is 0.
+//
+// Given: an aqueduct with Elapsed=5m 30s and StageElapsed=0
+// When:  tuiFlowGraphRow is called
+// Then:  the info line contains overall elapsed but no standalone "0s"
+func TestTuiFlowGraphRow_StageElapsedZero_OmitsStageAge(t *testing.T) {
+	ch := CataractaeInfo{
+		Name:            "virgo",
+		DropletID:       "ci-abc12",
+		Step:            "review",
+		Steps:           []string{"implement", "review", "qa"},
+		Elapsed:         5*time.Minute + 30*time.Second,
+		StageElapsed:    0,
+		CataractaeIndex: 2,
+		TotalCataractae: 3,
+	}
+	m := dashboardTUIModel{width: 120}
+	_, infoLine := m.tuiFlowGraphRow(ch)
+	stripped := stripANSITest(infoLine)
+	if strings.Contains(stripped, " 0s ") {
+		t.Errorf("tuiFlowGraphRow info line should not show standalone '0s' stage age when StageElapsed=0, got:\n%s", stripped)
+	}
+	if !strings.Contains(stripped, "5m 30s") {
+		t.Errorf("tuiFlowGraphRow info line should contain overall elapsed '5m 30s', got:\n%s", stripped)
+	}
+}

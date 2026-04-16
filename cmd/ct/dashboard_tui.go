@@ -169,8 +169,12 @@ func (m dashboardTUIModel) openPeekOn(ch CataractaeInfo) (dashboardTUIModel, tea
 // Called as a fallback when openPeekAttachCmdFunc fails; err carries the attach error.
 func (m dashboardTUIModel) openInlinePeek(ch CataractaeInfo, err error) (dashboardTUIModel, tea.Cmd) {
 	session := ch.RepoName + "-" + ch.Name
-	header := fmt.Sprintf("[%s] %s — flowing %s (stage %s)\ntmux attach-session failed (%v) — showing capture-pane snapshot",
-		ch.DropletID, ch.Step, formatElapsed(ch.Elapsed), formatElapsed(ch.StageElapsed), err)
+	stageSuffix := ""
+	if ch.StageElapsed > 0 {
+		stageSuffix = " (stage " + formatElapsed(ch.StageElapsed) + ")"
+	}
+	header := fmt.Sprintf("[%s] %s — flowing %s%s\ntmux attach-session failed (%v) — showing capture-pane snapshot",
+		ch.DropletID, ch.Step, formatElapsed(ch.Elapsed), stageSuffix, err)
 	pk := newPeekModel(defaultCapturer, session, header, 0)
 	pk.width = m.width
 	pk.height = m.height
@@ -855,20 +859,19 @@ func (m dashboardTUIModel) tuiFlowGraphRow(ch CataractaeInfo) (graphLine, infoLi
 	if activeVisualCol >= 0 {
 		bar := progressBar(ch.CataractaeIndex, ch.TotalCataractae, 8)
 		elapsed := formatElapsed(ch.Elapsed)
-		stageAge := formatElapsed(ch.StageElapsed)
-		elapsedDisplay := elapsed
-		if stageAge != "" && stageAge != "0s" {
-			elapsedDisplay = stageAge
+		stageAge := ""
+		if ch.StageElapsed > 0 {
+			stageAge = " " + formatElapsed(ch.StageElapsed)
 		}
 		infoLine = strings.Repeat(" ", activeVisualCol) +
 			"↑ " +
 			tuiStyleGreen.Render(ch.Name) +
 			" · " + ch.DropletID +
-			"  " + elapsedDisplay +
+			"  " + elapsed + stageAge +
 			"  " + tuiStyleGreen.Render(bar)
 		if ch.Title != "" {
 			usedW := activeVisualCol + 2 + len([]rune(ch.Name)) + 3 + len([]rune(ch.DropletID)) +
-				2 + len([]rune(elapsedDisplay)) + 2 + 8
+				2 + len([]rune(elapsed)) + len([]rune(stageAge)) + 2 + 8
 			titleW := m.width - usedW - 2
 			if titleW > 0 {
 				title := ch.Title
