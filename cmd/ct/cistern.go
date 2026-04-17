@@ -1598,6 +1598,7 @@ func init() {
 		dropletExportCmd, dropletRenameCmd, dropletRestartCmd, dropletEditCmd,
 		dropletTailCmd, dropletHeartbeatCmd, dropletLogCmd, dropletHistoryCmd)
 	rootCmd.AddCommand(dropletCmd)
+	rootCmd.AddCommand(evaluateCmd)
 }
 
 // parseComplexity accepts "1"-"3" or names "standard","full","critical".
