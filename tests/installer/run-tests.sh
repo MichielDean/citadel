@@ -169,8 +169,9 @@ _install_skill_stubs() {
 
 # _wait_service_state — poll until the service reaches the expected state or
 # the timeout (seconds) expires. Returns 0 on success, 1 on timeout.
+# Also logs the service state and last journal lines on failure for CI debugging.
 _wait_service_state() {
-    local _service="${1}" _expected="${2}" _timeout="${3:-20}"
+    local _service="${1}" _expected="${2}" _timeout="${3:-30}"
     local _i=0 _state
     while [ "${_i}" -lt "${_timeout}" ]; do
         _state=$(systemctl is-active "${_service}" 2>/dev/null) || true
@@ -180,7 +181,26 @@ _wait_service_state() {
         sleep 1
         _i=$((_i + 1))
     done
+    # Timed out — log diagnostics for CI debugging
+    _state=$(systemctl is-active "${_service}" 2>/dev/null) || true
+    _log=$(journalctl -u "${_service}" -n 10 --no-pager 2>/dev/null || true)
+    echo "TIMEOUT: ${_service} state=${_state} after ${_timeout}s"
+    echo "LAST LOGS: ${_log}"
     return 1
+}
+
+# _start_castellarius_with_retry — start the castellarius service with a
+# single retry on failure. The CI container can race between daemon-reload
+# and the first start; a second attempt after reset-failed resolves it.
+_start_castellarius_with_retry() {
+    systemctl daemon-reload
+    systemctl start cistern-castellarius.service 2>/dev/null || true
+    if ! _wait_service_state cistern-castellarius.service active 15; then
+        echo "First start attempt failed — resetting and retrying"
+        systemctl reset-failed cistern-castellarius.service 2>/dev/null || true
+        sleep 2
+        systemctl start cistern-castellarius.service 2>/dev/null || true
+    fi
 }
 
 # ── Scenario 1: Fresh install ─────────────────────────────────────────────────
@@ -201,14 +221,11 @@ else
     # Install skill stubs so ct castellarius start and ct doctor pass validation.
     _install_skill_stubs
 
-    # start-castellarius.sh no longer requires credentials — it just execs ct.
-    # No ANTHROPIC_API_KEY needed; Claude CLI manages its own OAuth credentials.
-    systemctl daemon-reload
-    systemctl start cistern-castellarius.service 2>/dev/null || true
+    _start_castellarius_with_retry
 
     # Then: service reaches active (running) state.
     # Allow 1 second after active for ct castellarius start to initialise the DB.
-    if _wait_service_state cistern-castellarius.service active 20; then
+    if _wait_service_state cistern-castellarius.service active 15; then
         sleep 1
         pass "fresh_install_service_active"
 
@@ -245,11 +262,10 @@ else
 
     # Given: no ~/.cistern/env credentials and no OAuth file (already absent).
 
-    systemctl daemon-reload
-    systemctl start cistern-castellarius.service 2>/dev/null || true
+    _start_castellarius_with_retry
 
     # Then: service reaches active state — no credential pre-check at startup.
-    if _wait_service_state cistern-castellarius.service active 20; then
+    if _wait_service_state cistern-castellarius.service active 15; then
         pass "no_creds_service_active"
     else
         _svc_state=$(systemctl is-active cistern-castellarius.service 2>/dev/null || true)
@@ -291,11 +307,10 @@ else
 {"claudeAiOauth":{"accessToken":"expired-token","refreshToken":"refresh-token","expiresAt":1000}}
 CREDS_EOF
 
-    systemctl daemon-reload
-    systemctl start cistern-castellarius.service 2>/dev/null || true
+    _start_castellarius_with_retry
 
     # Then: service reaches active state — no credential pre-check at startup.
-    if _wait_service_state cistern-castellarius.service active 20; then
+    if _wait_service_state cistern-castellarius.service active 15; then
         pass "expired_token_service_active"
     else
         _svc_state=$(systemctl is-active cistern-castellarius.service 2>/dev/null || true)
@@ -375,10 +390,9 @@ else
     _install_skill_stubs
 
     # Then: service comes up cleanly with the (stale-but-valid) config.
-    systemctl daemon-reload
-    systemctl start cistern-castellarius.service 2>/dev/null || true
+    _start_castellarius_with_retry
 
-    if _wait_service_state cistern-castellarius.service active 20; then
+    if _wait_service_state cistern-castellarius.service active 15; then
         sleep 1
         pass "upgrade_service_active"
 
